@@ -696,7 +696,7 @@ app.prepare().then(() => {
     });
   });
 
-  httpServer.listen(port, () => {
-    console.log(`▶ Chess App ready on http://localhost:${port}`);
+  httpServer.listen(port, hostname, () => {
+    console.log(`▶ Chess App ready on http://${hostname}:${port}`);
   });
 });

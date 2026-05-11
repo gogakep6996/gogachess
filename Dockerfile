@@ -21,7 +21,10 @@ RUN apk add --no-cache libc6-compat openssl
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npx prisma generate \
+# schema.prisma нужен сборке и рантайму; SQL-миграции могут отсутствовать в части деплоев —
+# тогда порядок схемы обеспечит `db push` при старте контейнера.
+RUN ls -la prisma/migrations 2>/dev/null || true \
+ && npx prisma generate \
  && npm run build
 
 # ---------- 3. Runtime ----------
@@ -47,5 +50,6 @@ COPY --from=builder /app/next.config.mjs ./next.config.mjs
 
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]
-# Сначала миграции (создаст таблицы при первом старте), потом сервер
-CMD ["sh", "-c", "npx prisma migrate deploy || npx prisma db push --accept-data-loss && node ./node_modules/tsx/dist/cli.mjs server/index.ts"]
+# migrate deploy если есть история SQL; затем db push синхронизирует таблицы с schema.prisma
+# (случай пустого prisma/migrations в образе — чтобы не было P2021).
+CMD ["sh", "-c", "set +e; echo '[gogachess] prisma migrate deploy'; npx prisma migrate deploy; echo '[gogachess] migrate exit='$?; set -eu; echo '[gogachess] prisma db push'; npx prisma db push --skip-generate --accept-data-loss; echo '[gogachess] starting node'; exec node ./node_modules/tsx/dist/cli.mjs server/index.ts"]

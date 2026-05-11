@@ -32,8 +32,12 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-gogachess}:${POSTGRES_PASSWORD:-gogachess}@db:5432/${POSTGRES_DB:-gogachess}?schema=public
       SITE_URL: ${SITE_URL:-}
       NEXT_PUBLIC_ICE_SERVERS: ${NEXT_PUBLIC_ICE_SERVERS:-[{"urls":"stun:stun.l.google.com:19302"}]}
+      # Стабилизирует Server Actions между пересборками (см. next.config.mjs).
+      SERVER_ACTIONS_ENCRYPTION_KEY: ${SERVER_ACTIONS_ENCRYPTION_KEY:-}
+    # На хосте 3001: внутри контейнера приложение всё ещё на 3000.
+    # Так не конфликтует с шаблонным Node.js на VPS, который часто занимает :3000.
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3000"
 
 volumes:
   db-data:

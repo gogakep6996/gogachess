@@ -11,6 +11,12 @@ const nextConfig = {
   experimental: {
     serverActions: {
       allowedOrigins,
+      // Стабильные ID Server Actions между пересборками: без этого после каждого
+      // `docker compose build` клиенты с кешем падают с "Failed to find Server Action".
+      // Сгенерировать ключ: `openssl rand -base64 32` и положить в .env.
+      ...(process.env.SERVER_ACTIONS_ENCRYPTION_KEY
+        ? { encryptionKey: process.env.SERVER_ACTIONS_ENCRYPTION_KEY }
+        : {}),
     },
   },
 };

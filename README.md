@@ -23,7 +23,7 @@
 - **TypeScript** (strict)
 - **Tailwind CSS** + кастомная палитра, основанная на классических цветах деревянной доски (`#f0d9b5`/`#b58863`)
 - **Socket.IO** на собственном Node-сервере (`server/index.ts`) — синхронизация ходов, чат, **сигналинг WebRTC**
-- **Prisma** + SQLite (можно сменить на PostgreSQL — просто измените `provider` и `DATABASE_URL`)
+- **Prisma** + **PostgreSQL** (`DATABASE_URL`, см. `.env.example`)
 - **chess.js** — валидация ходов и FEN
 - **Stockfish.js (NNUE)** — движок через Web Worker
 
@@ -38,9 +38,9 @@ cp .env.example .env
 # (Windows PowerShell)
 copy .env.example .env
 
-# 3) Сгенерировать Prisma Client и базу
+# 3) Поднимите PostgreSQL локально (или задайте свой DATABASE_URL) и синхронизируйте схему
 npm run db:generate
-npm run db:push
+npx prisma migrate deploy
 
 # 4) Запустить dev-сервер (Next.js + Socket.IO в одном процессе)
 npm run dev
