@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// По умолчанию SQLite — удобно для локальной разработки.
+// На продакшене:
+//   1) поменяйте provider = "sqlite" на provider = "postgresql"
+//   2) задайте DATABASE_URL=postgresql://user:pass@host:5432/db?schema=public
+//   3) выполните: npx prisma migrate deploy   (или npm run db:push)
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String?  @unique
+  phone         String?  @unique
+  passwordHash  String
+  displayName   String
+  createdAt     DateTime @default(now())
+
+  ownedRooms          Room[]                 @relation("RoomOwner")
+  messages            Message[]
+  tournamentEntries   TournamentPlayer[]
+  ownedTournaments    Tournament[]           @relation("TournamentOwner")
+  whiteMatches        TournamentMatch[]      @relation("MatchWhite")
+  blackMatches        TournamentMatch[]      @relation("MatchBlack")
+}
+
+model Room {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  name        String
+  isPublic    Boolean   @default(true)
+  ownerId     String
+  owner       User      @relation("RoomOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  fen         String    @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+  /// "lesson" | "casual" | "tournament"
+  kind        String    @default("lesson")
+  /// Например "blitz-5+0", "rapid-10+0"; пусто для уроков.
+  timeControl String?
+  /// Привязка к турниру (если kind = tournament).
+  tournamentId String?
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  messages    Message[]
+  match       TournamentMatch?
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([roomId, createdAt])
+}
+
+model Tournament {
+  id          String   @id @default(cuid())
+  name        String
+  /// "blitz-3+0" / "blitz-5+0" / "rapid-10+0" / "rapid-15+10" / "classical-30+0" / "bullet-1+0"
+  timeControl String
+  /// Длительность арены в минутах
+  durationMin Int
+  /// Когда начинается турнир
+  startsAt    DateTime
+  /// "scheduled" | "running" | "finished"
+  status      String   @default("scheduled")
+  ownerId     String
+  owner       User     @relation("TournamentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  players     TournamentPlayer[]
+  matches     TournamentMatch[]
+  rooms       Room[]
+}
+
+model TournamentPlayer {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score        Float      @default(0)
+  played       Int        @default(0)
+  /// Свободен и готов к следующей партии
+  isAvailable  Boolean    @default(true)
+  joinedAt     DateTime   @default(now())
+
+  @@unique([tournamentId, userId])
+  @@index([tournamentId, score])
+}
+
+model TournamentMatch {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  roomId       String?    @unique
+  room         Room?      @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  whiteId      String
+  white        User       @relation("MatchWhite", fields: [whiteId], references: [id], onDelete: Cascade)
+  blackId      String
+  black        User       @relation("MatchBlack", fields: [blackId], references: [id], onDelete: Cascade)
+  /// "live" | "white" | "black" | "draw"
+  status       String     @default("live")
+  startedAt    DateTime   @default(now())
+  finishedAt   DateTime?
+
+  @@index([tournamentId, status])
+}

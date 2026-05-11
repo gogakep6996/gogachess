@@ -1,0 +1,39 @@
+# =====================================================================
+# gogachess: одна команда `docker compose up -d --build` поднимает
+# Postgres + приложение. Перед стартом скопируйте .env.example в .env
+# и поправьте переменные.
+# =====================================================================
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gogachess}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gogachess}
+      POSTGRES_DB: ${POSTGRES_DB:-gogachess}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gogachess} -d ${POSTGRES_DB:-gogachess}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gogachess}:${POSTGRES_PASSWORD:-gogachess}@db:5432/${POSTGRES_DB:-gogachess}?schema=public
+      SITE_URL: ${SITE_URL:-}
+      NEXT_PUBLIC_ICE_SERVERS: ${NEXT_PUBLIC_ICE_SERVERS:-[{"urls":"stun:stun.l.google.com:19302"}]}
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  db-data:
