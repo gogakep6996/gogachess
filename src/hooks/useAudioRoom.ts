@@ -8,9 +8,16 @@ import { SocketEvents } from '@/lib/socket-events';
 // значит, JS свежий. Если не видно — кеш/SW отдают старый бандл.
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
-  console.log('[audio] hook module loaded build=2026-05-12T22:00');
+  console.log('[audio] hook module loaded build=2026-05-13T01:00 (with TURN)');
 }
 
+// STUN+TURN серверы.
+// — STUN: помогает узнать «публичный» IP/порт, когда оба пира видят друг друга через NAT.
+// — TURN: обязателен, когда STUN не пробивает (мобильные операторы / Carrier-Grade NAT).
+//
+// По умолчанию используются Google STUN и публичные TURN от Metered/OpenRelay
+// (бесплатные, для теста и небольшой нагрузки). В продакшене лучше поднять свой `coturn`
+// и положить его адреса в env-переменную NEXT_PUBLIC_ICE_SERVERS (JSON).
 const ICE_SERVERS: RTCIceServer[] = (() => {
   const env = process.env.NEXT_PUBLIC_ICE_SERVERS;
   if (env) {
@@ -20,7 +27,27 @@ const ICE_SERVERS: RTCIceServer[] = (() => {
       // fallthrough
     }
   }
-  return [{ urls: 'stun:stun.l.google.com:19302' }];
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    // Публичный TURN от Metered.ca — позволяет работать через мобильные NAT.
+    // Порт 80/443 (TCP) — тоже на случай корпоративных файрволлов, режущих UDP.
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ];
 })();
 
 export interface UseAudioRoomResult {
