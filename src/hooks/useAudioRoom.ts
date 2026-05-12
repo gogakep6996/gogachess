@@ -8,7 +8,7 @@ import { SocketEvents } from '@/lib/socket-events';
 // значит, JS свежий. Если не видно — кеш/SW отдают старый бандл.
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
-  console.log('[audio] hook module loaded build=2026-05-13T01:00 (with TURN)');
+  console.log('[audio] hook module loaded build=2026-05-13T02:00 (with TURN + ICE candidate logs)');
 }
 
 // STUN+TURN серверы.
@@ -132,7 +132,14 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
 
       pc.onicecandidate = (e) => {
         if (e.candidate && socket) {
-          socket.emit(SocketEvents.AudioIce, { to: peerId, candidate: e.candidate.toJSON() });
+          // Логируем тип кандидата: host (локальный), srflx (через STUN), relay (через TURN).
+          // Если ни одного "relay" в логах — TURN недоступен/не отвечает.
+          const c = e.candidate;
+          const m = c.candidate.match(/typ (\w+)/);
+          const typ = m ? m[1] : '?';
+          const proto = c.protocol;
+          console.log('[audio] local ICE candidate:', typ, proto, c.address || '<masked>');
+          socket.emit(SocketEvents.AudioIce, { to: peerId, candidate: c.toJSON() });
         } else if (!e.candidate) {
           console.log('[audio] ICE gathering complete for peer=', peerId);
         }
