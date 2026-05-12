@@ -545,11 +545,18 @@ app.prepare().then(() => {
     // Сообщаем уже подключённым, что появился новый пир (они сами не инициируют).
     socket.on(SocketEvents.AudioReady, () => {
       const code = socket.data.roomCode as string | undefined;
-      if (!code) return;
+      if (!code) {
+        console.warn('[audio] AudioReady but no roomCode on socket', socket.id);
+        return;
+      }
       const runtime = rooms.get(code);
-      if (!runtime) return;
+      if (!runtime) {
+        console.warn('[audio] AudioReady but no runtime for code', code);
+        return;
+      }
       const others = Array.from(runtime.audioReady).filter((sid) => sid !== socket.id);
       runtime.audioReady.add(socket.id);
+      console.log('[audio] AudioReady from', socket.id, 'room=', code, 'returning peers=', others);
       socket.emit('audio:peers', others);
       others.forEach((sid) => io.to(sid).emit('audio:peer-joined', socket.id));
     });

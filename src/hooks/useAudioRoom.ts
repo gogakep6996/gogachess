@@ -67,6 +67,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   // ---------- Установка соединения с пиром ----------
   const createPeer = useCallback(
     (peerId: string, initiator: boolean): RTCPeerConnection => {
+      console.log('[audio] createPeer', { peerId, initiator, hasLocalStream: !!localStreamRef.current });
       // Если для этого peerId уже был pc — закрываем, иначе будут «двойные» транссиверы и тишина.
       const existing = peersRef.current.get(peerId);
       if (existing) {
@@ -81,10 +82,13 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+        const tracks = localStreamRef.current.getTracks();
+        console.log('[audio] addTrack count=', tracks.length, 'kinds=', tracks.map((t) => t.kind));
+        tracks.forEach((t) => pc.addTrack(t, localStreamRef.current!));
       } else {
         // Микрофон ещё не получен — это значит, что мы получили offer ДО join().
         // Принимать звук всё равно можем: добавляем recvonly-транссивер.
+        console.log('[audio] no localStream → addTransceiver recvonly');
         try {
           pc.addTransceiver('audio', { direction: 'recvonly' });
         } catch {
@@ -95,17 +99,21 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       pc.onicecandidate = (e) => {
         if (e.candidate && socket) {
           socket.emit(SocketEvents.AudioIce, { to: peerId, candidate: e.candidate.toJSON() });
+        } else if (!e.candidate) {
+          console.log('[audio] ICE gathering complete for peer=', peerId);
         }
       };
 
       pc.oniceconnectionstatechange = () => {
-        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-          console.warn('[audio] ICE state', pc.iceConnectionState, 'peer=', peerId);
-        }
+        console.log('[audio] ICE state =', pc.iceConnectionState, 'peer=', peerId);
+      };
+      pc.onconnectionstatechange = () => {
+        console.log('[audio] PC state =', pc.connectionState, 'peer=', peerId);
       };
 
       pc.ontrack = (e) => {
         const stream = e.streams[0];
+        console.log('[audio] ontrack peer=', peerId, 'kind=', e.track.kind, 'streamTracks=', stream?.getTracks().length);
         let audio = audiosRef.current.get(peerId);
         if (!audio) {
           audio = document.createElement('audio');
@@ -119,7 +127,9 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
         audio.srcObject = stream;
         const playPromise = audio.play();
         if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.catch((err) => console.warn('[audio] play() blocked', err));
+          playPromise
+            .then(() => console.log('[audio] play() OK peer=', peerId))
+            .catch((err) => console.warn('[audio] play() blocked peer=', peerId, err));
         }
 
         // Анализатор громкости — для индикатора «говорит»
@@ -147,7 +157,10 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       if (initiator && socket) {
         pc.createOffer()
           .then((offer) => pc.setLocalDescription(offer).then(() => offer))
-          .then((offer) => socket.emit(SocketEvents.AudioOffer, { to: peerId, sdp: offer }))
+          .then((offer) => {
+            console.log('[audio] → emit offer to', peerId);
+            socket.emit(SocketEvents.AudioOffer, { to: peerId, sdp: offer });
+          })
           .catch((err) => console.error('[audio] offer error', err));
       }
 
@@ -181,28 +194,44 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   useEffect(() => {
     if (!socket) return;
     const onPeers = (peers: string[]) => {
+      console.log('[audio] ← audio:peers', peers);
       peers.forEach((pid) => createPeer(pid, true));
     };
-    // Новый пир уведомил нас, что он готов. Мы НЕ инициируем — он сам пришлёт offer
-    // (он младший по таймеру в этой комнате; так избегаем «glare»).
-    const onPeerJoined = (_peerId: string) => {
-      // intentional noop
-      void _peerId;
+    // Новый пир уведомил нас, что он готов. Мы НЕ инициируем — он сам пришлёт offer.
+    const onPeerJoined = (peerId: string) => {
+      console.log('[audio] ← audio:peer-joined', peerId, '(ожидаем от него offer)');
     };
-    const onPeerLeft = (peerId: string) => cleanupPeer(peerId);
+    const onPeerLeft = (peerId: string) => {
+      console.log('[audio] ← audio:peer-left', peerId);
+      cleanupPeer(peerId);
+    };
 
     const onOffer = async ({ from, sdp }: { from: string; sdp: RTCSessionDescriptionInit }) => {
+      console.log('[audio] ← offer from', from);
       let pc = peersRef.current.get(from);
       if (!pc) pc = createPeer(from, false);
-      await pc.setRemoteDescription(sdp);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit(SocketEvents.AudioAnswer, { to: from, sdp: answer });
+      try {
+        await pc.setRemoteDescription(sdp);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        console.log('[audio] → emit answer to', from);
+        socket.emit(SocketEvents.AudioAnswer, { to: from, sdp: answer });
+      } catch (err) {
+        console.error('[audio] onOffer error', err);
+      }
     };
     const onAnswer = async ({ from, sdp }: { from: string; sdp: RTCSessionDescriptionInit }) => {
+      console.log('[audio] ← answer from', from);
       const pc = peersRef.current.get(from);
-      if (!pc) return;
-      await pc.setRemoteDescription(sdp);
+      if (!pc) {
+        console.warn('[audio] answer for unknown peer', from);
+        return;
+      }
+      try {
+        await pc.setRemoteDescription(sdp);
+      } catch (err) {
+        console.error('[audio] setRemoteDescription(answer) failed', err);
+      }
     };
     const onIce = async ({ from, candidate }: { from: string; candidate: RTCIceCandidateInit }) => {
       const pc = peersRef.current.get(from);
@@ -210,7 +239,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       try {
         await pc.addIceCandidate(candidate);
       } catch (err) {
-        console.warn('ice add error', err);
+        console.warn('[audio] ice add error', err);
       }
     };
     const onForceMute = (mute: boolean) => {
@@ -285,7 +314,9 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   function toggleMicTrack(on: boolean) {
     const stream = localStreamRef.current;
     if (!stream) return;
-    stream.getAudioTracks().forEach((t) => (t.enabled = on));
+    const tracks = stream.getAudioTracks();
+    tracks.forEach((t) => (t.enabled = on));
+    console.log('[audio] toggleMic →', on, 'tracks=', tracks.length, 'first.enabled=', tracks[0]?.enabled);
     setMicEnabled(on);
     socket?.emit(SocketEvents.AudioMicState, on);
   }
@@ -335,6 +366,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       }
       setMicEnabled(false);
       setJoined(true);
+      console.log('[audio] join() OK; socket connected =', socket?.connected, '→ emit audio:ready');
       socket?.emit(SocketEvents.AudioReady);
     } catch (err) {
       // Не используем console.error — в Next.js dev это часто вызывает красный оверлей для ожидаемых отказов.
