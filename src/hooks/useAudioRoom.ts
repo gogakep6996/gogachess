@@ -4,6 +4,13 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Socket } from 'socket.io-client';
 import { SocketEvents } from '@/lib/socket-events';
 
+// Маяк версии хука — если эту строку видно в Console при загрузке комнаты,
+// значит, JS свежий. Если не видно — кеш/SW отдают старый бандл.
+if (typeof window !== 'undefined') {
+  // eslint-disable-next-line no-console
+  console.log('[audio] hook module loaded build=2026-05-12T22:00');
+}
+
 const ICE_SERVERS: RTCIceServer[] = (() => {
   const env = process.env.NEXT_PUBLIC_ICE_SERVERS;
   if (env) {
