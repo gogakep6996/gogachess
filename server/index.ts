@@ -35,6 +35,8 @@ interface RoomRuntime {
   isEditing: boolean;
   editorId: string | null;
   participants: Map<string, Participant>; // socketId -> Participant
+  /** Сокеты, которые нажали «Подключиться» к аудио. Это подмножество participants. */
+  audioReady: Set<string>;
   kind: string;
   timeControl: string | null;
   tournamentId: string | null;
@@ -101,6 +103,7 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     isEditing: false,
     editorId: null,
     participants: new Map(),
+    audioReady: new Set(),
     kind: dbRoom.kind,
     timeControl: dbRoom.timeControl,
     tournamentId: dbRoom.tournamentId,
@@ -281,6 +284,7 @@ app.prepare().then(() => {
         isEditing: false,
         editorId: null,
         participants: new Map(),
+        audioReady: new Set(),
         kind: 'tournament',
         timeControl: t.timeControl,
         tournamentId: t.id,
@@ -536,16 +540,29 @@ app.prepare().then(() => {
     });
 
     // ---------- WebRTC сигналинг ----------
+    // Клиент нажал «Подключиться» → готов отправлять/принимать звук.
+    // Возвращаем ему ТОЛЬКО тех, кто уже в аудио (иначе WebRTC создаст «полудуплекс»).
+    // Сообщаем уже подключённым, что появился новый пир (они сами не инициируют).
     socket.on(SocketEvents.AudioReady, () => {
       const code = socket.data.roomCode as string | undefined;
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      const others = Array.from(runtime.participants.values())
-        .filter((p) => p.socketId !== socket.id)
-        .map((p) => p.socketId);
+      const others = Array.from(runtime.audioReady).filter((sid) => sid !== socket.id);
+      runtime.audioReady.add(socket.id);
       socket.emit('audio:peers', others);
-      socket.to(code).emit('audio:peer-joined', socket.id);
+      others.forEach((sid) => io.to(sid).emit('audio:peer-joined', socket.id));
+    });
+
+    // Клиент нажал «вых.» — больше не участвует в аудио, но остался в комнате.
+    socket.on(SocketEvents.AudioLeave, () => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.audioReady.delete(socket.id)) {
+        runtime.audioReady.forEach((sid) => io.to(sid).emit('audio:peer-left', socket.id));
+      }
     });
 
     socket.on(SocketEvents.AudioOffer, ({ to, sdp }: { to: string; sdp: RTCSessionDescriptionInit }) => {
@@ -641,6 +658,7 @@ app.prepare().then(() => {
           isEditing: false,
           editorId: null,
           participants: new Map(),
+          audioReady: new Set(),
           kind: 'casual',
           timeControl,
           tournamentId: null,
@@ -683,7 +701,9 @@ app.prepare().then(() => {
       const runtime = rooms.get(code);
       if (!runtime) return;
       runtime.participants.delete(socket.id);
-      socket.to(code).emit('audio:peer-left', socket.id);
+      if (runtime.audioReady.delete(socket.id)) {
+        runtime.audioReady.forEach((sid) => io.to(sid).emit('audio:peer-left', socket.id));
+      }
       io.to(code).emit(SocketEvents.ParticipantsUpdate, Array.from(runtime.participants.values()));
       if (runtime.editorId && !Array.from(runtime.participants.values()).find((p) => p.userId === runtime.editorId)) {
         runtime.isEditing = false;

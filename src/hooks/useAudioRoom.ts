@@ -67,10 +67,29 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   // ---------- Установка соединения с пиром ----------
   const createPeer = useCallback(
     (peerId: string, initiator: boolean): RTCPeerConnection => {
+      // Если для этого peerId уже был pc — закрываем, иначе будут «двойные» транссиверы и тишина.
+      const existing = peersRef.current.get(peerId);
+      if (existing) {
+        try {
+          existing.close();
+        } catch {
+          // ignore
+        }
+        peersRef.current.delete(peerId);
+      }
+
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+      } else {
+        // Микрофон ещё не получен — это значит, что мы получили offer ДО join().
+        // Принимать звук всё равно можем: добавляем recvonly-транссивер.
+        try {
+          pc.addTransceiver('audio', { direction: 'recvonly' });
+        } catch {
+          // ignore
+        }
       }
 
       pc.onicecandidate = (e) => {
@@ -79,33 +98,57 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
         }
       };
 
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+          console.warn('[audio] ICE state', pc.iceConnectionState, 'peer=', peerId);
+        }
+      };
+
       pc.ontrack = (e) => {
         const stream = e.streams[0];
         let audio = audiosRef.current.get(peerId);
         if (!audio) {
-          audio = new Audio();
+          audio = document.createElement('audio');
           audio.autoplay = true;
+          audio.setAttribute('playsinline', 'true');
+          // Safari/iOS лучше воспроизводит, если элемент в DOM. Скрываем, чтобы не мешал UI.
+          audio.style.display = 'none';
+          document.body.appendChild(audio);
           audiosRef.current.set(peerId, audio);
         }
         audio.srcObject = stream;
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch((err) => console.warn('[audio] play() blocked', err));
+        }
 
         // Анализатор громкости — для индикатора «говорит»
-        if (!audioCtxRef.current) {
-          audioCtxRef.current = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        try {
+          if (!audioCtxRef.current) {
+            const Ctor =
+              window.AudioContext ||
+              (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+            audioCtxRef.current = new Ctor();
+          }
+          const ctx = audioCtxRef.current;
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => undefined);
+          }
+          const source = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+          analysersRef.current.set(peerId, analyser);
+        } catch (err) {
+          console.warn('[audio] analyser setup failed', err);
         }
-        const ctx = audioCtxRef.current;
-        const source = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 512;
-        source.connect(analyser);
-        analysersRef.current.set(peerId, analyser);
       };
 
       if (initiator && socket) {
         pc.createOffer()
           .then((offer) => pc.setLocalDescription(offer).then(() => offer))
           .then((offer) => socket.emit(SocketEvents.AudioOffer, { to: peerId, sdp: offer }))
-          .catch((err) => console.error('offer error', err));
+          .catch((err) => console.error('[audio] offer error', err));
       }
 
       peersRef.current.set(peerId, pc);
@@ -123,6 +166,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     if (audio) {
       audio.pause();
       audio.srcObject = null;
+      if (audio.parentNode) audio.parentNode.removeChild(audio);
       audiosRef.current.delete(peerId);
     }
     analysersRef.current.delete(peerId);
@@ -139,8 +183,11 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     const onPeers = (peers: string[]) => {
       peers.forEach((pid) => createPeer(pid, true));
     };
-    const onPeerJoined = (peerId: string) => {
-      // Не инициируем здесь — пир сам пришлёт нам offer как initiator
+    // Новый пир уведомил нас, что он готов. Мы НЕ инициируем — он сам пришлёт offer
+    // (он младший по таймеру в этой комнате; так избегаем «glare»).
+    const onPeerJoined = (_peerId: string) => {
+      // intentional noop
+      void _peerId;
     };
     const onPeerLeft = (peerId: string) => cleanupPeer(peerId);
 
@@ -192,24 +239,45 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   }, [socket, createPeer, cleanupPeer]);
 
   // ---------- Цикл измерения громкости ----------
+  // Замеряем не каждый кадр, а ~15 раз/сек, и обновляем стейт только если
+  // уровень какого-то пира изменился заметно. Это сильно экономит CPU при бездействии.
   useEffect(() => {
-    function loop() {
-      const next: Record<string, number> = {};
-      analysersRef.current.forEach((analyser, peerId) => {
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const v = (data[i] - 128) / 128;
-          sum += v * v;
+    let stopped = false;
+    let lastTick = 0;
+    const prev: Record<string, number> = {};
+
+    function tick(ts: number) {
+      if (stopped) return;
+      if (ts - lastTick >= 66) {
+        lastTick = ts;
+        const next: Record<string, number> = {};
+        let changed = false;
+        analysersRef.current.forEach((analyser, peerId) => {
+          const data = new Uint8Array(analyser.frequencyBinCount);
+          analyser.getByteTimeDomainData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128;
+            sum += v * v;
+          }
+          const level = Math.min(1, Math.sqrt(sum / data.length) * 2);
+          next[peerId] = level;
+          if (Math.abs((prev[peerId] ?? 0) - level) > 0.03) changed = true;
+        });
+        for (const k of Object.keys(prev)) {
+          if (!(k in next)) changed = true;
         }
-        next[peerId] = Math.min(1, Math.sqrt(sum / data.length) * 2);
-      });
-      setLevels(next);
-      rafRef.current = requestAnimationFrame(loop);
+        if (changed) {
+          for (const k of Object.keys(prev)) delete prev[k];
+          for (const k of Object.keys(next)) prev[k] = next[k];
+          setLevels(next);
+        }
+      }
+      rafRef.current = requestAnimationFrame(tick);
     }
-    rafRef.current = requestAnimationFrame(loop);
+    rafRef.current = requestAnimationFrame(tick);
     return () => {
+      stopped = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, []);
@@ -239,12 +307,32 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       );
       return;
     }
+    // КРИТИЧНО: создаём AudioContext СИНХРОННО, до любых await — пока активен пользовательский жест.
+    // Если сделать это после `await getUserMedia`, Chrome посчитает gesture израсходованным
+    // и выдаст "The AudioContext was not allowed to start" в Console.
+    try {
+      if (!audioCtxRef.current) {
+        const Ctor =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        audioCtxRef.current = new Ctor();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => undefined);
+      }
+    } catch (err) {
+      console.warn('[audio] AudioContext init failed', err);
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       localStreamRef.current = stream;
       stream.getAudioTracks().forEach((t) => (t.enabled = false));
+      // Повторно резюмим — после долгого попапа разрешений контекст мог опять «уснуть».
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => undefined);
+      }
       setMicEnabled(false);
       setJoined(true);
       socket?.emit(SocketEvents.AudioReady);
@@ -263,6 +351,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     audiosRef.current.forEach((a) => {
       a.pause();
       a.srcObject = null;
+      if (a.parentNode) a.parentNode.removeChild(a);
     });
     audiosRef.current.clear();
     analysersRef.current.clear();
@@ -271,7 +360,8 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     setJoined(false);
     setMicEnabled(false);
     setLevels({});
-  }, []);
+    socket?.emit(SocketEvents.AudioLeave);
+  }, [socket]);
 
   const setMic = useCallback(
     (on: boolean) => {

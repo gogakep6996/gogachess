@@ -26,7 +26,8 @@ export const SocketEvents = {
   ChatHistory: 'chat:history',
 
   // Аудио / WebRTC сигналинг
-  AudioReady: 'audio:ready',          // клиент готов принимать пиров
+  AudioReady: 'audio:ready',          // клиент готов принимать пиров (нажал «Подключиться»)
+  AudioLeave: 'audio:leave',          // клиент вышел из аудио-сессии (но остался в комнате)
   AudioOffer: 'audio:offer',
   AudioAnswer: 'audio:answer',
   AudioIce: 'audio:ice',
