@@ -153,33 +153,74 @@ Certbot сам поправит конфиг и добавит редирект 
 
 ---
 
-## 7. (Опционально) TURN-сервер для аудио
+## 7. TURN-сервер для аудио через мобильный интернет
 
-Иногда у учеников аудио «не пробивается» через NAT — нужен TURN.
-На том же или соседнем VPS поднимите **coturn**:
+**Зачем:** при подключении с мобильного интернета (4G/5G, Carrier-Grade NAT) или
+из корпоративных сетей чистый STUN не пробивает — нужен TURN-relay.
+
+В `docker-compose.yml` уже описан сервис `turn` на основе образа `coturn/coturn`.
+Он использует **тот же** TLS-сертификат от Let's Encrypt, что и nginx
+(для **TURNS** через TLS на 5349), и общий секрет (`TURN_SECRET`) с сервером
+приложения для генерации **краткоживущих** credentials (RFC 7635) — никаких
+постоянных паролей в JS-бандле.
+
+### 7.1. На VPS — открыть порты в firewall
 
 ```bash
-apt install -y coturn
-sed -i 's|#TURNSERVER_ENABLED=1|TURNSERVER_ENABLED=1|' /etc/default/coturn
-cat >> /etc/turnserver.conf <<'EOF'
-listening-port=3478
-fingerprint
-lt-cred-mech
-realm=ВАШ_ДОМЕН
-user=audio:придумайте_пароль
-no-tls
-no-dtls
-EOF
-ufw allow 3478/udp
-ufw allow 3478/tcp
-systemctl restart coturn
+ufw allow 3478/udp        # STUN/TURN основной
+ufw allow 3478/tcp        # TURN over TCP (для сетей, где UDP режут)
+ufw allow 5349/tcp        # TURNS (TURN over TLS)
+ufw allow 49152:65535/udp # пул relay-портов
 ```
 
-В `.env` поправьте `NEXT_PUBLIC_ICE_SERVERS`:
-```env
-NEXT_PUBLIC_ICE_SERVERS=[{"urls":"stun:stun.l.google.com:19302"},{"urls":["turn:ВАШ_ДОМЕН:3478?transport=udp","turn:ВАШ_ДОМЕН:3478?transport=tcp"],"username":"audio","credential":"придумайте_пароль"}]
+### 7.2. Заполнить переменные в `/opt/gogachess/.env`
+
+```bash
+cd /opt/gogachess
+# Сгенерировать секрет (длинная случайная строка)
+echo "TURN_SECRET=$(openssl rand -hex 32)" >> .env
+echo "TURN_REALM=ВАШ_ДОМЕН" >> .env
+echo "TURN_HOST=ВАШ_ДОМЕН"  >> .env
+# Узнать публичный IP VPS:
+echo "TURN_EXTERNAL_IP=$(curl -s ifconfig.me)" >> .env
+# Проверьте, что значения подставились корректно:
+tail -10 .env
 ```
-И пересоберите/перезапустите приложение.
+
+### 7.3. Запуск coturn
+
+```bash
+docker compose up -d turn
+docker logs --tail 30 gogachess-turn-1
+```
+
+В логах должно быть `Listener address ... 3478` и **никаких** `cannot read` про сертификаты.
+
+### 7.4. Проверка
+
+С локального ПК (Windows: PowerShell, Linux/Mac: терминал):
+
+```bash
+# Проверка STUN-листенера (без авторизации)
+nc -zv ВАШ_ДОМЕН 3478
+# Проверка TURNS-листенера (TLS)
+openssl s_client -connect ВАШ_ДОМЕН:5349 -servername ВАШ_ДОМЕН < /dev/null
+```
+
+Затем тест в браузере: откройте сайт, F12 → Console, нажмите «Подключиться».
+Должны увидеть строки `[audio] received ICE servers: [..., 'turn:...', 'turns:...']`
+и среди ICE-кандидатов появится `relay udp/tcp` — это означает, что TURN отвечает.
+
+### 7.5. Обновление сертификата
+
+Certbot обновляет сертификат каждые ~60 дней. После обновления нужно
+перезапустить coturn, чтобы он подхватил новый файл:
+
+```bash
+docker compose restart turn
+```
+
+Можно автоматизировать через certbot deploy-hook — см. документацию certbot.
 
 ---
 

@@ -8,17 +8,13 @@ import { SocketEvents } from '@/lib/socket-events';
 // значит, JS свежий. Если не видно — кеш/SW отдают старый бандл.
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
-  console.log('[audio] hook module loaded build=2026-05-13T02:00 (with TURN + ICE candidate logs)');
+  console.log('[audio] hook module loaded build=2026-05-13T16:00 (own coturn + dynamic creds + ICE restart)');
 }
 
-// STUN+TURN серверы.
-// — STUN: помогает узнать «публичный» IP/порт, когда оба пира видят друг друга через NAT.
-// — TURN: обязателен, когда STUN не пробивает (мобильные операторы / Carrier-Grade NAT).
-//
-// По умолчанию используются Google STUN и публичные TURN от Metered/OpenRelay
-// (бесплатные, для теста и небольшой нагрузки). В продакшене лучше поднять свой `coturn`
-// и положить его адреса в env-переменную NEXT_PUBLIC_ICE_SERVERS (JSON).
-const ICE_SERVERS: RTCIceServer[] = (() => {
+// Fallback-список ICE-серверов на случай, если сервер не отвечает на
+// 'audio:get-ice-servers'. Основной путь — динамические creds от своего coturn,
+// см. requestIceServers() ниже.
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = (() => {
   const env = process.env.NEXT_PUBLIC_ICE_SERVERS;
   if (env) {
     try {
@@ -27,28 +23,42 @@ const ICE_SERVERS: RTCIceServer[] = (() => {
       // fallthrough
     }
   }
-  return [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    // Публичный TURN от Metered.ca — позволяет работать через мобильные NAT.
-    // Порт 80/443 (TCP) — тоже на случай корпоративных файрволлов, режущих UDP.
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-  ];
+  return [{ urls: 'stun:stun.l.google.com:19302' }];
 })();
+
+/**
+ * Спрашиваем у нашего сервера список ICE-серверов с краткоживущими creds.
+ * Сервер сгенерирует HMAC от TURN_SECRET и вернёт username/credential на 1 час.
+ * Таймаут — 2 сек: если сервер не ответил (старая версия / нет TURN), используем fallback.
+ */
+function requestIceServers(socket: Socket): Promise<RTCIceServer[]> {
+  return new Promise((resolve) => {
+    let done = false;
+    const t = setTimeout(() => {
+      if (done) return;
+      done = true;
+      console.warn('[audio] ICE-servers request timed out → fallback');
+      resolve(FALLBACK_ICE_SERVERS);
+    }, 2000);
+    try {
+      socket.emit('audio:get-ice-servers', (servers: RTCIceServer[] | undefined) => {
+        if (done) return;
+        done = true;
+        clearTimeout(t);
+        if (Array.isArray(servers) && servers.length > 0) {
+          console.log('[audio] received ICE servers:', servers.map((s) => s.urls));
+          resolve(servers);
+        } else {
+          resolve(FALLBACK_ICE_SERVERS);
+        }
+      });
+    } catch {
+      done = true;
+      clearTimeout(t);
+      resolve(FALLBACK_ICE_SERVERS);
+    }
+  });
+}
 
 export interface UseAudioRoomResult {
   joined: boolean;
@@ -97,6 +107,9 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analysersRef = useRef<Map<string, AnalyserNode>>(new Map());
   const rafRef = useRef<number | null>(null);
+  // ICE-сервера обновляются перед каждым join() — credentials живут 1 час,
+  // так что для долгого пребывания в комнате стоит периодически их обновлять.
+  const iceServersRef = useRef<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
 
   // ---------- Установка соединения с пиром ----------
   const createPeer = useCallback(
@@ -113,7 +126,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
         peersRef.current.delete(peerId);
       }
 
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
 
       if (localStreamRef.current) {
         const tracks = localStreamRef.current.getTracks();
@@ -147,6 +160,19 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
 
       pc.oniceconnectionstatechange = () => {
         console.log('[audio] ICE state =', pc.iceConnectionState, 'peer=', peerId);
+        // При обрыве (сменилась сеть / отвалился Wi-Fi / переключение на 4G) пробуем ICE restart.
+        // Это разрешено только инициатору исходного offer — иначе будет конфликт.
+        if (
+          (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') &&
+          initiator &&
+          socket
+        ) {
+          console.log('[audio] attempting ICE restart for peer=', peerId);
+          pc.createOffer({ iceRestart: true })
+            .then((offer) => pc.setLocalDescription(offer).then(() => offer))
+            .then((offer) => socket.emit(SocketEvents.AudioOffer, { to: peerId, sdp: offer }))
+            .catch((err) => console.warn('[audio] ICE restart failed', err));
+        }
       };
       pc.onconnectionstatechange = () => {
         console.log('[audio] PC state =', pc.connectionState, 'peer=', peerId);
@@ -394,6 +420,15 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       }
     } catch (err) {
       console.warn('[audio] AudioContext init failed', err);
+    }
+    // Спросим у сервера актуальные ICE-сервера со свежими TURN-credentials.
+    // Запрос не блокирующий: если сервер не ответит за 2 сек — используем fallback.
+    if (socket) {
+      try {
+        iceServersRef.current = await requestIceServers(socket);
+      } catch {
+        iceServersRef.current = FALLBACK_ICE_SERVERS;
+      }
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({

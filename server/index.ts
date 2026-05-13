@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { parse } from 'node:url';
+import { createHmac } from 'node:crypto';
 import next from 'next';
 import { Server as IOServer, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
@@ -540,6 +541,35 @@ app.prepare().then(() => {
     });
 
     // ---------- WebRTC сигналинг ----------
+    // Клиент перед join() запрашивает актуальный список ICE-серверов.
+    // Если задан TURN_SECRET — выдаём собственный coturn с краткоживущими creds.
+    // Это безопаснее, чем хардкод username/password в JS-бандле.
+    // Креды валидны 1 час, схема — RFC 7635 (use-auth-secret в coturn).
+    socket.on(
+      'audio:get-ice-servers',
+      (cb?: (servers: { urls: string | string[]; username?: string; credential?: string }[]) => void) => {
+        if (typeof cb !== 'function') return;
+        const turnSecret = process.env.TURN_SECRET;
+        const turnHost = process.env.TURN_HOST;
+        const servers: { urls: string | string[]; username?: string; credential?: string }[] = [
+          { urls: 'stun:stun.l.google.com:19302' },
+        ];
+        if (turnSecret && turnHost) {
+          const ttlSec = 60 * 60; // 1 час
+          const expiry = Math.floor(Date.now() / 1000) + ttlSec;
+          const username = `${expiry}:${socket.id}`;
+          const credential = createHmac('sha1', turnSecret).update(username).digest('base64');
+          servers.push(
+            { urls: `stun:${turnHost}:3478` },
+            { urls: `turn:${turnHost}:3478?transport=udp`, username, credential },
+            { urls: `turn:${turnHost}:3478?transport=tcp`, username, credential },
+            { urls: `turns:${turnHost}:5349?transport=tcp`, username, credential },
+          );
+        }
+        cb(servers);
+      },
+    );
+
     // Клиент нажал «Подключиться» → готов отправлять/принимать звук.
     // Возвращаем ему ТОЛЬКО тех, кто уже в аудио (иначе WebRTC создаст «полудуплекс»).
     // Сообщаем уже подключённым, что появился новый пир (они сами не инициируют).
