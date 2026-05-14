@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import {
   SocketEvents,
   STARTING_FEN,
+  DEFAULT_ROOM_MODE,
   type Participant,
   type RoomStatePayload,
   type ChatMessageDto,
@@ -16,7 +17,13 @@ import {
   type TournamentLivePayload,
   type TournamentMatchDto,
   type TournamentStandingDto,
+  type RoomMode,
+  type MoveHistoryEntry,
+  type BoardArrow,
+  type BoardMark,
+  type ArrowColor,
 } from '../src/lib/socket-events';
+import { forceMove, setSideToMove, sideToMove as fenSideToMove } from '../src/lib/fen';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number(process.env.PORT) || 3000;
@@ -45,6 +52,57 @@ interface RoomRuntime {
   blackId?: string | null;
   matchId?: string | null;
   finished?: boolean;
+  /** Настройки тренировочной комнаты (legal/illegal, sideLock, права учеников). */
+  mode: RoomMode;
+  /** История ходов с момента старта/после reset/после edit-end. */
+  history: MoveHistoryEntry[];
+  /** Стрелки и выделения клеток, синхронизированные между всеми участниками. */
+  arrows: BoardArrow[];
+  marks: BoardMark[];
+}
+
+const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
+const SQUARE_RX = /^[a-h][1-8]$/;
+
+function sanitizeArrows(input: unknown): BoardArrow[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: BoardArrow[] = [];
+  for (const raw of input.slice(0, 32)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    const from = typeof r.from === 'string' ? r.from.toLowerCase() : '';
+    const to = typeof r.to === 'string' ? r.to.toLowerCase() : '';
+    const color = (ALLOWED_ARROW_COLORS as string[]).includes(String(r.color))
+      ? (r.color as ArrowColor)
+      : 'green';
+    if (!SQUARE_RX.test(from) || !SQUARE_RX.test(to) || from === to) continue;
+    const key = `${from}->${to}:${color}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ from, to, color });
+  }
+  return out;
+}
+
+function sanitizeMarks(input: unknown): BoardMark[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: BoardMark[] = [];
+  for (const raw of input.slice(0, 32)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    const square = typeof r.square === 'string' ? r.square.toLowerCase() : '';
+    const color = (ALLOWED_ARROW_COLORS as string[]).includes(String(r.color))
+      ? (r.color as ArrowColor)
+      : 'red';
+    if (!SQUARE_RX.test(square)) continue;
+    const key = `${square}:${color}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ square, color });
+  }
+  return out;
 }
 
 const rooms = new Map<string, RoomRuntime>();
@@ -82,6 +140,10 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     participants: Array.from(room.participants.values()),
     kind: room.kind,
     timeControl: room.timeControl,
+    mode: room.mode,
+    history: room.history,
+    arrows: room.arrows,
+    marks: room.marks,
   };
 }
 
@@ -111,6 +173,10 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     matchId: dbRoom.match?.id ?? null,
     whiteId: dbRoom.match?.whiteId ?? null,
     blackId: dbRoom.match?.blackId ?? null,
+    mode: { ...DEFAULT_ROOM_MODE },
+    history: [],
+    arrows: [],
+    marks: [],
   };
   rooms.set(code, runtime);
   return runtime;
@@ -292,6 +358,10 @@ app.prepare().then(() => {
         matchId: match.id,
         whiteId,
         blackId,
+        mode: { ...DEFAULT_ROOM_MODE },
+        history: [],
+        arrows: [],
+        marks: [],
       });
     }
     await broadcastTournament(tournamentId);
@@ -408,51 +478,134 @@ app.prepare().then(() => {
       const runtime = rooms.get(code);
       if (!runtime) return;
       if (runtime.isEditing) {
-        socket.emit(SocketEvents.RoomError, 'Учитель сейчас редактирует позицию');
+        socket.emit(SocketEvents.RoomError, 'Идёт редактирование позиции');
         return;
       }
-      // В турнирной партии ходить могут только белые/чёрные.
-      if (runtime.kind === 'tournament' && (runtime.whiteId || runtime.blackId)) {
-        if (userId !== runtime.whiteId && userId !== runtime.blackId) {
-          socket.emit(SocketEvents.RoomError, 'Вы зритель этой партии');
-          return;
-        }
-      }
-      try {
-        const game = new Chess(runtime.fen);
-        const turn = game.turn();
-        if (runtime.kind === 'tournament' && runtime.whiteId && runtime.blackId) {
-          const expected = turn === 'w' ? runtime.whiteId : runtime.blackId;
-          if (userId !== expected) {
-            socket.emit(SocketEvents.RoomError, 'Сейчас не ваш ход');
+
+      // ---------- Турнирная / casual партия: строго по правилам ----------
+      if (runtime.kind === 'tournament' || runtime.kind === 'casual') {
+        if (runtime.kind === 'tournament' && (runtime.whiteId || runtime.blackId)) {
+          if (userId !== runtime.whiteId && userId !== runtime.blackId) {
+            socket.emit(SocketEvents.RoomError, 'Вы зритель этой партии');
             return;
           }
         }
-        const result = game.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
-        if (!result) {
+        try {
+          const game = new Chess(runtime.fen);
+          const turn = game.turn();
+          if (runtime.whiteId && runtime.blackId) {
+            const expected = turn === 'w' ? runtime.whiteId : runtime.blackId;
+            if (userId !== expected) {
+              socket.emit(SocketEvents.RoomError, 'Сейчас не ваш ход');
+              return;
+            }
+          }
+          const result = game.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
+          if (!result) {
+            socket.emit(SocketEvents.RoomError, 'Невозможный ход');
+            return;
+          }
+          runtime.fen = game.fen();
+          runtime.history.push({
+            san: result.san,
+            from: result.from,
+            to: result.to,
+            fen: runtime.fen,
+            promotion: result.promotion,
+            legal: true,
+          });
+          // Любой новый ход «сбрасывает» текущие стрелки/маркеры,
+          // чтобы они не накапливались между разными моментами партии.
+          runtime.arrows = [];
+          runtime.marks = [];
+          io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+          await persistFen(code, runtime.fen);
+
+          if (runtime.kind === 'tournament' && runtime.matchId && !runtime.finished) {
+            let outcome: 'white' | 'black' | 'draw' | null = null;
+            if (game.isCheckmate()) {
+              outcome = turn === 'w' ? 'white' : 'black';
+            } else if (game.isStalemate() || game.isInsufficientMaterial() || game.isThreefoldRepetition() || game.isDraw()) {
+              outcome = 'draw';
+            }
+            if (outcome) {
+              runtime.finished = true;
+              io.to(code).emit(SocketEvents.GameOver, { outcome });
+              await finishMatch(runtime.matchId, outcome);
+            }
+          }
+        } catch {
           socket.emit(SocketEvents.RoomError, 'Невозможный ход');
-          return;
         }
-        runtime.fen = game.fen();
+        return;
+      }
+
+      // ---------- Учебная комната: учитываем режимы ----------
+      const { allowIllegal, sideLock } = runtime.mode;
+      try {
+        // Сначала пробуем как легальный ход — это даёт корректный SAN,
+        // правильные взятия (en-passant), рокировки и т.п.
+        let legalApplied = false;
+        let san = '';
+        let appliedFen = runtime.fen;
+        let promotionUsed: string | undefined;
+        try {
+          const game = new Chess(runtime.fen);
+          const r = game.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
+          if (r) {
+            legalApplied = true;
+            san = r.san;
+            promotionUsed = r.promotion;
+            appliedFen = game.fen();
+          }
+        } catch {
+          // Позиция уже нелегальна (нет короля и т.п.) — fallback ниже.
+        }
+
+        if (!legalApplied) {
+          if (!allowIllegal) {
+            socket.emit(SocketEvents.RoomError, 'Невозможный ход');
+            return;
+          }
+          const promo =
+            move.promotion && ['q', 'r', 'b', 'n'].includes(String(move.promotion).toLowerCase())
+              ? (String(move.promotion).toLowerCase() as 'q' | 'r' | 'b' | 'n')
+              : 'q';
+          const forced = forceMove(runtime.fen, move.from as `${string}${number}`, move.to as `${string}${number}`, promo);
+          if (!forced.piece) {
+            socket.emit(SocketEvents.RoomError, 'На клетке нет фигуры');
+            return;
+          }
+          appliedFen = forced.fen;
+          promotionUsed = forced.promoted ? promo : undefined;
+          // Синтетическая нотация для нелегальных ходов: "e2-e4" / "e7-e8=Q".
+          san = `${move.from}-${move.to}${forced.promoted ? '=' + promo.toUpperCase() : ''}`;
+          // Когда нет короля — chess.js не смог зафлипнуть сторону: делаем это вручную.
+          appliedFen = setSideToMove(appliedFen, fenSideToMove(appliedFen) === 'w' ? 'b' : 'w');
+        }
+
+        // SideLock: после хода возвращаем очередь указанной стороне.
+        if (sideLock) {
+          appliedFen = setSideToMove(appliedFen, sideLock);
+        }
+
+        runtime.fen = appliedFen;
+        runtime.history.push({
+          san,
+          from: move.from,
+          to: move.to,
+          fen: runtime.fen,
+          promotion: promotionUsed,
+          legal: legalApplied,
+        });
+        runtime.arrows = [];
+        runtime.marks = [];
+
         io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
         await persistFen(code, runtime.fen);
-
-        // Конец партии — только в турнирной комнате
-        if (runtime.kind === 'tournament' && runtime.matchId && !runtime.finished) {
-          let outcome: 'white' | 'black' | 'draw' | null = null;
-          if (game.isCheckmate()) {
-            outcome = turn === 'w' ? 'white' : 'black';
-          } else if (game.isStalemate() || game.isInsufficientMaterial() || game.isThreefoldRepetition() || game.isDraw()) {
-            outcome = 'draw';
-          }
-          if (outcome) {
-            runtime.finished = true;
-            io.to(code).emit(SocketEvents.GameOver, { outcome });
-            await finishMatch(runtime.matchId, outcome);
-          }
-        }
-      } catch {
-        socket.emit(SocketEvents.RoomError, 'Невозможный ход');
+      } catch (err) {
+        console.error('move error', err);
+        socket.emit(SocketEvents.RoomError, 'Ошибка при выполнении хода');
       }
     });
 
@@ -461,8 +614,8 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      if (runtime.kind === 'tournament') {
-        socket.emit(SocketEvents.RoomError, 'В турнирной партии редактор недоступен');
+      if (runtime.kind === 'tournament' || runtime.kind === 'casual') {
+        socket.emit(SocketEvents.RoomError, 'В игровой партии редактор недоступен');
         return;
       }
       if (runtime.ownerId !== userId) {
@@ -479,7 +632,10 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime || !runtime.isEditing) return;
-      if (runtime.ownerId !== userId) return;
+      const isOwner = runtime.ownerId === userId;
+      // Учитель — всегда; ученики — только если включён режим «ученикам можно редактировать».
+      if (!isOwner && !runtime.mode.studentsCanEdit) return;
+      if (typeof fen !== 'string' || fen.length < 5 || fen.length > 100) return;
       runtime.fen = fen;
       socket.to(code).emit(SocketEvents.EditUpdate, fen);
     });
@@ -489,17 +645,21 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
+      // Закрывать редактор может только учитель — иначе ученики мешали бы друг другу.
       if (runtime.ownerId !== userId) return;
+      if (typeof fen !== 'string' || fen.length < 5 || fen.length > 100) return;
 
-      try {
-        new Chess(fen);
-        runtime.fen = fen;
-      } catch {
-        socket.emit(SocketEvents.RoomError, 'Финальная позиция нелегальна');
-        return;
-      }
+      // Без валидации chess.js: позиция может быть без королей или с подобными
+      // «учебными» отклонениями. Корректность хода при дальнейшей игре
+      // обеспечивается режимом комнаты (legal/illegal).
+      runtime.fen = fen;
       runtime.isEditing = false;
       runtime.editorId = null;
+      // После выхода из редактора история партии больше не относится к новой
+      // позиции — обнуляем, чтобы навигация назад не показывала фантомы.
+      runtime.history = [];
+      runtime.arrows = [];
+      runtime.marks = [];
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       await persistFen(code, runtime.fen);
     });
@@ -513,8 +673,44 @@ app.prepare().then(() => {
       runtime.fen = STARTING_FEN;
       runtime.isEditing = false;
       runtime.editorId = null;
+      runtime.history = [];
+      runtime.arrows = [];
+      runtime.marks = [];
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       await persistFen(code, runtime.fen);
+    });
+
+    socket.on(SocketEvents.ModeSet, (partial: Partial<RoomMode>) => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.ownerId !== userId) return;
+      if (runtime.kind !== 'lesson') return; // турниры/casual игнорируют режимы
+
+      const next: RoomMode = { ...runtime.mode };
+      if (typeof partial.allowIllegal === 'boolean') next.allowIllegal = partial.allowIllegal;
+      if (partial.sideLock === 'w' || partial.sideLock === 'b' || partial.sideLock === null) {
+        next.sideLock = partial.sideLock;
+      }
+      if (typeof partial.studentsCanEdit === 'boolean') next.studentsCanEdit = partial.studentsCanEdit;
+      runtime.mode = next;
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+    });
+
+    socket.on(SocketEvents.ArrowsUpdate, (payload: { arrows?: unknown; marks?: unknown }) => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      runtime.arrows = sanitizeArrows(payload?.arrows);
+      runtime.marks = sanitizeMarks(payload?.marks);
+      // Стрелки рассылаем без буду RoomState — отдельным компактным событием,
+      // чтобы не дёргать пересчёт всего UI при каждом движении мыши.
+      io.to(code).emit(SocketEvents.ArrowsUpdate, {
+        arrows: runtime.arrows,
+        marks: runtime.marks,
+      });
     });
 
     // ---------- Чат ----------
@@ -701,6 +897,10 @@ app.prepare().then(() => {
           tournamentId: null,
           whiteId,
           blackId,
+          mode: { ...DEFAULT_ROOM_MODE },
+          history: [],
+          arrows: [],
+          marks: [],
         });
         const payloadA: MatchFoundPayload = {
           code,

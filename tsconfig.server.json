@@ -12,5 +12,11 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["server/**/*.ts", "src/lib/socket-events.ts", "src/types/**/*.ts"]
+  "include": [
+    "server/**/*.ts",
+    "src/lib/socket-events.ts",
+    "src/lib/fen.ts",
+    "src/lib/piece.ts",
+    "src/types/**/*.ts"
+  ]
 }

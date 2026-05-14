@@ -8,12 +8,15 @@ import {
   useState,
   type CSSProperties,
   type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Chess, type Square as ChessSquare } from 'chess.js';
 import { PieceSvg, type PieceCode } from './PieceSvg';
 import { cn } from '@/lib/utils';
 import { parseFen, setPiece as setPieceFen, emptyFen } from '@/lib/fen';
 import { playCaptureSound, playMoveSound, unlockSounds } from '@/lib/sounds';
+import type { BoardArrow, BoardMark, ArrowColor } from '@/lib/socket-events';
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
 const RANKS = [8, 7, 6, 5, 4, 3, 2, 1] as const;
@@ -25,15 +28,24 @@ export interface ChessBoardProps {
   canMove: boolean;
   /** Включён ли режим редактора (палитра + удаление). */
   isEditing: boolean;
-  /** Может ли пользователь редактировать (учитель). */
+  /** Может ли пользователь редактировать (учитель / ученик с правами). */
   canEdit: boolean;
   /** Перевернуть доску для игры за чёрных. */
   flipped?: boolean;
+  /** Разрешает любые ходы (без проверки правил). Подсказки легальных всё ещё показываются. */
+  allowIllegal?: boolean;
+  /** Если задан — пешка, дошедшая до 1/8 ряда, превращается через диалог.
+   *  Без обработчика — превращение происходит автоматически в ферзя. */
+  onPromotionRequest?: (move: { from: string; to: string; color: 'w' | 'b' }) => boolean;
   onMove?: (move: { from: string; to: string; promotion?: string }) => void;
   /** В edit-режиме приходит полный FEN. */
   onEditFen?: (fen: string) => void;
   /** Подсветка (последний ход / подсказка движка). */
   highlights?: { from?: string; to?: string };
+  /** Стрелки и выделения клеток (общий слой; синхронизируется снаружи). */
+  arrows?: BoardArrow[];
+  marks?: BoardMark[];
+  onAnnotationsChange?: (next: { arrows: BoardArrow[]; marks: BoardMark[] }) => void;
   /** Узкая рамка и отступы — визуально ближе к Lichess. */
   compact?: boolean;
   /** Родитель задаёт квадрат; поле растягивается на доступную высоту внутри колонки. */
@@ -69,9 +81,14 @@ export function ChessBoard({
   isEditing,
   canEdit,
   flipped = false,
+  allowIllegal = false,
+  onPromotionRequest,
   onMove,
   onEditFen,
   highlights,
+  arrows = [],
+  marks = [],
+  onAnnotationsChange,
   compact = false,
   fillContainer = false,
   className,
@@ -83,6 +100,11 @@ export function ChessBoard({
   const dragRef = useRef<DragState | null>(null);
   const prevFenRef = useRef<string | null>(null);
   const animKeyRef = useRef(0);
+  /** Sticky-фигура из палитры: выбранная мышью, остаётся «в курсоре» пока её не сменили. */
+  const [paletteCursor, setPaletteCursor] = useState<PieceCode | null>(null);
+  /** Активное рисование стрелки правой кнопкой: from-клетка + текущая клетка под курсором. */
+  const [arrowDrag, setArrowDrag] = useState<{ from: Sq; to: Sq; color: ArrowColor } | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
 
   // Один раз — подписаться на жесты для разблокировки звука.
   useEffect(() => {
@@ -110,7 +132,23 @@ export function ChessBoard({
   // При входе/выходе из режима редактирования сбрасываем подсветку последнего хода.
   useEffect(() => {
     if (isEditing) setLastMove(null);
+    if (!isEditing) setPaletteCursor(null);
   }, [isEditing]);
+
+  // Escape — снимает sticky-фигуру / отменяет рисование стрелки / снимает выделение.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (paletteCursor) setPaletteCursor(null);
+      if (arrowDrag) setArrowDrag(null);
+      if (selected) {
+        setSelected(null);
+        setLegalMoves([]);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paletteCursor, arrowDrag, selected]);
 
   // Детекция хода: ищем легальный ход из prevFen, который даёт текущий fen.
   // useLayoutEffect, чтобы новая подсветка/анимация попала в тот же кадр и не «мигало».
@@ -221,10 +259,33 @@ export function ChessBoard({
     }
   }
 
+  /** Попытка хода с учётом promotion: возвращает true, если ход «съели» (отправили или открыли диалог). */
+  function attemptMove(from: Sq, to: Sq): boolean {
+    if (!onMove) return false;
+    const piece = pieceAt(from);
+    if (!piece) return false;
+    const targetRank = Number(to[1]);
+    const isPawn = piece[1] === 'p';
+    const promotes =
+      isPawn && ((piece[0] === 'w' && targetRank === 8) || (piece[0] === 'b' && targetRank === 1));
+    if (promotes && onPromotionRequest) {
+      // Диалог откроет внешний компонент — он сам потом вызовет onMove.
+      const handled = onPromotionRequest({ from, to, color: piece[0] as 'w' | 'b' });
+      if (handled) return true;
+    }
+    onMove({ from, to, promotion: 'q' });
+    return true;
+  }
+
   function onSquareClick(sq: Sq) {
     if (isEditing) {
-      // В режиме редактора клик ничего не удаляет — фигура снимается
-      // только перетаскиванием обратно в палитру.
+      if (!canEdit) return;
+      // Sticky-фигура: один раз кликнул в палитре → этой фигурой расставляем
+      // по доске множество клеток подряд. Чтобы снять — кликнуть в палитре
+      // на ту же фигуру или нажать Escape.
+      if (paletteCursor) {
+        onEditFen?.(setPieceFen(fen, sq, paletteCursor));
+      }
       return;
     }
     if (!canMove) return;
@@ -236,8 +297,9 @@ export function ChessBoard({
         setLegalMoves([]);
         return;
       }
-      if (legalMoves.includes(sq)) {
-        onMove?.({ from: selected, to: sq, promotion: 'q' });
+      // Если включён вольный режим — разрешаем любой ход; иначе только из подсказок.
+      if (allowIllegal || legalMoves.includes(sq)) {
+        attemptMove(selected, sq);
         setSelected(null);
         setLegalMoves([]);
         return;
@@ -307,8 +369,8 @@ export function ChessBoard({
     if (!canMove || ds.from !== 'board' || !ds.square) return;
     if (ds.square === target) return;
 
-    if (getLegalMoves(ds.square).includes(target)) {
-      onMove?.({ from: ds.square, to: target, promotion: 'q' });
+    if (allowIllegal || getLegalMoves(ds.square).includes(target)) {
+      attemptMove(ds.square, target);
     }
   }
 
@@ -331,6 +393,110 @@ export function ChessBoard({
   function clearBoard() {
     if (!canEdit) return;
     onEditFen?.(emptyFen());
+  }
+
+  // -------------------- Стрелки и выделения (ПКМ) --------------------
+
+  /** Определяет клетку по координатам мыши в области доски. */
+  function squareFromPoint(clientX: number, clientY: number): Sq | null {
+    const el = boardRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
+    const col = Math.min(7, Math.max(0, Math.floor((x / rect.width) * 8)));
+    const row = Math.min(7, Math.max(0, Math.floor((y / rect.height) * 8)));
+    const file = flipped ? FILES[7 - col] : FILES[col];
+    const rank = (flipped ? RANKS[7 - row] : RANKS[row]) as (typeof RANKS)[number];
+    return `${file}${rank}` as Sq;
+  }
+
+  function arrowColorFromEvent(e: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }): ArrowColor {
+    if (e.shiftKey) return 'green';
+    if (e.altKey) return 'blue';
+    if (e.ctrlKey || e.metaKey) return 'yellow';
+    return 'red';
+  }
+
+  function onBoardPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    if (e.button === 2) {
+      // ПКМ → начинаем рисовать стрелку/маркер.
+      const sq = squareFromPoint(e.clientX, e.clientY);
+      if (!sq) return;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore — браузер может отказать на touch
+      }
+      setArrowDrag({ from: sq, to: sq, color: arrowColorFromEvent(e) });
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0) {
+      // ЛКМ по любой клетке очищает стрелки и выделения (как в Lichess).
+      if ((arrows.length > 0 || marks.length > 0) && onAnnotationsChange) {
+        onAnnotationsChange({ arrows: [], marks: [] });
+      }
+    }
+  }
+
+  function onBoardPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!arrowDrag) return;
+    const sq = squareFromPoint(e.clientX, e.clientY);
+    if (!sq || sq === arrowDrag.to) return;
+    setArrowDrag({ ...arrowDrag, to: sq });
+  }
+
+  function commitArrowDrag(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!arrowDrag) return;
+    const end = squareFromPoint(e.clientX, e.clientY) ?? arrowDrag.to;
+    const color = arrowColorFromEvent(e) ?? arrowDrag.color;
+    setArrowDrag(null);
+
+    if (!onAnnotationsChange) return;
+    if (end === arrowDrag.from) {
+      // Просто клик ПКМ по клетке — toggle выделения.
+      const exists = marks.find((m) => m.square === end && m.color === color);
+      const nextMarks = exists
+        ? marks.filter((m) => !(m.square === end && m.color === color))
+        : [...marks.filter((m) => m.square !== end), { square: end, color }];
+      onAnnotationsChange({ arrows, marks: nextMarks });
+      return;
+    }
+    // Перетаскивание ПКМ — toggle стрелки одного цвета между двумя клетками.
+    const exists = arrows.find((a) => a.from === arrowDrag.from && a.to === end && a.color === color);
+    const nextArrows = exists
+      ? arrows.filter((a) => !(a.from === arrowDrag.from && a.to === end && a.color === color))
+      : [
+          ...arrows.filter((a) => !(a.from === arrowDrag.from && a.to === end)),
+          { from: arrowDrag.from, to: end, color },
+        ];
+    onAnnotationsChange({ arrows: nextArrows, marks });
+  }
+
+  function onBoardPointerUp(e: ReactPointerEvent<HTMLDivElement>) {
+    if (e.button === 2 && arrowDrag) {
+      commitArrowDrag(e);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+      e.preventDefault();
+    }
+  }
+
+  function onBoardContextMenu(e: ReactMouseEvent<HTMLDivElement>) {
+    // Контекстное меню только мешает рисованию стрелок.
+    e.preventDefault();
+  }
+
+  // -------------------- Палитра / sticky-фигура --------------------
+
+  function onPaletteClick(piece: PieceCode) {
+    if (!canEdit) return;
+    setPaletteCursor((cur) => (cur === piece ? null : piece));
   }
 
   /** В комнате палитра слева от доски в потоке не участвует — доска остаётся на месте. */
@@ -371,27 +537,46 @@ export function ChessBoard({
                   paletteAside ? 'grid-cols-2 p-1.5' : cn('grid-cols-12', compact ? 'p-1.5' : 'p-2'),
                 )}
               >
-                {PIECE_PALETTE.map((p) => (
-                  <div
-                    key={p}
-                    draggable
-                    onDragStart={(e) => onPaletteDragStart(e, p)}
-                    className="flex aspect-square cursor-grab items-center justify-center rounded-lg bg-stone-100 hover:bg-brand-100 dark:bg-stone-800 dark:hover:bg-brand-900/40"
-                    title={`Перетащите ${p.toUpperCase()} на доску`}
-                  >
-                    <PieceSvg
-                      code={p}
-                      className={
-                        paletteAside
-                          ? 'h-5 w-5'
-                          : compact
-                            ? 'h-5 w-5 sm:h-6 sm:w-6'
-                            : 'h-7 w-7'
+                {PIECE_PALETTE.map((p) => {
+                  const active = paletteCursor === p;
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      draggable
+                      onDragStart={(e) => onPaletteDragStart(e, p)}
+                      onClick={() => onPaletteClick(p)}
+                      className={cn(
+                        'flex aspect-square cursor-grab items-center justify-center rounded-lg transition',
+                        active
+                          ? 'bg-brand-500/90 text-white shadow-glow ring-2 ring-brand-300'
+                          : 'bg-stone-100 hover:bg-brand-100 dark:bg-stone-800 dark:hover:bg-brand-900/40',
+                      )}
+                      title={
+                        active
+                          ? 'Нажмите ещё раз, чтобы отменить выбор'
+                          : `Кликните, затем расставляйте по клеткам (или перетащите)`
                       }
-                    />
-                  </div>
-                ))}
+                    >
+                      <PieceSvg
+                        code={p}
+                        className={
+                          paletteAside
+                            ? 'h-5 w-5'
+                            : compact
+                              ? 'h-5 w-5 sm:h-6 sm:w-6'
+                              : 'h-7 w-7'
+                        }
+                      />
+                    </button>
+                  );
+                })}
               </div>
+              {paletteCursor && (
+                <div className="mt-1 rounded-md bg-brand-100/70 px-2 py-1 text-[10px] text-brand-800 dark:bg-brand-900/30 dark:text-brand-200">
+                  Расставляйте {paletteCursor.toUpperCase()} кликами. Esc — отменить.
+                </div>
+              )}
               <button onClick={clearBoard} className="btn-ghost mt-2 w-full text-xs">
                 Очистить доску
               </button>
@@ -410,11 +595,22 @@ export function ChessBoard({
         )}
       >
         <div
+          ref={boardRef}
+          onPointerDown={onBoardPointerDown}
+          onPointerMove={onBoardPointerMove}
+          onPointerUp={onBoardPointerUp}
+          onContextMenu={onBoardContextMenu}
           className={cn(
-            'grid h-full w-full grid-cols-8 grid-rows-8 overflow-hidden',
+            'relative grid h-full w-full grid-cols-8 grid-rows-8 overflow-hidden touch-none',
             compact ? 'rounded-md' : 'rounded-xl',
           )}
         >
+          <ArrowsOverlay
+            arrows={arrows}
+            marks={marks}
+            activeDrag={arrowDrag}
+            flipped={flipped}
+          />
           {orderedRanks.map((rank) =>
             orderedFiles.map((file) => {
               const sq = `${file}${rank}` as Sq;
@@ -527,5 +723,130 @@ export function ChessBoard({
         </div>
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// Стрелки и выделения (SVG-overlay поверх 8×8 сетки). Координаты в %.
+// ============================================================================
+
+const ARROW_HEX: Record<ArrowColor, string> = {
+  green: '#15803d',
+  red: '#dc2626',
+  blue: '#1d4ed8',
+  yellow: '#ca8a04',
+};
+
+function ArrowsOverlay({
+  arrows,
+  marks,
+  activeDrag,
+  flipped,
+}: {
+  arrows: BoardArrow[];
+  marks: BoardMark[];
+  activeDrag: { from: string; to: string; color: ArrowColor } | null;
+  flipped: boolean;
+}) {
+  function center(sq: string): { x: number; y: number } | null {
+    const file = sq[0];
+    const rank = Number(sq.slice(1));
+    const col = FILES.indexOf(file as (typeof FILES)[number]);
+    const row = RANKS.indexOf(rank as (typeof RANKS)[number]);
+    if (col < 0 || row < 0) return null;
+    const visCol = flipped ? 7 - col : col;
+    const visRow = flipped ? 7 - row : row;
+    // Центр клетки в процентах (каждая клетка = 12.5% × 12.5%).
+    return { x: visCol * 12.5 + 6.25, y: visRow * 12.5 + 6.25 };
+  }
+
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      className="pointer-events-none absolute inset-0 z-[5] h-full w-full"
+    >
+      <defs>
+        {(Object.keys(ARROW_HEX) as ArrowColor[]).map((c) => (
+          <marker
+            key={c}
+            id={`arrow-head-${c}`}
+            viewBox="0 0 10 10"
+            refX="6"
+            refY="5"
+            markerWidth="4"
+            markerHeight="4"
+            orient="auto-start-reverse"
+          >
+            <path d="M0,0 L10,5 L0,10 z" fill={ARROW_HEX[c]} />
+          </marker>
+        ))}
+      </defs>
+
+      {/* Выделения клеток — рамка-обводка по периметру клетки. */}
+      {marks.map((m, i) => {
+        const c = center(m.square);
+        if (!c) return null;
+        return (
+          <rect
+            key={`mark-${i}-${m.square}-${m.color}`}
+            x={c.x - 6.25 + 0.5}
+            y={c.y - 6.25 + 0.5}
+            width={12.5 - 1}
+            height={12.5 - 1}
+            rx={1.2}
+            fill="none"
+            stroke={ARROW_HEX[m.color]}
+            strokeWidth={1.4}
+            opacity={0.85}
+          />
+        );
+      })}
+
+      {/* Финальные стрелки. */}
+      {arrows.map((a, i) => (
+        <ArrowLine key={`arrow-${i}-${a.from}-${a.to}-${a.color}`} arrow={a} center={center} />
+      ))}
+
+      {/* Превью текущей стрелки во время ПКМ-drag. */}
+      {activeDrag && activeDrag.from !== activeDrag.to && (
+        <ArrowLine arrow={activeDrag as BoardArrow} center={center} opacity={0.55} />
+      )}
+    </svg>
+  );
+}
+
+function ArrowLine({
+  arrow,
+  center,
+  opacity = 0.85,
+}: {
+  arrow: BoardArrow;
+  center: (sq: string) => { x: number; y: number } | null;
+  opacity?: number;
+}) {
+  const a = center(arrow.from);
+  const b = center(arrow.to);
+  if (!a || !b) return null;
+  // Слегка укорачиваем линию у наконечника, чтобы стрелка не перекрывала фигуру.
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  const shrink = 3; // ≈ четверть клетки
+  const ratio = Math.max(0, (len - shrink) / len);
+  const endX = a.x + dx * ratio;
+  const endY = a.y + dy * ratio;
+  return (
+    <line
+      x1={a.x}
+      y1={a.y}
+      x2={endX}
+      y2={endY}
+      stroke={ARROW_HEX[arrow.color]}
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      opacity={opacity}
+      markerEnd={`url(#arrow-head-${arrow.color})`}
+    />
   );
 }

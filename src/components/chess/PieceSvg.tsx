@@ -3,10 +3,9 @@
 // Использует только path/fill — отлично масштабируется и легко перекрашивается через CSS.
 
 import type { SVGProps } from 'react';
+import type { PieceColor, PieceType, PieceCode } from '@/lib/piece';
 
-export type PieceColor = 'w' | 'b';
-export type PieceType = 'k' | 'q' | 'r' | 'b' | 'n' | 'p';
-export type PieceCode = `${PieceColor}${PieceType}`;
+export type { PieceColor, PieceType, PieceCode };
 
 interface Props extends SVGProps<SVGSVGElement> {
   code: PieceCode;

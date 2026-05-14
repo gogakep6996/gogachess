@@ -4,7 +4,7 @@
 // две пешки на одной вертикали и т.п.) — итоговую позицию валидирует
 // сервер при нажатии «Продолжить».
 
-import type { PieceCode } from '@/components/chess/PieceSvg';
+import type { PieceCode } from '@/lib/piece';
 
 export type Square = `${string}${number}`;
 
@@ -85,4 +85,52 @@ export function getPiece(fen: string, sq: Square): PieceCode | null {
 
 export function emptyFen(): string {
   return '8/8/8/8/8/8/8/8 w - - 0 1';
+}
+
+/** Возвращает сторону, которая должна ходить (`w` или `b`). */
+export function sideToMove(fen: string): 'w' | 'b' {
+  const parts = fen.split(' ');
+  return parts[1] === 'b' ? 'b' : 'w';
+}
+
+/** Меняет сторону хода в FEN, сохраняя остальные поля. */
+export function flipSide(fen: string): string {
+  return setSideToMove(fen, sideToMove(fen) === 'w' ? 'b' : 'w');
+}
+
+/** Принудительно устанавливает указанную сторону хода. */
+export function setSideToMove(fen: string, side: 'w' | 'b'): string {
+  const parts = fen.split(' ');
+  if (parts.length < 2) return `${parts[0] ?? emptyFen().split(' ')[0]} ${side} - - 0 1`;
+  parts[1] = side;
+  // Сбрасываем en-passant — он был релевантен только для прежней стороны.
+  if (parts[3] && parts[3] !== '-') parts[3] = '-';
+  return parts.join(' ');
+}
+
+/** «Силовой» ход без валидации правил: переносит фигуру с from на to,
+ *  опционально превращая пешку. Используется в свободном режиме комнаты. */
+export function forceMove(
+  fen: string,
+  from: Square,
+  to: Square,
+  promotion?: 'q' | 'r' | 'b' | 'n',
+): { fen: string; promoted: boolean; piece: PieceCode | null } {
+  const piece = getPiece(fen, from);
+  if (!piece) return { fen, promoted: false, piece: null };
+  let next = setPiece(fen, from, null);
+  let placed: PieceCode = piece;
+  const targetRank = Number(to[1]);
+  const isPawn = piece[1] === 'p';
+  const reachesEnd =
+    isPawn && ((piece[0] === 'w' && targetRank === 8) || (piece[0] === 'b' && targetRank === 1));
+  let promoted = false;
+  if (reachesEnd) {
+    const p = (promotion ?? 'q').toLowerCase();
+    const target = (['q', 'r', 'b', 'n'].includes(p) ? p : 'q') as 'q' | 'r' | 'b' | 'n';
+    placed = `${piece[0]}${target}` as PieceCode;
+    promoted = true;
+  }
+  next = setPiece(next, to, placed);
+  return { fen: next, promoted, piece: placed };
 }

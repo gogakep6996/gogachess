@@ -63,23 +63,19 @@ export function AudioPanel({
           🎙 подключиться
         </button>
       ) : (
-        <div className={cn('flex gap-1', c ? 'mt-1' : '')}>
+        <div className={cn('flex items-center justify-between gap-2', c ? 'mt-1' : '')}>
+          <MicToggleButton
+            enabled={micEnabled}
+            forcedMute={forcedMute}
+            onClick={onToggleMic}
+            compact={c}
+          />
           <button
             type="button"
-            onClick={onToggleMic}
-            disabled={forcedMute}
-            className={cn(
-              'btn flex-1',
-              c ? '!px-2 !py-1 text-[11px]' : '',
-              micEnabled
-                ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                : 'bg-stone-200 text-stone-700 hover:bg-stone-300 dark:bg-stone-800 dark:text-stone-200',
-            )}
-            title={forcedMute ? 'Отключено учителем' : ''}
+            onClick={onLeave}
+            className={cn('btn-ghost text-[11px]', c && '!px-1.5 !py-0.5 text-[10px]')}
+            title="Покинуть аудио"
           >
-            {micEnabled ? 'вкл' : forcedMute ? '🔇 уч.' : 'микрофон'}
-          </button>
-          <button type="button" onClick={onLeave} className={cn('btn-outline', c && '!px-2 !py-1 text-[11px]')}>
             вых.
           </button>
         </div>
@@ -160,5 +156,61 @@ function MicIndicator({ enabled, compact }: { enabled: boolean; compact?: boolea
     >
       {compact ? (enabled ? '♪' : '—') : enabled ? '🎙 on' : '🔇 off'}
     </span>
+  );
+}
+
+/** Одна круглая кнопка с SVG-иконкой микрофона: вкл = зелёная, выкл = серая,
+ *  принудительно замьючен = красная с диагональю. */
+function MicToggleButton({
+  enabled,
+  forcedMute,
+  onClick,
+  compact,
+}: {
+  enabled: boolean;
+  forcedMute: boolean;
+  onClick: () => void;
+  compact: boolean;
+}) {
+  const size = compact ? 'h-9 w-9' : 'h-10 w-10';
+  const isOff = forcedMute || !enabled;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={forcedMute}
+      title={
+        forcedMute
+          ? 'Микрофон отключён учителем'
+          : enabled
+            ? 'Выключить микрофон'
+            : 'Включить микрофон'
+      }
+      aria-pressed={enabled}
+      aria-label={enabled ? 'Микрофон включён' : 'Микрофон выключен'}
+      className={cn(
+        'relative grid shrink-0 place-items-center rounded-full transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
+        size,
+        forcedMute
+          ? 'cursor-not-allowed bg-red-500/90 text-white shadow-soft'
+          : enabled
+            ? 'bg-emerald-500 text-white shadow-glow hover:bg-emerald-600 active:scale-95'
+            : 'bg-stone-200 text-stone-600 hover:bg-stone-300 active:scale-95 dark:bg-stone-700 dark:text-stone-200 dark:hover:bg-stone-600',
+      )}
+    >
+      <MicSvg muted={isOff} className={compact ? 'h-4 w-4' : 'h-5 w-5'} />
+    </button>
+  );
+}
+
+function MicSvg({ muted, className }: { muted: boolean; className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className={className}>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+      <path d="M8 21h8" />
+      {muted && <path d="M3 3l18 18" stroke="currentColor" strokeWidth={2.2} />}
+    </svg>
   );
 }

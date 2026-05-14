@@ -1,14 +1,17 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChessBoard } from '@/components/chess/ChessBoard';
+import { PromotionDialog } from '@/components/chess/PromotionDialog';
 import { ChatPanel } from '@/components/room/ChatPanel';
 import { AudioPanel } from '@/components/room/AudioPanel';
 import { EnginePanel } from '@/components/room/EnginePanel';
+import { HistoryPanel } from '@/components/room/HistoryPanel';
+import { ModePanel } from '@/components/room/ModePanel';
 import { useRoomSocket } from '@/hooks/useRoomSocket';
 import { useAudioRoom } from '@/hooks/useAudioRoom';
 import { useStockfish } from '@/hooks/useStockfish';
-import { STARTING_FEN } from '@/lib/socket-events';
+import { DEFAULT_ROOM_MODE, STARTING_FEN } from '@/lib/socket-events';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -59,54 +62,64 @@ export function RoomClient({ meId, room }: Props) {
     endEdit,
     resetPosition,
     sendChat,
+    setMode,
+    setAnnotations,
   } = useRoomSocket(room.code);
 
   const audio = useAudioRoom(socket);
 
   const fen = state?.fen ?? STARTING_FEN;
   const isEditing = state?.isEditing ?? false;
+  const mode = state?.mode ?? DEFAULT_ROOM_MODE;
+  const history = state?.history ?? [];
+  const arrows = state?.arrows ?? [];
+  const marks = state?.marks ?? [];
+
+  // Только владелец lesson-комнаты управляет режимом; ученики могут редактировать,
+  // если учитель открыл редактор и разрешил всем редактирование.
+  const canEditNow = isEditing && (isOwner || mode.studentsCanEdit);
 
   const [copied, setCopied] = useState(false);
 
-  const [draftFen, setDraftFen] = useState<string | null>(null);
-  useEffect(() => {
-    if (isEditing && isOwner && draftFen === null) setDraftFen(fen);
-    if (!isEditing) setDraftFen(null);
-  }, [isEditing, isOwner, fen, draftFen]);
+  // viewIdx ∈ [-1 .. history.length-1]; -1 = стартовая позиция, history.length-1 = текущая.
+  const [viewIdx, setViewIdx] = useState<number>(-1);
+  const followLatestRef = useRef<boolean>(true);
 
-  // ---- История позиций для пролистывания «◂ ▸» ----
-  // viewIdx — всегда валидный индекс в historyFens. Если равен последнему —
-  // показываем «текущую» позицию и автоматически следуем за новыми ходами.
-  const [historyFens, setHistoryFens] = useState<string[]>([fen]);
-  const [viewIdx, setViewIdx] = useState<number>(0);
-  const lastPushedRef = useRef<string>(fen);
-
+  // Когда история удлинилась и пользователь «следовал за партией» — переключаемся на последний ход.
   useEffect(() => {
     if (isEditing) return;
-    if (fen === lastPushedRef.current) return;
-    lastPushedRef.current = fen;
-    setHistoryFens((h) => {
-      if (h[h.length - 1] === fen) return h;
-      const next = [...h, fen];
-      // Если зритель находился на последней позиции — двигаемся вместе с историей.
-      setViewIdx((idx) => (idx === h.length - 1 ? next.length - 1 : idx));
-      return next;
-    });
-  }, [fen, isEditing]);
+    if (followLatestRef.current) setViewIdx(history.length - 1);
+  }, [history.length, isEditing]);
 
-  // При входе в редактор — возвращаемся к самой свежей позиции, чтобы видеть правки.
+  // При входе в редактор — следим за свежей позицией, чтобы видеть правки.
   useEffect(() => {
-    if (isEditing) setViewIdx(historyFens.length - 1);
-  }, [isEditing, historyFens.length]);
+    if (isEditing) {
+      followLatestRef.current = true;
+      setViewIdx(history.length - 1);
+    }
+  }, [isEditing, history.length]);
 
-  const totalHistory = historyFens.length;
-  const lastIdx = totalHistory - 1;
+  function selectHistoryIdx(idx: number) {
+    const clamped = Math.max(-1, Math.min(history.length - 1, idx));
+    followLatestRef.current = clamped === history.length - 1;
+    setViewIdx(clamped);
+  }
+
+  const lastIdx = history.length - 1;
   const isViewingPast = viewIdx < lastIdx;
+  const startFen = STARTING_FEN;
+  const viewFen = viewIdx === -1 ? startFen : history[viewIdx]?.fen ?? fen;
 
-  const goPrev = () => setViewIdx((i) => Math.max(0, i - 1));
-  const goNext = () => setViewIdx((i) => Math.min(lastIdx, i + 1));
-  const goStart = () => setViewIdx(0);
-  const goEnd = () => setViewIdx(lastIdx);
+  const goPrev = () => selectHistoryIdx(viewIdx - 1);
+  const goNext = () => selectHistoryIdx(viewIdx + 1);
+  const goStart = () => selectHistoryIdx(-1);
+  const goEnd = () => selectHistoryIdx(lastIdx);
+
+  const [draftFen, setDraftFen] = useState<string | null>(null);
+  useEffect(() => {
+    if (isEditing && canEditNow && draftFen === null) setDraftFen(fen);
+    if (!isEditing) setDraftFen(null);
+  }, [isEditing, canEditNow, fen, draftFen]);
 
   function handleEditStart() {
     setDraftFen(fen);
@@ -118,6 +131,24 @@ export function RoomClient({ meId, room }: Props) {
   }
   function handleEditEnd() {
     endEdit(draftFen ?? fen);
+  }
+
+  // ---- Промоушен пешки: задерживаем ход, открываем диалог ----
+  const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string; color: 'w' | 'b' } | null>(null);
+  const handlePromotionRequest = useCallback(
+    (m: { from: string; to: string; color: 'w' | 'b' }) => {
+      setPendingPromotion(m);
+      return true; // ход обработан — отправлять будем по выбору пользователя
+    },
+    [],
+  );
+  function confirmPromotion(piece: 'q' | 'r' | 'b' | 'n') {
+    if (!pendingPromotion) return;
+    sendMove({ from: pendingPromotion.from, to: pendingPromotion.to, promotion: piece });
+    setPendingPromotion(null);
+  }
+  function cancelPromotion() {
+    setPendingPromotion(null);
   }
 
   async function copyLink() {
@@ -133,11 +164,11 @@ export function RoomClient({ meId, room }: Props) {
 
   const canMove = !isEditing && connected && !isViewingPast;
   const displayFen = isEditing
-    ? isOwner && draftFen
+    ? canEditNow && draftFen
       ? draftFen
       : fen
     : isViewingPast
-      ? historyFens[viewIdx] ?? fen
+      ? viewFen
       : fen;
 
   // ---- Игра против компьютера ----
@@ -180,6 +211,11 @@ export function RoomClient({ meId, room }: Props) {
       // Сначала закрываем редактор — иначе ход не уйдёт.
       handleEditEnd();
     }
+    // Игра с компьютером всегда строго по правилам — выключаем «свободные ходы» и
+    // фиксацию стороны, иначе движок будет противоречить состоянию доски.
+    if (mode.allowIllegal || mode.sideLock) {
+      setMode({ allowIllegal: false, sideLock: null });
+    }
     const sideToMove = (fen.split(' ')[1] ?? 'w') as 'w' | 'b';
     setVsComp({ humanColor: sideToMove });
   };
@@ -188,7 +224,8 @@ export function RoomClient({ meId, room }: Props) {
   useEffect(() => {
     if (!vsComp) return;
     if (!fen || fen.split(' ').length < 2) setVsComp(null);
-  }, [fen, vsComp]);
+    if (mode.allowIllegal || mode.sideLock) setVsComp(null);
+  }, [fen, vsComp, mode.allowIllegal, mode.sideLock]);
 
   return (
     <main className="relative mx-auto flex min-h-0 w-full max-w-[1800px] flex-1 flex-col overflow-hidden px-2 pb-2 pt-0 sm:px-3">
@@ -218,6 +255,11 @@ export function RoomClient({ meId, room }: Props) {
               ✎ Редактор
             </button>
           ))}
+        {!isOwner && isEditing && mode.studentsCanEdit && (
+          <span className="rounded-md bg-amber-100 px-2 py-1 text-[11px] font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+            ✎ редактируете
+          </span>
+        )}
         {isOwner && (
           <button
             type="button"
@@ -251,7 +293,8 @@ export function RoomClient({ meId, room }: Props) {
                 : 'overflow-hidden lg:overflow-hidden',
             )}
           >
-            <div className="w-full max-w-[14rem] shrink-0 sm:w-[12.5rem] lg:w-[13.5rem]">
+            <div className="flex w-full max-w-[14rem] shrink-0 flex-col gap-2 sm:w-[12.5rem] lg:w-[13.5rem]">
+              <ModePanel mode={mode} canEdit={isOwner} onChange={setMode} />
               <EnginePanel
                 fen={fen}
                 variant="room"
@@ -276,9 +319,14 @@ export function RoomClient({ meId, room }: Props) {
                   fen={displayFen}
                   canMove={canMove}
                   isEditing={isEditing}
-                  canEdit={isOwner && isEditing}
+                  canEdit={canEditNow}
+                  allowIllegal={!vsComp && mode.allowIllegal}
+                  onPromotionRequest={handlePromotionRequest}
                   onMove={sendMove}
                   onEditFen={handleEditChange}
+                  arrows={arrows}
+                  marks={marks}
+                  onAnnotationsChange={setAnnotations}
                   compact
                   fillContainer
                   silent={isViewingPast}
@@ -292,7 +340,7 @@ export function RoomClient({ meId, room }: Props) {
                 <button
                   type="button"
                   onClick={goStart}
-                  disabled={viewIdx === 0}
+                  disabled={viewIdx === -1}
                   className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
                   title="К началу партии"
                 >
@@ -301,14 +349,18 @@ export function RoomClient({ meId, room }: Props) {
                 <button
                   type="button"
                   onClick={goPrev}
-                  disabled={viewIdx === 0}
+                  disabled={viewIdx === -1}
                   className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
                   title="Ход назад"
                 >
                   ‹
                 </button>
                 <div className="min-w-0 flex-1 text-center text-xs font-semibold tabular-nums text-stone-500 sm:text-sm">
-                  {isViewingPast ? `Ход ${viewIdx} / ${lastIdx}` : `Текущая · ход ${lastIdx}`}
+                  {history.length === 0
+                    ? 'Старт'
+                    : isViewingPast
+                      ? `Ход ${viewIdx + 1} / ${lastIdx + 1}`
+                      : `Текущая · ход ${lastIdx + 1}`}
                 </div>
                 <button
                   type="button"
@@ -351,11 +403,25 @@ export function RoomClient({ meId, room }: Props) {
               onForceMuteAll={audio.forceMuteAll}
             />
           </div>
+          <HistoryPanel
+            history={history}
+            viewIdx={viewIdx}
+            onSelect={selectHistoryIdx}
+            className="min-h-[6rem] max-h-[12rem] shrink-0"
+          />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <ChatPanel variant="compact" messages={messages} meId={meId} onSend={sendChat} />
           </div>
         </aside>
       </div>
+
+      {pendingPromotion && (
+        <PromotionDialog
+          color={pendingPromotion.color}
+          onChoose={confirmPromotion}
+          onCancel={cancelPromotion}
+        />
+      )}
     </main>
   );
 }

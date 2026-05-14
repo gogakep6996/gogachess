@@ -7,6 +7,8 @@ import {
   type RoomStatePayload,
   type ChatMessageDto,
   type Participant,
+  type RoomMode,
+  type BoardAnnotations,
 } from '@/lib/socket-events';
 
 interface UseRoomSocketResult {
@@ -23,6 +25,8 @@ interface UseRoomSocketResult {
   endEdit: (fen: string) => void;
   resetPosition: () => void;
   sendChat: (text: string) => void;
+  setMode: (partial: Partial<RoomMode>) => void;
+  setAnnotations: (next: BoardAnnotations) => void;
 }
 
 export function useRoomSocket(roomCode: string): UseRoomSocketResult {
@@ -61,6 +65,10 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
       setState((prev) => (prev ? { ...prev, fen } : prev));
     });
 
+    socket.on(SocketEvents.ArrowsUpdate, (payload: BoardAnnotations) => {
+      setState((prev) => (prev ? { ...prev, arrows: payload.arrows, marks: payload.marks } : prev));
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -78,6 +86,14 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
   const endEdit = useCallback((fen: string) => socketRef.current?.emit(SocketEvents.EditEnd, fen), []);
   const resetPosition = useCallback(() => socketRef.current?.emit(SocketEvents.PositionReset), []);
   const sendChat = useCallback((text: string) => socketRef.current?.emit(SocketEvents.ChatSend, text), []);
+  const setMode = useCallback(
+    (partial: Partial<RoomMode>) => socketRef.current?.emit(SocketEvents.ModeSet, partial),
+    [],
+  );
+  const setAnnotations = useCallback(
+    (next: BoardAnnotations) => socketRef.current?.emit(SocketEvents.ArrowsUpdate, next),
+    [],
+  );
 
   // Очищаем ошибку через 4 сек
   useEffect(() => {
@@ -99,5 +115,7 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     endEdit,
     resetPosition,
     sendChat,
+    setMode,
+    setAnnotations,
   };
 }

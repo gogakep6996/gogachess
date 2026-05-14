@@ -19,6 +19,8 @@ export const SocketEvents = {
   EditEnd: 'chess:edit-end',
   PositionReset: 'chess:reset',
   GameOver: 'chess:over',
+  ModeSet: 'chess:mode',          // учитель меняет режим комнаты
+  ArrowsUpdate: 'chess:arrows',   // стрелки и выделения клеток (broadcast)
 
   // Чат
   ChatSend: 'chat:send',
@@ -57,6 +59,52 @@ export interface Participant {
   forcedMute: boolean;
 }
 
+export interface RoomMode {
+  /** Разрешить нелегальные ходы (для разбора позиции / показа учителем). */
+  allowIllegal: boolean;
+  /** Фиксирует сторону хода. После каждого хода сервер «возвращает» очередь
+   *  указанной стороне — удобно тренировать одну сторону. */
+  sideLock: 'w' | 'b' | null;
+  /** Учитель разрешает ученикам тоже редактировать (когда редактор открыт). */
+  studentsCanEdit: boolean;
+}
+
+export const DEFAULT_ROOM_MODE: RoomMode = {
+  allowIllegal: false,
+  sideLock: null,
+  studentsCanEdit: false,
+};
+
+export interface MoveHistoryEntry {
+  /** Стандартная нотация хода (SAN) либо синтетический маркер для нелегальных. */
+  san: string;
+  from: string;
+  to: string;
+  /** FEN после применения хода. */
+  fen: string;
+  promotion?: string;
+  /** Был ли ход легальным по правилам. */
+  legal: boolean;
+}
+
+export type ArrowColor = 'green' | 'red' | 'blue' | 'yellow';
+
+export interface BoardArrow {
+  from: string;
+  to: string;
+  color: ArrowColor;
+}
+
+export interface BoardMark {
+  square: string;
+  color: ArrowColor;
+}
+
+export interface BoardAnnotations {
+  arrows: BoardArrow[];
+  marks: BoardMark[];
+}
+
 export interface RoomStatePayload {
   code: string;
   name: string;
@@ -68,6 +116,10 @@ export interface RoomStatePayload {
   participants: Participant[];
   kind: string;
   timeControl: string | null;
+  mode: RoomMode;
+  history: MoveHistoryEntry[];
+  arrows: BoardArrow[];
+  marks: BoardMark[];
 }
 
 export interface ChatMessageDto {
