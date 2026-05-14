@@ -64,6 +64,7 @@ export function RoomClient({ meId, room }: Props) {
     sendChat,
     setMode,
     setAnnotations,
+    undoMove,
   } = useRoomSocket(room.code);
 
   const audio = useAudioRoom(socket);
@@ -72,8 +73,10 @@ export function RoomClient({ meId, room }: Props) {
   const isEditing = state?.isEditing ?? false;
   const mode = state?.mode ?? DEFAULT_ROOM_MODE;
   const history = state?.history ?? [];
+  const segmentStartFen = state?.segmentStartFen ?? state?.fen ?? STARTING_FEN;
   const arrows = state?.arrows ?? [];
   const marks = state?.marks ?? [];
+  const roomKind = state?.kind ?? 'lesson';
 
   // Только владелец lesson-комнаты управляет режимом; ученики могут редактировать,
   // если учитель открыл редактор и разрешил всем редактирование.
@@ -107,7 +110,7 @@ export function RoomClient({ meId, room }: Props) {
 
   const lastIdx = history.length - 1;
   const isViewingPast = viewIdx < lastIdx;
-  const startFen = STARTING_FEN;
+  const startFen = segmentStartFen;
   const viewFen = viewIdx === -1 ? startFen : history[viewIdx]?.fen ?? fen;
 
   const goPrev = () => selectHistoryIdx(viewIdx - 1);
@@ -259,6 +262,16 @@ export function RoomClient({ meId, room }: Props) {
           <span className="rounded-md bg-amber-100 px-2 py-1 text-[11px] font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
             ✎ редактируете
           </span>
+        )}
+        {isOwner && roomKind === 'lesson' && history.length > 0 && !isEditing && (
+          <button
+            type="button"
+            onClick={undoMove}
+            className="btn-ghost px-2 py-1 text-[11px] sm:text-xs"
+            title="Отменить последний ход"
+          >
+            ↩
+          </button>
         )}
         {isOwner && (
           <button

@@ -27,6 +27,7 @@ interface UseRoomSocketResult {
   sendChat: (text: string) => void;
   setMode: (partial: Partial<RoomMode>) => void;
   setAnnotations: (next: BoardAnnotations) => void;
+  undoMove: () => void;
 }
 
 export function useRoomSocket(roomCode: string): UseRoomSocketResult {
@@ -94,6 +95,9 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     (next: BoardAnnotations) => socketRef.current?.emit(SocketEvents.ArrowsUpdate, next),
     [],
   );
+  const undoMove = useCallback(() => {
+    socketRef.current?.emit(SocketEvents.MoveUndo);
+  }, []);
 
   // Очищаем ошибку через 4 сек
   useEffect(() => {
@@ -117,5 +121,6 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     sendChat,
     setMode,
     setAnnotations,
+    undoMove,
   };
 }

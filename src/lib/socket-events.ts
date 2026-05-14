@@ -20,6 +20,7 @@ export const SocketEvents = {
   PositionReset: 'chess:reset',
   GameOver: 'chess:over',
   ModeSet: 'chess:mode',          // учитель меняет режим комнаты
+  MoveUndo: 'chess:undo',       // отменить последний ход ( lesson )
   ArrowsUpdate: 'chess:arrows',   // стрелки и выделения клеток (broadcast)
 
   // Чат
@@ -111,6 +112,8 @@ export interface RoomStatePayload {
   isPublic: boolean;
   ownerId: string;
   fen: string;
+  /** FEN начала текущего отрезка (после сброса/выхода из редактора); для навигации «к началу». */
+  segmentStartFen: string;
   isEditing: boolean;
   editorId: string | null;
   participants: Participant[];

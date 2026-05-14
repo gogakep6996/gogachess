@@ -23,7 +23,14 @@ import {
   type BoardMark,
   type ArrowColor,
 } from '../src/lib/socket-events';
-import { forceMove, setSideToMove, sideToMove as fenSideToMove } from '../src/lib/fen';
+import {
+  forceMove,
+  setSideToMove,
+  sideToMove as fenSideToMove,
+  getPiece,
+  type Square,
+} from '../src/lib/fen';
+import { applyPseudoLegalMove } from '../src/lib/pseudo-legal';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number(process.env.PORT) || 3000;
@@ -56,6 +63,8 @@ interface RoomRuntime {
   mode: RoomMode;
   /** История ходов с момента старта/после reset/после edit-end. */
   history: MoveHistoryEntry[];
+  /** FEN начала текущего отрезка (после сброса или выхода из редактора) — для отмены к старту отрезка. */
+  segmentStartFen: string;
   /** Стрелки и выделения клеток, синхронизированные между всеми участниками. */
   arrows: BoardArrow[];
   marks: BoardMark[];
@@ -135,6 +144,7 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     isPublic: room.isPublic,
     ownerId: room.ownerId,
     fen: room.fen,
+    segmentStartFen: room.segmentStartFen,
     isEditing: room.isEditing,
     editorId: room.editorId,
     participants: Array.from(room.participants.values()),
@@ -157,12 +167,13 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
   });
   if (!dbRoom) return null;
 
+  const initialFen = dbRoom.fen || STARTING_FEN;
   const runtime: RoomRuntime = {
     code: dbRoom.code,
     name: dbRoom.name,
     isPublic: dbRoom.isPublic,
     ownerId: dbRoom.ownerId,
-    fen: dbRoom.fen || STARTING_FEN,
+    fen: initialFen,
     isEditing: false,
     editorId: null,
     participants: new Map(),
@@ -175,6 +186,7 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     blackId: dbRoom.match?.blackId ?? null,
     mode: { ...DEFAULT_ROOM_MODE },
     history: [],
+    segmentStartFen: initialFen,
     arrows: [],
     marks: [],
   };
@@ -543,48 +555,70 @@ app.prepare().then(() => {
       // ---------- Учебная комната: учитываем режимы ----------
       const { allowIllegal, sideLock } = runtime.mode;
       try {
-        // Сначала пробуем как легальный ход — это даёт корректный SAN,
-        // правильные взятия (en-passant), рокировки и т.п.
+        const from = move.from as Square;
+        const to = move.to as Square;
+        const piece = getPiece(runtime.fen, from);
+        if (!piece) {
+          socket.emit(SocketEvents.RoomError, 'На клетке нет фигуры');
+          return;
+        }
+
         let legalApplied = false;
         let san = '';
         let appliedFen = runtime.fen;
         let promotionUsed: string | undefined;
-        try {
-          const game = new Chess(runtime.fen);
-          const r = game.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
-          if (r) {
-            legalApplied = true;
-            san = r.san;
-            promotionUsed = r.promotion;
-            appliedFen = game.fen();
-          }
-        } catch {
-          // Позиция уже нелегальна (нет короля и т.п.) — fallback ниже.
-        }
 
-        if (!legalApplied) {
-          if (!allowIllegal) {
-            socket.emit(SocketEvents.RoomError, 'Невозможный ход');
-            return;
-          }
+        if (allowIllegal) {
           const promo =
             move.promotion && ['q', 'r', 'b', 'n'].includes(String(move.promotion).toLowerCase())
               ? (String(move.promotion).toLowerCase() as 'q' | 'r' | 'b' | 'n')
               : 'q';
-          const forced = forceMove(runtime.fen, move.from as `${string}${number}`, move.to as `${string}${number}`, promo);
+          const forced = forceMove(runtime.fen, from, to, promo);
           if (!forced.piece) {
             socket.emit(SocketEvents.RoomError, 'На клетке нет фигуры');
             return;
           }
-          appliedFen = forced.fen;
+          const was = fenSideToMove(runtime.fen);
+          appliedFen = setSideToMove(forced.fen, was === 'w' ? 'b' : 'w');
           promotionUsed = forced.promoted ? promo : undefined;
-          // Синтетическая нотация для нелегальных ходов: "e2-e4" / "e7-e8=Q".
           san = `${move.from}-${move.to}${forced.promoted ? '=' + promo.toUpperCase() : ''}`;
-          // Когда нет короля — chess.js не смог зафлипнуть сторону: делаем это вручную.
-          appliedFen = setSideToMove(appliedFen, fenSideToMove(appliedFen) === 'w' ? 'b' : 'w');
+        } else {
+          const stm = fenSideToMove(runtime.fen);
+          if (stm !== piece[0]) {
+            socket.emit(SocketEvents.RoomError, 'Сейчас не ваш ход');
+            return;
+          }
+          try {
+            const game = new Chess(runtime.fen);
+            const r = game.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
+            if (r) {
+              legalApplied = true;
+              san = r.san;
+              promotionUsed = r.promotion;
+              appliedFen = game.fen();
+            }
+          } catch {
+            // позиция не загружается в chess.js или ход отклонён
+          }
+          if (!legalApplied) {
+            const pseudo = applyPseudoLegalMove(runtime.fen, from, to, move.promotion);
+            if (!pseudo) {
+              socket.emit(SocketEvents.RoomError, 'Невозможный ход');
+              return;
+            }
+            legalApplied = true;
+            san = pseudo.san;
+            appliedFen = pseudo.fen;
+            if (
+              move.promotion &&
+              ['q', 'r', 'b', 'n'].includes(String(move.promotion).toLowerCase()) &&
+              piece[1] === 'p'
+            ) {
+              promotionUsed = String(move.promotion).toLowerCase();
+            }
+          }
         }
 
-        // SideLock: после хода возвращаем очередь указанной стороне.
         if (sideLock) {
           appliedFen = setSideToMove(appliedFen, sideLock);
         }
@@ -655,6 +689,7 @@ app.prepare().then(() => {
       runtime.fen = fen;
       runtime.isEditing = false;
       runtime.editorId = null;
+      runtime.segmentStartFen = fen;
       // После выхода из редактора история партии больше не относится к новой
       // позиции — обнуляем, чтобы навигация назад не показывала фантомы.
       runtime.history = [];
@@ -673,6 +708,7 @@ app.prepare().then(() => {
       runtime.fen = STARTING_FEN;
       runtime.isEditing = false;
       runtime.editorId = null;
+      runtime.segmentStartFen = STARTING_FEN;
       runtime.history = [];
       runtime.arrows = [];
       runtime.marks = [];
@@ -696,6 +732,24 @@ app.prepare().then(() => {
       if (typeof partial.studentsCanEdit === 'boolean') next.studentsCanEdit = partial.studentsCanEdit;
       runtime.mode = next;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+    });
+
+    socket.on(SocketEvents.MoveUndo, () => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.ownerId !== userId) return;
+      if (runtime.kind !== 'lesson') return;
+      if (runtime.isEditing) return;
+      if (runtime.history.length === 0) return;
+      runtime.history.pop();
+      runtime.fen =
+        runtime.history.length > 0 ? runtime.history[runtime.history.length - 1].fen : runtime.segmentStartFen;
+      runtime.arrows = [];
+      runtime.marks = [];
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+      void persistFen(code, runtime.fen);
     });
 
     socket.on(SocketEvents.ArrowsUpdate, (payload: { arrows?: unknown; marks?: unknown }) => {

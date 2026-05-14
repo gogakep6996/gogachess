@@ -17,6 +17,7 @@
     "src/lib/socket-events.ts",
     "src/lib/fen.ts",
     "src/lib/piece.ts",
+    "src/lib/pseudo-legal.ts",
     "src/types/**/*.ts"
   ]
 }

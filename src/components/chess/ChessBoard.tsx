@@ -14,7 +14,8 @@ import {
 import { Chess, type Square as ChessSquare } from 'chess.js';
 import { PieceSvg, type PieceCode } from './PieceSvg';
 import { cn } from '@/lib/utils';
-import { parseFen, setPiece as setPieceFen, emptyFen } from '@/lib/fen';
+import { parseFen, setPiece as setPieceFen, emptyFen, sideToMove as fenSideToMove } from '@/lib/fen';
+import { allPseudoLegalDestinations } from '@/lib/pseudo-legal';
 import { playCaptureSound, playMoveSound, unlockSounds } from '@/lib/sounds';
 import type { BoardArrow, BoardMark, ArrowColor } from '@/lib/socket-events';
 
@@ -250,13 +251,13 @@ export function ChessBoard({
   }
 
   function getLegalMoves(sq: Sq): Sq[] {
-    if (!game) return [];
-    try {
-      const moves = game.moves({ square: sq as ChessSquare, verbose: true }) as Array<{ to: string }>;
-      return moves.map((m) => m.to as Sq);
-    } catch {
-      return [];
-    }
+    return allPseudoLegalDestinations(fen, sq).map((t) => t as Sq);
+  }
+
+  function pieceSelectable(pc: PieceCode | null): boolean {
+    if (!pc) return false;
+    if (!allowIllegal && fenSideToMove(fen) !== pc[0]) return false;
+    return true;
   }
 
   /** Попытка хода с учётом promotion: возвращает true, если ход «съели» (отправили или открыли диалог). */
@@ -307,6 +308,11 @@ export function ChessBoard({
     }
 
     if (piece) {
+      if (!pieceSelectable(piece)) {
+        setSelected(null);
+        setLegalMoves([]);
+        return;
+      }
       setSelected(sq);
       setLegalMoves(getLegalMoves(sq));
     } else {
@@ -318,6 +324,7 @@ export function ChessBoard({
   function onDragStart(e: DragEvent, sq: Sq) {
     const piece = pieceAt(sq);
     if (!piece) return;
+    if (!pieceSelectable(piece)) return;
     if (isEditing && !canEdit) return;
     if (!isEditing && !canMove) return;
     dragRef.current = { from: 'board', square: sq, piece };
