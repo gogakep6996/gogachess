@@ -334,6 +334,8 @@ export function RoomClient({ meId, room }: Props) {
                   isEditing={isEditing}
                   canEdit={canEditNow}
                   allowIllegal={!vsComp && mode.allowIllegal}
+                  sideLock={vsComp ? null : mode.sideLock}
+                  canStartAnySide={!vsComp && !mode.allowIllegal && mode.sideLock === null && history.length === 0}
                   onPromotionRequest={handlePromotionRequest}
                   onMove={sendMove}
                   onEditFen={handleEditChange}

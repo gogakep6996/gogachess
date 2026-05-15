@@ -585,8 +585,14 @@ app.prepare().then(() => {
         } else {
           const stm = fenSideToMove(runtime.fen);
           if (stm !== piece[0]) {
-            socket.emit(SocketEvents.RoomError, 'Сейчас не ваш ход');
-            return;
+            // «Оба» + ещё ни одного хода в текущем сегменте → разрешаем начать любой стороной.
+            // Кто пошёл — тот и первый, дальше очередь сама встаёт правильно.
+            if (sideLock === null && runtime.history.length === 0) {
+              runtime.fen = setSideToMove(runtime.fen, piece[0] as 'w' | 'b');
+            } else {
+              socket.emit(SocketEvents.RoomError, 'Сейчас не ваш ход');
+              return;
+            }
           }
           try {
             const game = new Chess(runtime.fen);
@@ -724,6 +730,7 @@ app.prepare().then(() => {
       if (runtime.ownerId !== userId) return;
       if (runtime.kind !== 'lesson') return; // турниры/casual игнорируют режимы
 
+      const prevSideLock = runtime.mode.sideLock;
       const next: RoomMode = { ...runtime.mode };
       if (typeof partial.allowIllegal === 'boolean') next.allowIllegal = partial.allowIllegal;
       if (partial.sideLock === 'w' || partial.sideLock === 'b' || partial.sideLock === null) {
@@ -731,6 +738,17 @@ app.prepare().then(() => {
       }
       if (typeof partial.studentsCanEdit === 'boolean') next.studentsCanEdit = partial.studentsCanEdit;
       runtime.mode = next;
+      // При смене sideLock на конкретный цвет — сразу выставляем эту сторону как ходящую,
+      // чтобы выбор «чёрные» означал, что чёрные и НАЧНУТ.
+      if (
+        next.sideLock &&
+        next.sideLock !== prevSideLock &&
+        !runtime.isEditing &&
+        fenSideToMove(runtime.fen) !== next.sideLock
+      ) {
+        runtime.fen = setSideToMove(runtime.fen, next.sideLock);
+        void persistFen(code, runtime.fen);
+      }
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
     });
 

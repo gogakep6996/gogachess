@@ -16,7 +16,7 @@ import { PieceSvg, type PieceCode } from './PieceSvg';
 import { cn } from '@/lib/utils';
 import { parseFen, setPiece as setPieceFen, emptyFen, sideToMove as fenSideToMove } from '@/lib/fen';
 import { allPseudoLegalDestinations } from '@/lib/pseudo-legal';
-import { playCaptureSound, playMoveSound, unlockSounds } from '@/lib/sounds';
+import { playCaptureSound, playCheckmateSound, playMoveSound, unlockSounds } from '@/lib/sounds';
 import type { BoardArrow, BoardMark, ArrowColor } from '@/lib/socket-events';
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
@@ -35,6 +35,10 @@ export interface ChessBoardProps {
   flipped?: boolean;
   /** Разрешает любые ходы (без проверки правил). Подсказки легальных всё ещё показываются. */
   allowIllegal?: boolean;
+  /** Жёсткое ограничение по цвету фигуры (учебный sideLock). Двигать можно только этот цвет. */
+  sideLock?: 'w' | 'b' | null;
+  /** Свободный режим без ходов в текущем сегменте → можно начать ЛЮБОЙ стороной. */
+  canStartAnySide?: boolean;
   /** Если задан — пешка, дошедшая до 1/8 ряда, превращается через диалог.
    *  Без обработчика — превращение происходит автоматически в ферзя. */
   onPromotionRequest?: (move: { from: string; to: string; color: 'w' | 'b' }) => boolean;
@@ -83,6 +87,8 @@ export function ChessBoard({
   canEdit,
   flipped = false,
   allowIllegal = false,
+  sideLock = null,
+  canStartAnySide = false,
   onPromotionRequest,
   onMove,
   onEditFen,
@@ -180,8 +186,53 @@ export function ChessBoard({
         }
       }
     } catch {
-      // ignore
+      // позиция нелегальна для chess.js — попробуем определить ход через сравнение досок ниже
     }
+
+    // Fallback: ход не нашёлся через chess.js (нелегальный/без короля и т.п.).
+    // Сравниваем доски и определяем from/to/capture эвристически —
+    // главное, чтобы звук всегда звучал.
+    if (!found) {
+      try {
+        const prevBoard = parseFen(prev).board;
+        const currBoard = parseFen(fen).board;
+        let from: Sq | null = null;
+        let to: Sq | null = null;
+        let captureGuess = false;
+        let prevCount = 0;
+        let currCount = 0;
+        for (let r = 0; r < 8; r++) {
+          for (let c = 0; c < 8; c++) {
+            const a = prevBoard[r][c];
+            const b = currBoard[r][c];
+            if (a) prevCount++;
+            if (b) currCount++;
+            if (a && !b) {
+              from = `${FILES[c]}${(8 - r) as (typeof RANKS)[number]}` as Sq;
+            } else if (!a && b) {
+              to = `${FILES[c]}${(8 - r) as (typeof RANKS)[number]}` as Sq;
+            } else if (a && b && a !== b) {
+              // фигура заменена — это «to» с захватом (или промоушен).
+              to = `${FILES[c]}${(8 - r) as (typeof RANKS)[number]}` as Sq;
+            }
+          }
+        }
+        if (currCount < prevCount) captureGuess = true;
+        if (from && to) {
+          found = { from, to, captured: captureGuess };
+        } else if (from || to) {
+          // одиночное изменение клетки — звук тоже отыграть, без подсветки from/to
+          found = {
+            from: (from ?? to) as Sq,
+            to: (to ?? from) as Sq,
+            captured: captureGuess,
+          };
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     if (!found) return;
 
     let check = false;
@@ -198,7 +249,9 @@ export function ChessBoard({
     setLastMove({ ...found, check, mate, key: animKeyRef.current });
 
     if (!silent) {
-      if (found.captured) playCaptureSound();
+      // Мат имеет приоритет: даже если был с взятием — играем «финальный» деревянный звук.
+      if (mate) playCheckmateSound();
+      else if (found.captured) playCaptureSound();
       else playMoveSound();
     }
   }, [fen, isEditing, silent]);
@@ -256,8 +309,14 @@ export function ChessBoard({
 
   function pieceSelectable(pc: PieceCode | null): boolean {
     if (!pc) return false;
-    if (!allowIllegal && fenSideToMove(fen) !== pc[0]) return false;
-    return true;
+    // Жёсткий sideLock — только указанный цвет, всё остальное запрещено.
+    if (sideLock) return pc[0] === sideLock;
+    // «Любые ходы» — без проверки очереди.
+    if (allowIllegal) return true;
+    // Свободный режим, ещё не сделано ни одного хода → можно стартовать любой стороной.
+    if (canStartAnySide) return true;
+    // Обычная проверка очереди.
+    return fenSideToMove(fen) === pc[0];
   }
 
   /** Попытка хода с учётом promotion: возвращает true, если ход «съели» (отправили или открыли диалог). */
