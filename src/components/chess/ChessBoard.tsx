@@ -324,9 +324,14 @@ export function ChessBoard({
   function onDragStart(e: DragEvent, sq: Sq) {
     const piece = pieceAt(sq);
     if (!piece) return;
-    if (!pieceSelectable(piece)) return;
-    if (isEditing && !canEdit) return;
-    if (!isEditing && !canMove) return;
+    if (isEditing) {
+      if (!canEdit) return;
+      // В редакторе перетаскивать любые фигуры (в том числе для удаления через
+      // палитру-«корзину»), без оглядки на очередь хода или sideLock.
+    } else {
+      if (!canMove) return;
+      if (!pieceSelectable(piece)) return;
+    }
     dragRef.current = { from: 'board', square: sq, piece };
     // В редакторе разрешаем и copy, и move — браузер строго следит за совпадением
     // effectAllowed/dropEffect. Если их не согласовать, drop отменяется.
