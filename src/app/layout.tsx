@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
+import { YandexMetrika } from '@/components/analytics/YandexMetrika';
+import { GoogleAnalytics } from '@/components/analytics/GoogleAnalytics';
 
 export const metadata: Metadata = {
   title: 'gogachess — шахматы для обучения',
@@ -29,6 +31,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ThemeProvider>{children}</ThemeProvider>
+        {/* Аналитика подключается один раз для всего сайта — присутствует на любой странице, */}
+        {/* включая создаваемые в будущем, без необходимости править каждую страницу отдельно. */}
+        <YandexMetrika />
+        <GoogleAnalytics />
       </body>
     </html>
   );
