@@ -26,22 +26,39 @@ interface Props {
   };
 }
 
-/** Сторона доски в комнате — учитываем высоту: оставляем место под панель и стрелки. */
-const BOARD_SIDE = 'min(94vw, 480px, calc(100dvh - 9.5rem))';
-
 export function RoomClient({ meId, room }: Props) {
   const isOwner = meId === room.ownerId;
 
+  // Блокируем скролл документа ТОЛЬКО на десктопе — там layout вписывается в один экран.
+  // На телефоне страница должна свободно скроллиться, иначе доска перекрывается панелями.
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 1024px)');
     const html = document.documentElement;
     const body = document.body;
-    html.classList.add('overflow-hidden');
-    body.classList.add('overflow-hidden');
     const prevHtmlOB = html.style.overscrollBehavior;
     const prevBodyOB = body.style.overscrollBehavior;
-    html.style.overscrollBehavior = 'none';
-    body.style.overscrollBehavior = 'none';
+    let active = false;
+
+    function apply() {
+      if (mq.matches && !active) {
+        html.classList.add('overflow-hidden');
+        body.classList.add('overflow-hidden');
+        html.style.overscrollBehavior = 'none';
+        body.style.overscrollBehavior = 'none';
+        active = true;
+      } else if (!mq.matches && active) {
+        html.classList.remove('overflow-hidden');
+        body.classList.remove('overflow-hidden');
+        html.style.overscrollBehavior = prevHtmlOB;
+        body.style.overscrollBehavior = prevBodyOB;
+        active = false;
+      }
+    }
+    apply();
+    mq.addEventListener('change', apply);
     return () => {
+      mq.removeEventListener('change', apply);
       html.classList.remove('overflow-hidden');
       body.classList.remove('overflow-hidden');
       html.style.overscrollBehavior = prevHtmlOB;
@@ -231,15 +248,25 @@ export function RoomClient({ meId, room }: Props) {
     if (mode.allowIllegal || mode.sideLock) setVsComp(null);
   }, [fen, vsComp, mode.allowIllegal, mode.sideLock]);
 
+  // Размер доски: на мобильном — почти на всю ширину, на десктопе ограничиваем высотой вьюпорта.
+  const boardClassName =
+    'relative z-10 aspect-square shrink-0 w-[min(96vw,480px)] lg:w-[min(94vw,480px,calc(100dvh-9.5rem))]';
+
   return (
-    <main className="relative mx-auto flex min-h-0 w-full max-w-[1800px] flex-1 flex-col overflow-hidden px-2 pb-2 pt-0 sm:px-3">
+    <main
+      className={cn(
+        'relative mx-auto flex w-full max-w-[1800px] flex-col px-2 pb-2 pt-0 sm:px-3',
+        // На lg+ — фиксированный экран без скролла страницы; на мобильном — естественный flow.
+        'lg:min-h-0 lg:flex-1 lg:overflow-hidden',
+      )}
+    >
       {error && (
         <div className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/30 dark:text-red-200">
           {error}
         </div>
       )}
 
-      {/* Только кнопки — без названия комнаты и строки «учитель · код · ход» */}
+      {/* Верхняя строка с кнопками управления — над всем (и на мобильном, и на десктопе). */}
       <div className="flex shrink-0 justify-end gap-1 py-1">
         <button
           type="button"
@@ -276,174 +303,179 @@ export function RoomClient({ meId, room }: Props) {
         )}
       </div>
 
+      {/* Адаптивный «движок» компоновки:
+          - на телефоне: одна колонка, элементы по order-* (доска первая);
+          - на десктопе: CSS grid в 3 колонки × 2 строки (как раньше). */}
       <div
         className={cn(
-          'relative flex min-h-0 flex-1 flex-col gap-2 overscroll-none lg:block lg:min-h-0',
-          isEditing ? 'overflow-visible' : 'overflow-hidden',
+          'flex flex-1 flex-col gap-2',
+          'lg:grid lg:min-h-0 lg:gap-3 lg:overflow-hidden',
+          'lg:grid-cols-[13.5rem_1fr_13.75rem] xl:grid-cols-[13.5rem_1fr_15rem]',
+          'lg:grid-rows-[auto_1fr]',
         )}
       >
-        {/* Игровая зона: узкий SF слева + доска (верх столбца совпадает с верхом сайдбара на lg). */}
-        <div
+        {/* ───────── ДОСКА + НАВИГАЦИЯ + ОТМЕНИТЬ ХОД ───────── */}
+        <section
           className={cn(
-            'relative flex min-h-0 flex-1 flex-col lg:absolute lg:inset-0 lg:right-[13.75rem] lg:z-0 xl:right-60',
-            isEditing ? 'overflow-visible' : 'overflow-hidden',
+            'order-1 flex flex-col items-center lg:order-none',
+            'lg:col-start-2 lg:row-span-2 lg:min-h-0',
+            isEditing ? 'overflow-visible' : 'lg:overflow-hidden',
           )}
         >
-          <div
-            className={cn(
-              'flex min-h-0 w-full flex-col gap-2 lg:h-full lg:flex-row lg:items-start lg:gap-3',
-              isEditing
-                ? 'overflow-visible lg:overflow-visible'
-                : 'overflow-hidden lg:overflow-hidden',
-            )}
-          >
-            <div className="flex w-full max-w-[14rem] shrink-0 flex-col gap-2 sm:w-[12.5rem] lg:w-[13.5rem]">
-              <ModePanel mode={mode} canEdit={isOwner} onChange={setMode} />
-              {isOwner && roomKind === 'lesson' && (
-                <button
-                  type="button"
-                  onClick={resetToInitial}
-                  disabled={isEditing}
-                  className="w-full rounded-xl border border-stone-200/80 bg-white/90 px-3 py-2 text-xs font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700/70 dark:bg-stone-900/65 dark:text-stone-200 dark:hover:bg-stone-800/80"
-                  title="Вернуть позицию к началу сегмента (как было сразу после редактора)"
-                >
-                  ⟲ Начальная позиция
-                </button>
-              )}
-              {/* Движок Stockfish — только для учителя: ученикам подсказки от движка не показываем. */}
-              {isOwner && (
-                <EnginePanel
-                  fen={fen}
-                  variant="room"
-                  showPlayVsComputer={isOwner}
-                  vsComputerActive={!!vsComp}
-                  vsComputerThinking={!!vsComp && compEngine.thinking}
-                  onTogglePlayVsComputer={togglePlayVsComputer}
-                />
-              )}
-            </div>
-            <div
-              className={cn(
-                'flex min-h-0 flex-1 flex-col items-center justify-start pt-0',
-                isEditing ? 'overflow-visible' : 'overflow-x-auto overflow-hidden',
-              )}
-            >
-              {/* Фиксированный квадрат — доска не смещается при включении редактора (палитра — поверх слоя слева). */}
-              <div
-                className="relative z-10 aspect-square shrink-0"
-                style={{ width: BOARD_SIDE, height: BOARD_SIDE, maxWidth: 480, maxHeight: 480 }}
-              >
-                <ChessBoard
-                  fen={displayFen}
-                  canMove={canMove}
-                  isEditing={isEditing}
-                  canEdit={canEditNow}
-                  allowIllegal={!vsComp && mode.allowIllegal}
-                  sideLock={vsComp ? null : mode.sideLock}
-                  canStartAnySide={!vsComp && !mode.allowIllegal && mode.sideLock === null && history.length === 0}
-                  onPromotionRequest={handlePromotionRequest}
-                  onMove={sendMove}
-                  onEditFen={handleEditChange}
-                  arrows={arrows}
-                  marks={marks}
-                  onAnnotationsChange={setAnnotations}
-                  compact
-                  fillContainer
-                  silent={isViewingPast}
-                />
-              </div>
-              {/* Навигация по ходам */}
-              <div
-                className="mt-1 flex shrink-0 items-center gap-1.5"
-                style={{ width: BOARD_SIDE, maxWidth: 480, minHeight: '2.5rem' }}
-              >
-                <button
-                  type="button"
-                  onClick={goStart}
-                  disabled={viewIdx === -1}
-                  className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
-                  title="К началу партии"
-                >
-                  «
-                </button>
-                <button
-                  type="button"
-                  onClick={goPrev}
-                  disabled={viewIdx === -1}
-                  className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
-                  title="Ход назад"
-                >
-                  ‹
-                </button>
-                <div className="min-w-0 flex-1 text-center text-xs font-semibold tabular-nums text-stone-500 sm:text-sm">
-                  {history.length === 0
-                    ? 'Старт'
-                    : isViewingPast
-                      ? `Ход ${viewIdx + 1} / ${lastIdx + 1}`
-                      : `Текущая · ход ${lastIdx + 1}`}
-                </div>
-                <button
-                  type="button"
-                  onClick={goNext}
-                  disabled={!isViewingPast}
-                  className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
-                  title="Ход вперёд"
-                >
-                  ›
-                </button>
-                <button
-                  type="button"
-                  onClick={goEnd}
-                  disabled={!isViewingPast}
-                  className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
-                  title="К текущей позиции"
-                >
-                  »
-                </button>
-                {roomKind === 'lesson' && (
-                  <button
-                    type="button"
-                    onClick={undoMove}
-                    disabled={history.length === 0 || isEditing}
-                    className="ml-auto shrink-0 rounded-lg border border-stone-300/80 bg-white/90 px-3.5 py-2 text-sm font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
-                    title="Отменить последний ход"
-                  >
-                    ↩ Отменить ход
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <aside className="z-10 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden lg:absolute lg:bottom-0 lg:right-0 lg:top-0 lg:w-[13.75rem] lg:flex-none lg:pb-2 xl:w-60">
-          <div className="min-h-0 shrink-0 overflow-hidden">
-            <AudioPanel
-              variant="compact"
-              joined={audio.joined}
-              micEnabled={audio.micEnabled}
-              forcedMute={audio.forcedMute}
-              participants={participants}
-              meId={meId}
-              isOwner={isOwner}
-              levels={audio.levels}
-              onJoin={audio.join}
-              onLeave={audio.leave}
-              onToggleMic={() => audio.setMic(!audio.micEnabled)}
-              onForceMute={audio.forceMute}
-              onForceMuteAll={audio.forceMuteAll}
+          {/* Доска (фиксированный квадрат). */}
+          <div className={boardClassName}>
+            <ChessBoard
+              fen={displayFen}
+              canMove={canMove}
+              isEditing={isEditing}
+              canEdit={canEditNow}
+              allowIllegal={!vsComp && mode.allowIllegal}
+              sideLock={vsComp ? null : mode.sideLock}
+              canStartAnySide={!vsComp && !mode.allowIllegal && mode.sideLock === null && history.length === 0}
+              onPromotionRequest={handlePromotionRequest}
+              onMove={sendMove}
+              onEditFen={handleEditChange}
+              arrows={arrows}
+              marks={marks}
+              onAnnotationsChange={setAnnotations}
+              compact
+              fillContainer
+              silent={isViewingPast}
             />
           </div>
+          {/* Навигация по ходам + Отменить ход. На мобильном умещаем в одну строку,
+              на широком — оставляем привычный вид. */}
+          <div className="mt-1 flex w-[min(96vw,480px)] shrink-0 flex-wrap items-center justify-center gap-1.5 lg:w-[min(94vw,480px)]">
+            <button
+              type="button"
+              onClick={goStart}
+              disabled={viewIdx === -1}
+              className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
+              title="К началу партии"
+            >
+              «
+            </button>
+            <button
+              type="button"
+              onClick={goPrev}
+              disabled={viewIdx === -1}
+              className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
+              title="Ход назад"
+            >
+              ‹
+            </button>
+            <div className="min-w-[5rem] flex-1 text-center text-xs font-semibold tabular-nums text-stone-500 sm:text-sm">
+              {history.length === 0
+                ? 'Старт'
+                : isViewingPast
+                  ? `Ход ${viewIdx + 1} / ${lastIdx + 1}`
+                  : `Текущая · ход ${lastIdx + 1}`}
+            </div>
+            <button
+              type="button"
+              onClick={goNext}
+              disabled={!isViewingPast}
+              className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
+              title="Ход вперёд"
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              onClick={goEnd}
+              disabled={!isViewingPast}
+              className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
+              title="К текущей позиции"
+            >
+              »
+            </button>
+            {roomKind === 'lesson' && (
+              <button
+                type="button"
+                onClick={undoMove}
+                disabled={history.length === 0 || isEditing}
+                className="shrink-0 rounded-lg border border-stone-300/80 bg-white/90 px-3.5 py-2 text-sm font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 sm:ml-auto dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+                title="Отменить последний ход"
+              >
+                ↩ Отменить ход
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* ───────── АУДИО ─────────
+            На мобильном — сразу под доской/навигацией.
+            На десктопе — верхняя ячейка правой колонки (col 3, row 1). */}
+        <section className="order-2 w-full lg:order-none lg:col-start-3 lg:row-start-1">
+          <AudioPanel
+            variant="compact"
+            joined={audio.joined}
+            micEnabled={audio.micEnabled}
+            forcedMute={audio.forcedMute}
+            participants={participants}
+            meId={meId}
+            isOwner={isOwner}
+            levels={audio.levels}
+            onJoin={audio.join}
+            onLeave={audio.leave}
+            onToggleMic={() => audio.setMic(!audio.micEnabled)}
+            onForceMute={audio.forceMute}
+            onForceMuteAll={audio.forceMuteAll}
+          />
+        </section>
+
+        {/* ───────── РЕЖИМ + НАЧАЛЬНАЯ ПОЗИЦИЯ + ДВИЖОК (учителю) ─────────
+            Мобильный: ниже аудио. Десктоп: левая колонка (col 1), на всю высоту. */}
+        <section
+          className={cn(
+            'order-3 flex w-full flex-col gap-2 lg:order-none',
+            'lg:col-start-1 lg:row-span-2 lg:min-h-0 lg:overflow-y-auto',
+          )}
+        >
+          <ModePanel mode={mode} canEdit={isOwner} onChange={setMode} />
+          {isOwner && roomKind === 'lesson' && (
+            <button
+              type="button"
+              onClick={resetToInitial}
+              disabled={isEditing}
+              className="w-full rounded-xl border border-stone-200/80 bg-white/90 px-3 py-2 text-xs font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700/70 dark:bg-stone-900/65 dark:text-stone-200 dark:hover:bg-stone-800/80"
+              title="Вернуть позицию к началу сегмента (как было сразу после редактора)"
+            >
+              ⟲ Начальная позиция
+            </button>
+          )}
+          {/* Движок Stockfish — только для учителя: ученикам подсказки не показываем. */}
+          {isOwner && (
+            <EnginePanel
+              fen={fen}
+              variant="room"
+              showPlayVsComputer={isOwner}
+              vsComputerActive={!!vsComp}
+              vsComputerThinking={!!vsComp && compEngine.thinking}
+              onTogglePlayVsComputer={togglePlayVsComputer}
+            />
+          )}
+        </section>
+
+        {/* ───────── ИСТОРИЯ + ЧАТ ─────────
+            Мобильный: в конце страницы. Десктоп: нижняя ячейка правой колонки (col 3, row 2). */}
+        <section
+          className={cn(
+            'order-4 flex w-full flex-col gap-2 lg:order-none',
+            'lg:col-start-3 lg:row-start-2 lg:min-h-0 lg:overflow-hidden',
+          )}
+        >
           <HistoryPanel
             history={history}
             viewIdx={viewIdx}
             onSelect={selectHistoryIdx}
             className="min-h-[6rem] max-h-[12rem] shrink-0"
           />
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* Чат: на мобильном — естественной высоты, на десктопе — расширяется до низа. */}
+          <div className="flex min-h-[12rem] flex-col overflow-hidden lg:min-h-0 lg:flex-1">
             <ChatPanel variant="compact" messages={messages} meId={meId} onSend={sendChat} />
           </div>
-        </aside>
+        </section>
       </div>
 
       {pendingPromotion && (

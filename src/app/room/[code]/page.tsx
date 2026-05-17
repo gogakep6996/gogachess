@@ -20,7 +20,7 @@ export default async function RoomPage({ params }: Props) {
   if (!room) notFound();
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden overscroll-none bg-surface dark:bg-surface-dark">
+    <div className="flex min-h-dvh flex-col overscroll-none bg-surface dark:bg-surface-dark lg:h-dvh lg:overflow-hidden">
       <div className="shrink-0">
         <Header />
       </div>
