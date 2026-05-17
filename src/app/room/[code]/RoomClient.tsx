@@ -318,7 +318,9 @@ export function RoomClient({ meId, room }: Props) {
         <section
           className={cn(
             'order-1 flex flex-col items-center lg:order-none',
-            'lg:col-start-2 lg:row-span-2 lg:min-h-0',
+            // row-start-1 + row-end-3 — явная привязка: занимает обе строки сетки
+            // (auto + 1fr), чтобы не зависеть от auto-placement.
+            'lg:col-start-2 lg:row-start-1 lg:row-end-3 lg:min-h-0',
             isEditing ? 'overflow-visible' : 'lg:overflow-hidden',
           )}
         >
@@ -425,11 +427,13 @@ export function RoomClient({ meId, room }: Props) {
         </section>
 
         {/* ───────── РЕЖИМ + НАЧАЛЬНАЯ ПОЗИЦИЯ + ДВИЖОК (учителю) ─────────
-            Мобильный: ниже аудио. Десктоп: левая колонка (col 1), на всю высоту. */}
+            Мобильный: ниже аудио. Десктоп: левая колонка (col 1), от верха грида до низа.
+            Явный row-start-1 + row-end-3 нужен, иначе браузер auto-place может закинуть
+            секцию в row 2, и колонка визуально «съезжает» вниз под пустое место. */}
         <section
           className={cn(
             'order-3 flex w-full flex-col gap-2 lg:order-none',
-            'lg:col-start-1 lg:row-span-2 lg:min-h-0 lg:overflow-y-auto',
+            'lg:col-start-1 lg:row-start-1 lg:row-end-3 lg:min-h-0 lg:overflow-y-auto',
           )}
         >
           <ModePanel mode={mode} canEdit={isOwner} onChange={setMode} />
