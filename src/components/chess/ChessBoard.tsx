@@ -14,8 +14,16 @@ import {
 import { Chess, type Square as ChessSquare } from 'chess.js';
 import { PieceSvg, type PieceCode } from './PieceSvg';
 import { cn } from '@/lib/utils';
-import { parseFen, setPiece as setPieceFen, emptyFen, sideToMove as fenSideToMove } from '@/lib/fen';
-import { allPseudoLegalDestinations } from '@/lib/pseudo-legal';
+import {
+  parseFen,
+  setPiece as setPieceFen,
+  emptyFen,
+  sideToMove as fenSideToMove,
+  setSideToMove,
+  forceMove,
+  type Square,
+} from '@/lib/fen';
+import { allPseudoLegalDestinations, applyPseudoLegalMove } from '@/lib/pseudo-legal';
 import { playCaptureSound, playCheckmateSound, playMoveSound, unlockSounds } from '@/lib/sounds';
 import type { BoardArrow, BoardMark, ArrowColor } from '@/lib/socket-events';
 
@@ -78,6 +86,22 @@ interface LastMove {
   mate: boolean;
   /** Уникальный ключ — нужен, чтобы перезапускать CSS-анимацию при повторных ходах на ту же клетку. */
   key: number;
+  /** Подсветка last-move нужна, но без CSS-анимации «слайда» (например, после drag-and-drop). */
+  silent?: boolean;
+}
+
+/** Состояние перетаскивания фигуры пальцем/мышью через PointerEvents.
+ *  Используем для тач-устройств (HTML5 drag там просто не работает) и
+ *  заодно даём мгновенный визуальный feedback на десктопе. */
+interface PointerDragState {
+  sq: Sq;
+  piece: PieceCode;
+  startX: number;
+  startY: number;
+  offsetX: number;
+  offsetY: number;
+  /** Стало активным после превышения порога движения — иначе обрабатываем как клик. */
+  active: boolean;
 }
 
 export function ChessBoard({
@@ -113,33 +137,53 @@ export function ChessBoard({
   const [arrowDrag, setArrowDrag] = useState<{ from: Sq; to: Sq; color: ArrowColor } | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
 
+  /** Оптимистичная позиция: мгновенно рисуем результат хода у себя на клиенте,
+   *  не дожидаясь подтверждения с сервера. Сбрасываем, когда приходит «настоящий» fen. */
+  const [optimisticFen, setOptimisticFen] = useState<string | null>(null);
+  /** Drag фигурой пальцем/мышью через PointerEvents — работает и на тач-устройствах. */
+  const [pointerDrag, setPointerDrag] = useState<PointerDragState | null>(null);
+  /** Если выставлен — подсветка last-move выставится, но без CSS-анимации слайда.
+   *  Используем после drag-and-drop: фигура уже визуально под пальцем у цели,
+   *  плодить «прыжок назад → слайд вперёд» бессмысленно. */
+  const skipAnimOnceRef = useRef(false);
+
+  /** Эффективная позиция для отрисовки и валидаций — оптимистичная если есть, иначе серверная. */
+  const effectiveFen = optimisticFen ?? fen;
+
   // Один раз — подписаться на жесты для разблокировки звука.
   useEffect(() => {
     if (!silent) unlockSounds();
   }, [silent]);
 
+  // Когда сервер прислал новый fen — оптимистичная версия больше не нужна.
+  useEffect(() => {
+    setOptimisticFen(null);
+  }, [fen]);
+
   // Пытаемся работать через chess.js (даёт легальные ходы); если позиция нелегальна
   // (например, во время редактирования) — fallback на безопасный парсер.
   const game = useMemo<Chess | null>(() => {
     try {
-      return new Chess(fen);
+      return new Chess(effectiveFen);
     } catch {
       return null;
     }
-  }, [fen]);
+  }, [effectiveFen]);
 
-  const fenBoard = useMemo(() => parseFen(fen).board, [fen]);
+  const fenBoard = useMemo(() => parseFen(effectiveFen).board, [effectiveFen]);
 
   // Сброс выделения и подсказок при смене позиции
   useEffect(() => {
     setSelected(null);
     setLegalMoves([]);
-  }, [fen]);
+  }, [effectiveFen]);
 
   // При входе/выходе из режима редактирования сбрасываем подсветку последнего хода.
   useEffect(() => {
     if (isEditing) setLastMove(null);
     if (!isEditing) setPaletteCursor(null);
+    // Любой переход режима — также чистим «оптимистичный» fen, чтобы не путаться.
+    setOptimisticFen(null);
   }, [isEditing]);
 
   // Escape — снимает sticky-фигуру / отменяет рисование стрелки / снимает выделение.
@@ -161,8 +205,9 @@ export function ChessBoard({
   // useLayoutEffect, чтобы новая подсветка/анимация попала в тот же кадр и не «мигало».
   useLayoutEffect(() => {
     const prev = prevFenRef.current;
-    prevFenRef.current = fen;
-    if (!prev || prev === fen || isEditing) return;
+    prevFenRef.current = effectiveFen;
+    if (!prev || prev === effectiveFen || isEditing) return;
+    const fenForCompare = effectiveFen;
 
     let found: { from: Sq; to: Sq; captured: boolean } | null = null;
     try {
@@ -180,7 +225,7 @@ export function ChessBoard({
         } catch {
           continue;
         }
-        if (probe.fen() === fen) {
+        if (probe.fen() === fenForCompare) {
           found = { from: m.from as Sq, to: m.to as Sq, captured: !!m.captured };
           break;
         }
@@ -195,7 +240,7 @@ export function ChessBoard({
     if (!found) {
       try {
         const prevBoard = parseFen(prev).board;
-        const currBoard = parseFen(fen).board;
+        const currBoard = parseFen(fenForCompare).board;
         let from: Sq | null = null;
         let to: Sq | null = null;
         let captureGuess = false;
@@ -238,15 +283,17 @@ export function ChessBoard({
     let check = false;
     let mate = false;
     try {
-      const g2 = new Chess(fen);
+      const g2 = new Chess(fenForCompare);
       check = g2.isCheck();
       mate = g2.isCheckmate();
     } catch {
       // ignore
     }
 
-    animKeyRef.current += 1;
-    setLastMove({ ...found, check, mate, key: animKeyRef.current });
+    const silentAnim = skipAnimOnceRef.current;
+    skipAnimOnceRef.current = false;
+    if (!silentAnim) animKeyRef.current += 1;
+    setLastMove({ ...found, check, mate, key: animKeyRef.current, silent: silentAnim });
 
     if (!silent) {
       // Мат имеет приоритет: даже если был с взятием — играем «финальный» деревянный звук.
@@ -254,7 +301,7 @@ export function ChessBoard({
       else if (found.captured) playCaptureSound();
       else playMoveSound();
     }
-  }, [fen, isEditing, silent]);
+  }, [effectiveFen, isEditing, silent]);
 
   const orderedRanks = flipped ? [...RANKS].reverse() : RANKS;
   const orderedFiles = flipped ? [...FILES].reverse() : FILES;
@@ -304,7 +351,7 @@ export function ChessBoard({
   }
 
   function getLegalMoves(sq: Sq): Sq[] {
-    return allPseudoLegalDestinations(fen, sq).map((t) => t as Sq);
+    return allPseudoLegalDestinations(effectiveFen, sq).map((t) => t as Sq);
   }
 
   function pieceSelectable(pc: PieceCode | null): boolean {
@@ -316,7 +363,42 @@ export function ChessBoard({
     // Свободный режим, ещё не сделано ни одного хода → можно стартовать любой стороной.
     if (canStartAnySide) return true;
     // Обычная проверка очереди.
-    return fenSideToMove(fen) === pc[0];
+    return fenSideToMove(effectiveFen) === pc[0];
+  }
+
+  /** Локально применяем ход к текущей позиции, чтобы мгновенно нарисовать результат
+   *  до подтверждения сервером. Сначала пытаемся через chess.js (правильно обработает
+   *  рокировку, en-passant, превращение); если позиция нелегальна — используем
+   *  псевдо-легальный fallback; для «любых ходов» — силовое перемещение. */
+  function computeOptimisticFen(
+    currFen: string,
+    from: Sq,
+    to: Sq,
+    promotion: string | undefined,
+  ): string | null {
+    try {
+      const g = new Chess(currFen);
+      const r = g.move({ from, to, promotion: (promotion ?? 'q') as 'q' });
+      if (r) return g.fen();
+    } catch {
+      // FEN нелегален для chess.js — попробуем альтернативы ниже
+    }
+    const pseudo = applyPseudoLegalMove(currFen, from as Square, to as Square, promotion);
+    if (pseudo) return pseudo.fen;
+    if (allowIllegal) {
+      const promoTyped = (promotion ?? 'q').toLowerCase() as 'q' | 'r' | 'b' | 'n';
+      const promo = (['q', 'r', 'b', 'n'].includes(promoTyped) ? promoTyped : 'q') as
+        | 'q'
+        | 'r'
+        | 'b'
+        | 'n';
+      const out = forceMove(currFen, from as Square, to as Square, promo);
+      if (out.piece) {
+        const stm = fenSideToMove(currFen);
+        return setSideToMove(out.fen, stm === 'w' ? 'b' : 'w');
+      }
+    }
+    return null;
   }
 
   /** Попытка хода с учётом promotion: возвращает true, если ход «съели» (отправили или открыли диалог). */
@@ -330,9 +412,14 @@ export function ChessBoard({
       isPawn && ((piece[0] === 'w' && targetRank === 8) || (piece[0] === 'b' && targetRank === 1));
     if (promotes && onPromotionRequest) {
       // Диалог откроет внешний компонент — он сам потом вызовет onMove.
+      // Оптимистично применять рано: ждём выбор фигуры превращения.
       const handled = onPromotionRequest({ from, to, color: piece[0] as 'w' | 'b' });
       if (handled) return true;
     }
+    // Оптимистичная отрисовка — мгновенно показываем результат хода,
+    // не дожидаясь round-trip до сервера. Сервер потом подтвердит / откатит.
+    const optimistic = computeOptimisticFen(effectiveFen, from, to, 'q');
+    if (optimistic) setOptimisticFen(optimistic);
     onMove({ from, to, promotion: 'q' });
     return true;
   }
@@ -344,7 +431,7 @@ export function ChessBoard({
       // по доске множество клеток подряд. Чтобы снять — кликнуть в палитре
       // на ту же фигуру или нажать Escape.
       if (paletteCursor) {
-        onEditFen?.(setPieceFen(fen, sq, paletteCursor));
+        onEditFen?.(setPieceFen(effectiveFen, sq, paletteCursor));
       }
       return;
     }
@@ -427,7 +514,7 @@ export function ChessBoard({
       if (!canEdit) return;
       // В редакторе можно бросать фигуру на любую клетку, в том числе
       // на занятую — она просто заменит того, кто там стоял.
-      let next = fen;
+      let next = effectiveFen;
       if (ds.from === 'board' && ds.square) {
         if (ds.square === target) return;
         next = setPieceFen(next, ds.square, null);
@@ -445,6 +532,94 @@ export function ChessBoard({
     }
   }
 
+  /** Запускаем pointer-based drag фигуры. Работает и на мобильных (HTML5 draggable там
+   *  не поддерживается). Если палец/мышь пройдёт меньше порога — это будет «тап», и
+   *  click на клетке отработает обычную логику выбора фигуры. */
+  function onPiecePointerDown(e: ReactPointerEvent<HTMLDivElement>, sq: Sq) {
+    // Только основная кнопка / тач. Правая кнопка отдана под рисование стрелок.
+    if (e.button !== 0) return;
+    const piece = pieceAt(sq);
+    if (!piece) return;
+    if (isEditing) {
+      if (!canEdit) return;
+    } else {
+      if (!canMove) return;
+      if (!pieceSelectable(piece)) return;
+    }
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const fromSq = sq;
+    const fromPiece = piece;
+    let dragActive = false;
+
+    setPointerDrag({
+      sq: fromSq,
+      piece: fromPiece,
+      startX,
+      startY,
+      offsetX: 0,
+      offsetY: 0,
+      active: false,
+    });
+
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!dragActive && Math.hypot(dx, dy) > 6) {
+        dragActive = true;
+      }
+      if (dragActive) {
+        // Чтобы браузер не пытался скроллить страницу пальцем во время перетаскивания.
+        ev.preventDefault();
+      }
+      setPointerDrag((d) =>
+        d ? { ...d, offsetX: dx, offsetY: dy, active: dragActive || d.active } : d,
+      );
+    };
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+    const onUp = (ev: PointerEvent) => {
+      cleanup();
+      const wasDrag = dragActive;
+      setPointerDrag(null);
+      if (!wasDrag) return; // обычный тап — пусть click отработает выбор фигуры
+      ev.preventDefault();
+      const target = squareFromPoint(ev.clientX, ev.clientY);
+      if (isEditing) {
+        if (!canEdit) return;
+        if (!target) {
+          // Брошено мимо доски — в редакторе это означает «удалить фигуру»
+          // (заменяет старое поведение HTML5-drag на палитру-«корзину»).
+          onEditFen?.(setPieceFen(effectiveFen, fromSq, null));
+          return;
+        }
+        if (target === fromSq) return;
+        let next = effectiveFen;
+        next = setPieceFen(next, fromSq, null);
+        next = setPieceFen(next, target, fromPiece);
+        onEditFen?.(next);
+        return;
+      }
+      if (!target || target === fromSq) return;
+      if (allowIllegal || getLegalMoves(fromSq).includes(target)) {
+        // Не анимируем «прыжок» фигуры — она и так стоит у пальца на целевой клетке.
+        skipAnimOnceRef.current = true;
+        attemptMove(fromSq, target);
+      }
+    };
+    const onCancel = () => {
+      cleanup();
+      setPointerDrag(null);
+    };
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', onUp, { passive: false });
+    window.addEventListener('pointercancel', onCancel);
+  }
+
   /** Drop в области палитры — удаляет фигуру с доски (запасные фигуры = «корзина»). */
   function onPaletteDragOver(e: DragEvent) {
     if (!isEditing || !canEdit) return;
@@ -458,7 +633,7 @@ export function ChessBoard({
     dragRef.current = null;
     if (!ds || !isEditing || !canEdit) return;
     if (ds.from !== 'board' || !ds.square) return;
-    onEditFen?.(setPieceFen(fen, ds.square, null));
+    onEditFen?.(setPieceFen(effectiveFen, ds.square, null));
   }
 
   function clearBoard() {
@@ -682,115 +857,138 @@ export function ChessBoard({
             activeDrag={arrowDrag}
             flipped={flipped}
           />
-          {orderedRanks.map((rank) =>
-            orderedFiles.map((file) => {
-              const sq = `${file}${rank}` as Sq;
-              const isLight = (FILES.indexOf(file) + RANKS.indexOf(rank)) % 2 === 0;
-              const piece = pieceAt(sq);
-              const isSelected = selected === sq;
-              const isLegal = legalMoves.includes(sq);
-              const isHl = highlights?.from === sq || highlights?.to === sq;
-              const isLastFromOrTo = lastMove !== null && (lastMove.from === sq || lastMove.to === sq);
-              const isCheckHere = checkSquare === sq;
-              const isMateHere = isMate && checkSquare === sq;
+          {(() => {
+            // Подсказки ходов для фигуры, которую сейчас тянут пальцем/мышью —
+            // считаем один раз перед циклом по клеткам.
+            const dragLegalSet =
+              pointerDrag && pointerDrag.active
+                ? new Set(allPseudoLegalDestinations(effectiveFen, pointerDrag.sq))
+                : null;
+            return orderedRanks.map((rank) =>
+              orderedFiles.map((file) => {
+                const sq = `${file}${rank}` as Sq;
+                const isLight = (FILES.indexOf(file) + RANKS.indexOf(rank)) % 2 === 0;
+                const piece = pieceAt(sq);
+                const isSelected = selected === sq;
+                const isLegalForSelected = legalMoves.includes(sq);
+                const isLegalForDrag = !!dragLegalSet?.has(sq);
+                const isLegal = isLegalForSelected || isLegalForDrag;
+                const isHl = highlights?.from === sq || highlights?.to === sq;
+                const isLastFromOrTo = lastMove !== null && (lastMove.from === sq || lastMove.to === sq);
+                const isCheckHere = checkSquare === sq;
+                const isMateHere = isMate && checkSquare === sq;
 
-              // Анимация фигуры, прибывшей на эту клетку.
-              const isAnimDest = !!piece && lastMove?.to === sq;
-              let animStyle: CSSProperties | undefined;
-              if (isAnimDest && lastMove) {
-                const v1 = visualOf(lastMove.from);
-                const v2 = visualOf(lastMove.to);
-                const dx = (v1.col - v2.col) * 100;
-                const dy = (v1.row - v2.row) * 100;
-                animStyle = {
-                  ['--anim-dx' as string]: `${dx}%`,
-                  ['--anim-dy' as string]: `${dy}%`,
-                } as CSSProperties;
-              }
+                const isDragSource = pointerDrag?.sq === sq;
+                const isDragActive = isDragSource && pointerDrag.active;
 
-              return (
-                <div
-                  key={sq}
-                  onClick={() => onSquareClick(sq)}
-                  onDragOver={onSquareDragOver}
-                  onDrop={(e) => onSquareDrop(e, sq)}
-                  className={cn(
-                    'relative flex select-none items-center justify-center transition-colors',
-                    isLight ? 'chess-square-light' : 'chess-square-dark',
-                    isHl && 'chess-square-hl',
-                    isSelected && 'chess-square-sel',
-                  )}
-                >
-                  {/* Зелёная подсветка «откуда → куда» (поверх клетки, под фигурой) */}
-                  {isLastFromOrTo && (
-                    <span className="cell-last pointer-events-none absolute inset-0 z-[1]" />
-                  )}
-                  {/* Красная подсветка шаха / мата */}
-                  {(isCheckHere || isMateHere) && (
-                    <span
-                      className={cn(
-                        'pointer-events-none absolute inset-0 z-[2]',
-                        isMateHere ? 'cell-mate' : 'cell-check',
-                      )}
-                    />
-                  )}
+                // Анимация фигуры, прибывшей на эту клетку (если ход НЕ был drag-drop'ом).
+                const animateThis = !!piece && lastMove?.to === sq && !lastMove?.silent;
+                let animStyle: CSSProperties | undefined;
+                if (animateThis && lastMove) {
+                  const v1 = visualOf(lastMove.from);
+                  const v2 = visualOf(lastMove.to);
+                  const dx = (v1.col - v2.col) * 100;
+                  const dy = (v1.row - v2.row) * 100;
+                  animStyle = {
+                    ['--anim-dx' as string]: `${dx}%`,
+                    ['--anim-dy' as string]: `${dy}%`,
+                  } as CSSProperties;
+                }
 
-                  {/* Координаты */}
-                  {file === orderedFiles[0] && (
-                    <span
-                      className={cn(
-                        'pointer-events-none absolute z-[3] font-medium',
-                        compact ? 'left-0.5 top-px text-[8px] sm:text-[9px]' : 'left-1 top-0.5 text-[10px]',
-                        isLight ? 'text-brand-700/80' : 'text-brand-50/80',
-                      )}
-                    >
-                      {rank}
-                    </span>
-                  )}
-                  {rank === orderedRanks[orderedRanks.length - 1] && (
-                    <span
-                      className={cn(
-                        'pointer-events-none absolute z-[3] font-medium',
-                        compact ? 'bottom-px right-0.5 text-[8px] sm:text-[9px]' : 'bottom-0.5 right-1 text-[10px]',
-                        isLight ? 'text-brand-700/80' : 'text-brand-50/80',
-                      )}
-                    >
-                      {file}
-                    </span>
-                  )}
+                // Стиль фигуры, которую тащит пользователь — следует за пальцем/мышью.
+                const dragStyle: CSSProperties | undefined = isDragActive
+                  ? { transform: `translate(${pointerDrag.offsetX}px, ${pointerDrag.offsetY}px)` }
+                  : undefined;
 
-                  {/* Подсказка ходов */}
-                  {isLegal && !piece && (
-                    <span className="pointer-events-none z-[3] h-3 w-3 rounded-full bg-stone-900/35" />
-                  )}
-                  {isLegal && piece && (
-                    <span className="pointer-events-none absolute inset-1 z-[3] rounded-full ring-4 ring-stone-900/30" />
-                  )}
+                return (
+                  <div
+                    key={sq}
+                    onClick={() => onSquareClick(sq)}
+                    onDragOver={onSquareDragOver}
+                    onDrop={(e) => onSquareDrop(e, sq)}
+                    className={cn(
+                      'relative flex select-none items-center justify-center',
+                      isLight ? 'chess-square-light' : 'chess-square-dark',
+                      isHl && 'chess-square-hl',
+                      isSelected && 'chess-square-sel',
+                    )}
+                  >
+                    {/* Зелёная подсветка «откуда → куда» (поверх клетки, под фигурой) */}
+                    {isLastFromOrTo && (
+                      <span className="cell-last pointer-events-none absolute inset-0 z-[1]" />
+                    )}
+                    {/* Красная подсветка шаха / мата */}
+                    {(isCheckHere || isMateHere) && (
+                      <span
+                        className={cn(
+                          'pointer-events-none absolute inset-0 z-[2]',
+                          isMateHere ? 'cell-mate' : 'cell-check',
+                        )}
+                      />
+                    )}
 
-                  {/* Фигура (анимация — на обёртке во весь размер клетки) */}
-                  {piece && (
-                    <div
-                      key={isAnimDest && lastMove ? `anim-${lastMove.key}` : 'static'}
-                      className={cn(
-                        'absolute inset-0 z-[4] flex items-center justify-center',
-                        isAnimDest && 'piece-anim',
-                      )}
-                      style={animStyle}
-                    >
-                      <div
-                        draggable={isEditing ? canEdit : canMove}
-                        onDragStart={(e) => onDragStart(e, sq)}
-                        className="relative h-[88%] w-[88%] cursor-grab"
-                        style={{ filter: 'drop-shadow(0 2px 1px rgba(0,0,0,0.25))' }}
+                    {/* Координаты */}
+                    {file === orderedFiles[0] && (
+                      <span
+                        className={cn(
+                          'pointer-events-none absolute z-[3] font-medium',
+                          compact ? 'left-0.5 top-px text-[8px] sm:text-[9px]' : 'left-1 top-0.5 text-[10px]',
+                          isLight ? 'text-brand-700/80' : 'text-brand-50/80',
+                        )}
                       >
-                        <PieceSvg code={piece} className="h-full w-full" />
+                        {rank}
+                      </span>
+                    )}
+                    {rank === orderedRanks[orderedRanks.length - 1] && (
+                      <span
+                        className={cn(
+                          'pointer-events-none absolute z-[3] font-medium',
+                          compact ? 'bottom-px right-0.5 text-[8px] sm:text-[9px]' : 'bottom-0.5 right-1 text-[10px]',
+                          isLight ? 'text-brand-700/80' : 'text-brand-50/80',
+                        )}
+                      >
+                        {file}
+                      </span>
+                    )}
+
+                    {/* Подсказка ходов */}
+                    {isLegal && !piece && (
+                      <span className="pointer-events-none z-[3] h-3 w-3 rounded-full bg-stone-900/35" />
+                    )}
+                    {isLegal && piece && (
+                      <span className="pointer-events-none absolute inset-1 z-[3] rounded-full ring-4 ring-stone-900/30" />
+                    )}
+
+                    {/* Фигура (анимация — на обёртке во весь размер клетки) */}
+                    {piece && (
+                      <div
+                        key={animateThis && lastMove ? `anim-${lastMove.key}` : 'static'}
+                        className={cn(
+                          'absolute inset-0 flex items-center justify-center',
+                          animateThis && 'piece-anim',
+                          // Во время drag поднимаем фигуру выше остальных, чтобы её видно
+                          // было поверх соседних клеток. Иначе обычный z-index 4.
+                          isDragActive ? 'z-50' : 'z-[4]',
+                        )}
+                        style={dragStyle ?? animStyle}
+                      >
+                        <div
+                          onPointerDown={(e) => onPiecePointerDown(e, sq)}
+                          className={cn(
+                            'relative h-[88%] w-[88%] touch-none',
+                            isDragActive ? 'cursor-grabbing' : 'cursor-grab',
+                          )}
+                          style={{ filter: 'drop-shadow(0 2px 1px rgba(0,0,0,0.25))' }}
+                        >
+                          <PieceSvg code={piece} className="h-full w-full" />
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              );
-            }),
-          )}
+                    )}
+                  </div>
+                );
+              }),
+            );
+          })()}
         </div>
       </div>
     </div>

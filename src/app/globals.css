@@ -154,8 +154,8 @@ html.dark body::before {
   from { transform: translate(var(--anim-dx, 0), var(--anim-dy, 0)); }
   to   { transform: translate(0, 0); }
 }
-.piece-anim { animation: piece-slide-in 0.18s cubic-bezier(0.22, 0.61, 0.36, 1); }
-.piece-smooth-drag { transition: transform 0.12s ease-out; }
+.piece-anim { animation: piece-slide-in 0.12s cubic-bezier(0.22, 0.61, 0.36, 1); }
+.piece-smooth-drag { transition: transform 0.08s ease-out; }
 
 /* Тонкая красивая полоса прокрутки */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
