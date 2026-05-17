@@ -15,10 +15,21 @@ interface Props {
 export function HistoryPanel({ history, viewIdx, onSelect, className }: Props) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Автопрокрутка к выбранному ходу — удобно когда история длиннее окна.
+  // Автопрокрутка к выбранному ходу — но ТОЛЬКО внутри самой панели истории.
+  // scrollIntoView() поднимается по всем скроллируемым предкам и на мобильном
+  // утаскивает body вниз к панели; вручную правим только scrollTop контейнера.
   useEffect(() => {
-    const el = scrollRef.current?.querySelector<HTMLButtonElement>('[data-active="true"]');
-    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const container = scrollRef.current;
+    if (!container) return;
+    const el = container.querySelector<HTMLButtonElement>('[data-active="true"]');
+    if (!el) return;
+    const containerRect = container.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    if (elRect.bottom > containerRect.bottom) {
+      container.scrollTop += elRect.bottom - containerRect.bottom + 4;
+    } else if (elRect.top < containerRect.top) {
+      container.scrollTop -= containerRect.top - elRect.top + 4;
+    }
   }, [viewIdx]);
 
   const pairs: { num: number; w?: { idx: number; san: string; legal: boolean }; b?: { idx: number; san: string; legal: boolean } }[] = [];
