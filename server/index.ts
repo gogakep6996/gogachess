@@ -360,6 +360,7 @@ app.prepare().then(() => {
         isPublic: true,
         ownerId: whiteId,
         fen: STARTING_FEN,
+        segmentStartFen: STARTING_FEN,
         isEditing: false,
         editorId: null,
         participants: new Map(),
@@ -722,6 +723,25 @@ app.prepare().then(() => {
       await persistFen(code, runtime.fen);
     });
 
+    // «Начальная позиция»: возврат к началу текущего сегмента —
+    // то есть к позиции, которую учитель выставил в редакторе. Сегмент сохраняется,
+    // история ходов очищается, аннотации сбрасываются.
+    socket.on(SocketEvents.PositionResetToInitial, async () => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.ownerId !== userId) return;
+      if (runtime.kind !== 'lesson') return;
+      if (runtime.isEditing) return;
+      runtime.fen = runtime.segmentStartFen;
+      runtime.history = [];
+      runtime.arrows = [];
+      runtime.marks = [];
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+      await persistFen(code, runtime.fen);
+    });
+
     socket.on(SocketEvents.ModeSet, (partial: Partial<RoomMode>) => {
       const code = socket.data.roomCode as string | undefined;
       if (!code) return;
@@ -960,6 +980,7 @@ app.prepare().then(() => {
           isPublic: false,
           ownerId: whiteId,
           fen: STARTING_FEN,
+          segmentStartFen: STARTING_FEN,
           isEditing: false,
           editorId: null,
           participants: new Map(),

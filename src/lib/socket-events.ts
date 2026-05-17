@@ -18,6 +18,8 @@ export const SocketEvents = {
   EditUpdate: 'chess:edit-update',
   EditEnd: 'chess:edit-end',
   PositionReset: 'chess:reset',
+  /** Возврат к началу текущего сегмента (позиция, которую учитель выставил в редакторе). */
+  PositionResetToInitial: 'chess:reset-initial',
   GameOver: 'chess:over',
   ModeSet: 'chess:mode',          // учитель меняет режим комнаты
   MoveUndo: 'chess:undo',       // отменить последний ход ( lesson )

@@ -65,6 +65,7 @@ export function RoomClient({ meId, room }: Props) {
     setMode,
     setAnnotations,
     undoMove,
+    resetToInitial,
   } = useRoomSocket(room.code);
 
   const audio = useAudioRoom(socket);
@@ -263,16 +264,6 @@ export function RoomClient({ meId, room }: Props) {
             ✎ редактируете
           </span>
         )}
-        {isOwner && roomKind === 'lesson' && history.length > 0 && !isEditing && (
-          <button
-            type="button"
-            onClick={undoMove}
-            className="btn-ghost px-2 py-1 text-[11px] sm:text-xs"
-            title="Отменить последний ход"
-          >
-            ↩
-          </button>
-        )}
         {isOwner && (
           <button
             type="button"
@@ -308,14 +299,28 @@ export function RoomClient({ meId, room }: Props) {
           >
             <div className="flex w-full max-w-[14rem] shrink-0 flex-col gap-2 sm:w-[12.5rem] lg:w-[13.5rem]">
               <ModePanel mode={mode} canEdit={isOwner} onChange={setMode} />
-              <EnginePanel
-                fen={fen}
-                variant="room"
-                showPlayVsComputer={isOwner}
-                vsComputerActive={!!vsComp}
-                vsComputerThinking={!!vsComp && compEngine.thinking}
-                onTogglePlayVsComputer={togglePlayVsComputer}
-              />
+              {isOwner && roomKind === 'lesson' && (
+                <button
+                  type="button"
+                  onClick={resetToInitial}
+                  disabled={isEditing}
+                  className="w-full rounded-xl border border-stone-200/80 bg-white/90 px-3 py-2 text-xs font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700/70 dark:bg-stone-900/65 dark:text-stone-200 dark:hover:bg-stone-800/80"
+                  title="Вернуть позицию к началу сегмента (как было сразу после редактора)"
+                >
+                  ⟲ Начальная позиция
+                </button>
+              )}
+              {/* Движок Stockfish — только для учителя: ученикам подсказки от движка не показываем. */}
+              {isOwner && (
+                <EnginePanel
+                  fen={fen}
+                  variant="room"
+                  showPlayVsComputer={isOwner}
+                  vsComputerActive={!!vsComp}
+                  vsComputerThinking={!!vsComp && compEngine.thinking}
+                  onTogglePlayVsComputer={togglePlayVsComputer}
+                />
+              )}
             </div>
             <div
               className={cn(
@@ -395,6 +400,17 @@ export function RoomClient({ meId, room }: Props) {
                 >
                   »
                 </button>
+                {isOwner && roomKind === 'lesson' && (
+                  <button
+                    type="button"
+                    onClick={undoMove}
+                    disabled={history.length === 0 || isEditing}
+                    className="ml-auto shrink-0 rounded-lg border border-stone-300/80 bg-white/90 px-3.5 py-2 text-sm font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+                    title="Отменить последний ход"
+                  >
+                    ↩ Отменить ход
+                  </button>
+                )}
               </div>
             </div>
           </div>

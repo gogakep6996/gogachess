@@ -24,6 +24,8 @@ interface UseRoomSocketResult {
   updateEdit: (fen: string) => void;
   endEdit: (fen: string) => void;
   resetPosition: () => void;
+  /** Возврат к началу текущего сегмента (позиция из редактора). */
+  resetToInitial: () => void;
   sendChat: (text: string) => void;
   setMode: (partial: Partial<RoomMode>) => void;
   setAnnotations: (next: BoardAnnotations) => void;
@@ -86,6 +88,10 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
   }, []);
   const endEdit = useCallback((fen: string) => socketRef.current?.emit(SocketEvents.EditEnd, fen), []);
   const resetPosition = useCallback(() => socketRef.current?.emit(SocketEvents.PositionReset), []);
+  const resetToInitial = useCallback(
+    () => socketRef.current?.emit(SocketEvents.PositionResetToInitial),
+    [],
+  );
   const sendChat = useCallback((text: string) => socketRef.current?.emit(SocketEvents.ChatSend, text), []);
   const setMode = useCallback(
     (partial: Partial<RoomMode>) => socketRef.current?.emit(SocketEvents.ModeSet, partial),
@@ -118,6 +124,7 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     updateEdit,
     endEdit,
     resetPosition,
+    resetToInitial,
     sendChat,
     setMode,
     setAnnotations,
