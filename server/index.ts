@@ -777,7 +777,8 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      if (runtime.ownerId !== userId) return;
+      // Отменять ход разрешено и учителю, и ученикам — в учебной комнате это удобный
+      // инструмент совместного разбора. Остаются только базовые проверки безопасности.
       if (runtime.kind !== 'lesson') return;
       if (runtime.isEditing) return;
       if (runtime.history.length === 0) return;

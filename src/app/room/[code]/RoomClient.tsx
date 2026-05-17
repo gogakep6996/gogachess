@@ -400,7 +400,7 @@ export function RoomClient({ meId, room }: Props) {
                 >
                   »
                 </button>
-                {isOwner && roomKind === 'lesson' && (
+                {roomKind === 'lesson' && (
                   <button
                     type="button"
                     onClick={undoMove}
