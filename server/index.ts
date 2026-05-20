@@ -68,6 +68,13 @@ interface RoomRuntime {
   /** Стрелки и выделения клеток, синхронизированные между всеми участниками. */
   arrows: BoardArrow[];
   marks: BoardMark[];
+  /** «Свежий» отрезок: следующий ход в режиме «оба» может быть сделан любой стороной.
+   *  Снова становится true после reset / resetToInitial / editEnd / undo;
+   *  превращается в false после первого успешного хода. */
+  freshSegment: boolean;
+  /** Текущая позиция, на которую смотрит учитель (для синхронизации перемотки с учениками).
+   *  null = «следить за текущей позицией» (показываем последний ход / старт). */
+  historyViewIdx: number | null;
 }
 
 const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
@@ -154,6 +161,8 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     history: room.history,
     arrows: room.arrows,
     marks: room.marks,
+    freshSegment: room.freshSegment,
+    historyViewIdx: room.historyViewIdx,
   };
 }
 
@@ -189,6 +198,8 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     segmentStartFen: initialFen,
     arrows: [],
     marks: [],
+    freshSegment: true,
+    historyViewIdx: null,
   };
   rooms.set(code, runtime);
   return runtime;
@@ -375,6 +386,8 @@ app.prepare().then(() => {
         history: [],
         arrows: [],
         marks: [],
+        freshSegment: true,
+        historyViewIdx: null,
       });
     }
     await broadcastTournament(tournamentId);
@@ -531,6 +544,9 @@ app.prepare().then(() => {
           // чтобы они не накапливались между разными моментами партии.
           runtime.arrows = [];
           runtime.marks = [];
+          runtime.freshSegment = false;
+          // После хода все возвращаются к актуальной позиции (= history.length - 1).
+          runtime.historyViewIdx = null;
           io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
           await persistFen(code, runtime.fen);
 
@@ -586,9 +602,10 @@ app.prepare().then(() => {
         } else {
           const stm = fenSideToMove(runtime.fen);
           if (stm !== piece[0]) {
-            // «Оба» + ещё ни одного хода в текущем сегменте → разрешаем начать любой стороной.
-            // Кто пошёл — тот и первый, дальше очередь сама встаёт правильно.
-            if (sideLock === null && runtime.history.length === 0) {
+            // «Оба» + это первый ход в текущем «свежем» отрезке (после старта/edit/reset/initial/undo)
+            // → разрешаем начать любой стороной. Кто пошёл — тот и первый,
+            // дальше очередь сама встаёт правильно.
+            if (sideLock === null && runtime.freshSegment) {
               runtime.fen = setSideToMove(runtime.fen, piece[0] as 'w' | 'b');
             } else {
               socket.emit(SocketEvents.RoomError, 'Сейчас не ваш ход');
@@ -641,6 +658,10 @@ app.prepare().then(() => {
         });
         runtime.arrows = [];
         runtime.marks = [];
+        // Первый ход «свежего» отрезка сделан — дальше очередь работает строго.
+        runtime.freshSegment = false;
+        // Любой ход возвращает всех к актуальной позиции.
+        runtime.historyViewIdx = null;
 
         io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
         await persistFen(code, runtime.fen);
@@ -702,6 +723,8 @@ app.prepare().then(() => {
       runtime.history = [];
       runtime.arrows = [];
       runtime.marks = [];
+      runtime.freshSegment = true;
+      runtime.historyViewIdx = null;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       await persistFen(code, runtime.fen);
     });
@@ -719,11 +742,13 @@ app.prepare().then(() => {
       runtime.history = [];
       runtime.arrows = [];
       runtime.marks = [];
+      runtime.freshSegment = true;
+      runtime.historyViewIdx = null;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       await persistFen(code, runtime.fen);
     });
 
-    // «Начальная позиция»: возврат к началу текущего сегмента —
+    // «Вернуть мою позицию»: возврат к началу текущего сегмента —
     // то есть к позиции, которую учитель выставил в редакторе. Сегмент сохраняется,
     // история ходов очищается, аннотации сбрасываются.
     socket.on(SocketEvents.PositionResetToInitial, async () => {
@@ -738,6 +763,8 @@ app.prepare().then(() => {
       runtime.history = [];
       runtime.arrows = [];
       runtime.marks = [];
+      runtime.freshSegment = true;
+      runtime.historyViewIdx = null;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       await persistFen(code, runtime.fen);
     });
@@ -787,8 +814,37 @@ app.prepare().then(() => {
         runtime.history.length > 0 ? runtime.history[runtime.history.length - 1].fen : runtime.segmentStartFen;
       runtime.arrows = [];
       runtime.marks = [];
+      // После отмены — снова «свежий» отрезок: в режиме «оба» можно начать любой стороной.
+      runtime.freshSegment = true;
+      runtime.historyViewIdx = null;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       void persistFen(code, runtime.fen);
+    });
+
+    // Учитель листает историю — броадкастим позицию всем, чтобы ученики видели то же.
+    // Принимаем null (= следить за текущей) или число в диапазоне [-1; history.length-1].
+    socket.on(SocketEvents.HistoryView, (idxRaw: number | null) => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      // Только владелец комнаты управляет перемоткой урока.
+      if (runtime.ownerId !== userId) return;
+      if (runtime.kind !== 'lesson') return;
+      let next: number | null;
+      if (idxRaw === null || idxRaw === undefined) {
+        next = null;
+      } else if (typeof idxRaw !== 'number' || !Number.isFinite(idxRaw)) {
+        return;
+      } else {
+        const lastIdx = runtime.history.length - 1;
+        const clamped = Math.max(-1, Math.min(lastIdx, Math.floor(idxRaw)));
+        // Если учитель доехал до последнего хода — храним null («следим за актуальной»).
+        next = clamped >= lastIdx ? null : clamped;
+      }
+      if (runtime.historyViewIdx === next) return;
+      runtime.historyViewIdx = next;
+      io.to(code).emit(SocketEvents.HistoryView, runtime.historyViewIdx);
     });
 
     socket.on(SocketEvents.ArrowsUpdate, (payload: { arrows?: unknown; marks?: unknown }) => {
@@ -995,6 +1051,8 @@ app.prepare().then(() => {
           history: [],
           arrows: [],
           marks: [],
+          freshSegment: true,
+          historyViewIdx: null,
         });
         const payloadA: MatchFoundPayload = {
           code,

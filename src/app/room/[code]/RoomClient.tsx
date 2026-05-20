@@ -12,6 +12,7 @@ import { useRoomSocket } from '@/hooks/useRoomSocket';
 import { useAudioRoom } from '@/hooks/useAudioRoom';
 import { useStockfish } from '@/hooks/useStockfish';
 import { DEFAULT_ROOM_MODE, STARTING_FEN } from '@/lib/socket-events';
+import { getPiece, type Square } from '@/lib/fen';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -83,6 +84,7 @@ export function RoomClient({ meId, room }: Props) {
     setAnnotations,
     undoMove,
     resetToInitial,
+    setHistoryView,
   } = useRoomSocket(room.code);
 
   const audio = useAudioRoom(socket);
@@ -95,6 +97,11 @@ export function RoomClient({ meId, room }: Props) {
   const arrows = state?.arrows ?? [];
   const marks = state?.marks ?? [];
   const roomKind = state?.kind ?? 'lesson';
+  /** Серверный флаг: следующий ход — первый в текущем «свежем» отрезке.
+   *  Если режим «оба» (sideLock===null) — этот ход можно сделать любой стороной. */
+  const freshSegment = state?.freshSegment ?? history.length === 0;
+  /** Индекс просматриваемой позиции, который выставил учитель и хочет показать ученикам. */
+  const remoteViewIdx = state?.historyViewIdx ?? null;
 
   // Только владелец lesson-комнаты управляет режимом; ученики могут редактировать,
   // если учитель открыл редактор и разрешил всем редактирование.
@@ -120,10 +127,31 @@ export function RoomClient({ meId, room }: Props) {
     }
   }, [isEditing, history.length]);
 
+  // Синхронизация с перемоткой учителя. Учеников всегда тянем в позицию учителя:
+  // если учитель показывает прошлый ход — ученики тоже смотрят туда; если null — следят за актуальной.
+  // Учителя при этом не дёргаем (его viewIdx — источник истины, который он сам обновил).
+  useEffect(() => {
+    if (isOwner) return;
+    if (isEditing) return;
+    if (remoteViewIdx === null) {
+      followLatestRef.current = true;
+      setViewIdx(history.length - 1);
+    } else {
+      const clamped = Math.max(-1, Math.min(history.length - 1, remoteViewIdx));
+      followLatestRef.current = clamped === history.length - 1;
+      setViewIdx(clamped);
+    }
+  }, [isOwner, isEditing, remoteViewIdx, history.length]);
+
   function selectHistoryIdx(idx: number) {
     const clamped = Math.max(-1, Math.min(history.length - 1, idx));
     followLatestRef.current = clamped === history.length - 1;
     setViewIdx(clamped);
+    // Учитель транслирует своё положение в ленте всем ученикам в комнате.
+    if (isOwner && roomKind === 'lesson') {
+      const lastIdx = history.length - 1;
+      setHistoryView(clamped >= lastIdx ? null : clamped);
+    }
   }
 
   const lastIdx = history.length - 1;
@@ -193,17 +221,50 @@ export function RoomClient({ meId, room }: Props) {
       : fen;
 
   // ---- Игра против компьютера ----
-  // Человек играет той стороной, чей ход в момент включения; компьютер — другой.
-  const [vsComp, setVsComp] = useState<{ humanColor: 'w' | 'b' } | null>(null);
+  // humanColor === null: режим включён, но человек ещё не определился со стороной
+  // (например, сразу после reset/undo/initial). Первый ход человека любым цветом
+  // выставляет humanColor; дальше движок отвечает противоположной стороной.
+  const [vsComp, setVsComp] = useState<{ humanColor: 'w' | 'b' | null } | null>(null);
   const compEngine = useStockfish();
   const compFenRef = useRef<string | null>(null);
+  /** Отслеживаем переход freshSegment false → true, чтобы один раз сбросить humanColor. */
+  const prevFreshRef = useRef<boolean | null>(null);
 
   useEffect(() => {
     if (vsComp && compEngine.ready) compEngine.setSkill(15);
   }, [vsComp, compEngine.ready, compEngine]);
 
+  // На каждое «обновление позиции откатом» (reset / resetToInitial / undo / editEnd)
+  // освобождаем выбор стороны: пусть пользователь снова решает, кем играть.
+  // Движок при этом остаётся включённым — никакой «магической» выгрузки.
+  useEffect(() => {
+    if (!vsComp) {
+      prevFreshRef.current = null;
+      return;
+    }
+    const curr = freshSegment;
+    const prev = prevFreshRef.current;
+    if (prev === null) {
+      // Первый замер после включения vsComp — фиксируем, ничего не сбрасываем.
+      prevFreshRef.current = curr;
+      return;
+    }
+    prevFreshRef.current = curr;
+    if (!prev && curr) {
+      // Произошёл откат позиции → даём пользователю снова выбрать сторону.
+      if (vsComp.humanColor !== null) {
+        setVsComp({ humanColor: null });
+        // Глушим движок, если он что-то считал на старую позицию.
+        compEngine.stop();
+        compFenRef.current = null;
+      }
+    }
+  }, [freshSegment, vsComp, compEngine]);
+
   useEffect(() => {
     if (!vsComp || isEditing || isViewingPast) return;
+    // Сторона человека ещё не определена — ждём его первого хода, движок молчит.
+    if (vsComp.humanColor === null) return;
     if (!compEngine.ready || compEngine.thinking) return;
     const sideToMove = (fen.split(' ')[1] ?? 'w') as 'w' | 'b';
     if (sideToMove === vsComp.humanColor) return;
@@ -215,17 +276,38 @@ export function RoomClient({ meId, room }: Props) {
 
   useEffect(() => {
     if (!vsComp) return;
+    if (vsComp.humanColor === null) return;
     const m = compEngine.evaluation.bestmove;
     if (!m || m.length < 4) return;
+    // Sanity: ход от движка должен быть для актуальной позиции, а не для старой
+    // (на которой мы запускали анализ до undo / reset).
+    if (compFenRef.current !== fen) return;
     const sideToMove = (fen.split(' ')[1] ?? 'w') as 'w' | 'b';
     if (sideToMove === vsComp.humanColor) return;
     sendMove({ from: m.slice(0, 2), to: m.slice(2, 4), promotion: m[4] ?? 'q' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compEngine.evaluation.bestmove]);
 
+  // Обёртка над sendMove: в vsComp с humanColor=null первый ход человека
+  // определяет его сторону. Дальше движок отвечает противоположной.
+  const sendMoveVsComp = useCallback(
+    (m: { from: string; to: string; promotion?: string }) => {
+      if (vsComp && vsComp.humanColor === null) {
+        const piece = getPiece(fen, m.from as Square);
+        if (piece) {
+          setVsComp({ humanColor: piece[0] as 'w' | 'b' });
+        }
+      }
+      sendMove(m);
+    },
+    [vsComp, fen, sendMove],
+  );
+
   const togglePlayVsComputer = () => {
     if (vsComp) {
       setVsComp(null);
+      compEngine.stop();
+      compFenRef.current = null;
       return;
     }
     if (isEditing) {
@@ -237,16 +319,33 @@ export function RoomClient({ meId, room }: Props) {
     if (mode.allowIllegal || mode.sideLock) {
       setMode({ allowIllegal: false, sideLock: null });
     }
-    const sideToMove = (fen.split(' ')[1] ?? 'w') as 'w' | 'b';
-    setVsComp({ humanColor: sideToMove });
+    // Если отрезок «свежий» (только зашли / сразу после reset/edit) — даём человеку
+    // выбрать сторону, сделав первый ход любым цветом.
+    // Иначе фиксируем за тем, чей сейчас ход.
+    if (freshSegment) {
+      setVsComp({ humanColor: null });
+    } else {
+      const sideToMove = (fen.split(' ')[1] ?? 'w') as 'w' | 'b';
+      setVsComp({ humanColor: sideToMove });
+    }
   };
 
-  // Если позиция стала нелегальной (после редактирования), глушим режим.
+  // Если позиция стала нелегальной (после редактирования) или включили
+  // «свободные ходы» / sideLock — режим vsComp несовместим, отключаем.
   useEffect(() => {
     if (!vsComp) return;
-    if (!fen || fen.split(' ').length < 2) setVsComp(null);
-    if (mode.allowIllegal || mode.sideLock) setVsComp(null);
-  }, [fen, vsComp, mode.allowIllegal, mode.sideLock]);
+    if (!fen || fen.split(' ').length < 2) {
+      setVsComp(null);
+      compEngine.stop();
+      compFenRef.current = null;
+      return;
+    }
+    if (mode.allowIllegal || mode.sideLock) {
+      setVsComp(null);
+      compEngine.stop();
+      compFenRef.current = null;
+    }
+  }, [fen, vsComp, mode.allowIllegal, mode.sideLock, compEngine]);
 
   // Размер доски: на мобильном — почти на всю ширину, на десктопе ограничиваем высотой вьюпорта.
   const boardClassName =
@@ -333,9 +432,17 @@ export function RoomClient({ meId, room }: Props) {
               canEdit={canEditNow}
               allowIllegal={!vsComp && mode.allowIllegal}
               sideLock={vsComp ? null : mode.sideLock}
-              canStartAnySide={!vsComp && !mode.allowIllegal && mode.sideLock === null && history.length === 0}
+              // «Любой цвет первым» работает в двух случаях:
+              //   1. Обычный режим «оба» в свежем отрезке (после reset/undo/initial).
+              //   2. Vs Computer, пока пользователь не определил, какой стороной играть
+              //      (после reset/undo/initial — мы сбросили humanColor в null).
+              canStartAnySide={
+                vsComp
+                  ? vsComp.humanColor === null
+                  : !mode.allowIllegal && mode.sideLock === null && freshSegment
+              }
               onPromotionRequest={handlePromotionRequest}
-              onMove={sendMove}
+              onMove={vsComp ? sendMoveVsComp : sendMove}
               onEditFen={handleEditChange}
               arrows={arrows}
               marks={marks}
@@ -445,7 +552,7 @@ export function RoomClient({ meId, room }: Props) {
               className="w-full rounded-xl border border-stone-200/80 bg-white/90 px-3 py-2 text-xs font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700/70 dark:bg-stone-900/65 dark:text-stone-200 dark:hover:bg-stone-800/80"
               title="Вернуть позицию к началу сегмента (как было сразу после редактора)"
             >
-              ⟲ Начальная позиция
+              ⟲ Вернуть мою позицию
             </button>
           )}
           {/* Движок Stockfish — только для учителя: ученикам подсказки не показываем. */}

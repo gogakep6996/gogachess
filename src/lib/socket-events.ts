@@ -24,6 +24,9 @@ export const SocketEvents = {
   ModeSet: 'chess:mode',          // учитель меняет режим комнаты
   MoveUndo: 'chess:undo',       // отменить последний ход ( lesson )
   ArrowsUpdate: 'chess:arrows',   // стрелки и выделения клеток (broadcast)
+  /** Учитель листает историю ходов — броадкастим всем, чтобы у учеников
+   *  показывалась та же позиция, что и у учителя. */
+  HistoryView: 'chess:history-view',
 
   // Чат
   ChatSend: 'chat:send',
@@ -125,6 +128,13 @@ export interface RoomStatePayload {
   history: MoveHistoryEntry[];
   arrows: BoardArrow[];
   marks: BoardMark[];
+  /** «Свежий» отрезок: следующий ход — первый, и его можно сделать любой стороной
+   *  (если sideLock === null). Сбрасывается после первого хода; снова становится
+   *  true после reset / resetToInitial / editEnd / undo. */
+  freshSegment: boolean;
+  /** Текущий индекс просматриваемого хода у учителя.
+   *  null = «следить за текущей позицией» (последний ход или старт). */
+  historyViewIdx: number | null;
 }
 
 export interface ChatMessageDto {

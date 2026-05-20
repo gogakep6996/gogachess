@@ -30,6 +30,9 @@ interface UseRoomSocketResult {
   setMode: (partial: Partial<RoomMode>) => void;
   setAnnotations: (next: BoardAnnotations) => void;
   undoMove: () => void;
+  /** Учитель сообщает серверу, какую позицию он сейчас смотрит — сервер броадкастит
+   *  ученикам, чтобы у них показывался тот же ход. null = «следить за текущей». */
+  setHistoryView: (idx: number | null) => void;
 }
 
 export function useRoomSocket(roomCode: string): UseRoomSocketResult {
@@ -72,6 +75,12 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
       setState((prev) => (prev ? { ...prev, arrows: payload.arrows, marks: payload.marks } : prev));
     });
 
+    // Учитель перемотал историю — у учеников должен обновиться индекс просмотра.
+    // Отдельным событием, чтобы не дёргать пересчёт всего RoomState на каждый клик.
+    socket.on(SocketEvents.HistoryView, (idx: number | null) => {
+      setState((prev) => (prev ? { ...prev, historyViewIdx: idx } : prev));
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -104,6 +113,9 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
   const undoMove = useCallback(() => {
     socketRef.current?.emit(SocketEvents.MoveUndo);
   }, []);
+  const setHistoryView = useCallback((idx: number | null) => {
+    socketRef.current?.emit(SocketEvents.HistoryView, idx);
+  }, []);
 
   // Очищаем ошибку через 4 сек
   useEffect(() => {
@@ -129,5 +141,6 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     setMode,
     setAnnotations,
     undoMove,
+    setHistoryView,
   };
 }
