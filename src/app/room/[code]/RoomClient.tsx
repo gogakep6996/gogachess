@@ -221,22 +221,26 @@ export function RoomClient({ meId, room }: Props) {
       : fen;
 
   // ---- Игра против компьютера ----
-  // humanColor === null: режим включён, но человек ещё не определился со стороной
-  // (например, сразу после reset/undo/initial). Первый ход человека любым цветом
-  // выставляет humanColor; дальше движок отвечает противоположной стороной.
+  // humanColor === null: движок включён, но «человеческая» сторона ещё не определена
+  // (только что включили / после reset / undo / editEnd). Первый ход в позиции
+  // (любым из участников комнаты — учителем ИЛИ учеником) выставляет humanColor;
+  // дальше движок отвечает противоположной стороной.
   const [vsComp, setVsComp] = useState<{ humanColor: 'w' | 'b' | null } | null>(null);
   const compEngine = useStockfish();
   const compFenRef = useRef<string | null>(null);
   /** Отслеживаем переход freshSegment false → true, чтобы один раз сбросить humanColor. */
   const prevFreshRef = useRef<boolean | null>(null);
+  /** Отслеживаем длину истории — определяем humanColor только когда был сделан НОВЫЙ ход
+   *  (history.length вырос), а не когда он был отменён (history.length уменьшился). */
+  const prevHistoryLenRef = useRef<number>(0);
 
   useEffect(() => {
     if (vsComp && compEngine.ready) compEngine.setSkill(15);
   }, [vsComp, compEngine.ready, compEngine]);
 
   // На каждое «обновление позиции откатом» (reset / resetToInitial / undo / editEnd)
-  // освобождаем выбор стороны: пусть пользователь снова решает, кем играть.
-  // Движок при этом остаётся включённым — никакой «магической» выгрузки.
+  // освобождаем выбор стороны: пусть первый следующий ход — теперь уже свежего сегмента —
+  // снова определит, кто человек. Движок остаётся включённым.
   useEffect(() => {
     if (!vsComp) {
       prevFreshRef.current = null;
@@ -261,9 +265,31 @@ export function RoomClient({ meId, room }: Props) {
     }
   }, [freshSegment, vsComp, compEngine]);
 
+  // Любой новый ход в комнате (от учителя или ученика) при включённом vsComp,
+  // если сторона ещё не выбрана — определяет её по цвету этого хода.
+  // ВАЖНО: реагируем только на РОСТ истории (новый ход), но не на её сжатие (undo),
+  // иначе после отмены движок «вернёт» humanColor по уже-стёртому ходу.
+  useEffect(() => {
+    const prevLen = prevHistoryLenRef.current;
+    prevHistoryLenRef.current = history.length;
+    if (!vsComp || vsComp.humanColor !== null) return;
+    if (isEditing) return;
+    if (history.length === 0) return;
+    if (history.length <= prevLen) return;
+    const lastEntry = history[history.length - 1];
+    // Цвет фигуры, сделавшей последний ход, определяем по фигуре на клетке «from»
+    // в позиции ДО этого хода (предыдущая запись истории или старт сегмента).
+    const prevFen =
+      history.length === 1 ? segmentStartFen : history[history.length - 2].fen;
+    const piece = getPiece(prevFen, lastEntry.from as Square);
+    if (piece) {
+      setVsComp({ humanColor: piece[0] as 'w' | 'b' });
+    }
+  }, [history.length, vsComp, isEditing, segmentStartFen, history]);
+
   useEffect(() => {
     if (!vsComp || isEditing || isViewingPast) return;
-    // Сторона человека ещё не определена — ждём его первого хода, движок молчит.
+    // Сторона человека ещё не определена — ждём первый ход в комнате, движок молчит.
     if (vsComp.humanColor === null) return;
     if (!compEngine.ready || compEngine.thinking) return;
     const sideToMove = (fen.split(' ')[1] ?? 'w') as 'w' | 'b';
@@ -289,7 +315,8 @@ export function RoomClient({ meId, room }: Props) {
   }, [compEngine.evaluation.bestmove]);
 
   // Обёртка над sendMove: в vsComp с humanColor=null первый ход человека
-  // определяет его сторону. Дальше движок отвечает противоположной.
+  // (учителя) синхронно определяет его сторону, чтобы движок мог отреагировать
+  // максимально быстро. Для ходов учеников это же делает useEffect выше.
   const sendMoveVsComp = useCallback(
     (m: { from: string; to: string; promotion?: string }) => {
       if (vsComp && vsComp.humanColor === null) {
@@ -302,6 +329,11 @@ export function RoomClient({ meId, room }: Props) {
     },
     [vsComp, fen, sendMove],
   );
+
+  /** Защёлка: учитель только что включил vsComp и параллельно сбросил конфликтующий
+   *  режим (sideLock/allowIllegal). Пока сервер не подтвердил сброс, конфликтный
+   *  useEffect ниже не должен тут же выключать только что включённый vsComp. */
+  const pendingVsCompModeResetRef = useRef(false);
 
   const togglePlayVsComputer = () => {
     if (vsComp) {
@@ -317,17 +349,13 @@ export function RoomClient({ meId, room }: Props) {
     // Игра с компьютером всегда строго по правилам — выключаем «свободные ходы» и
     // фиксацию стороны, иначе движок будет противоречить состоянию доски.
     if (mode.allowIllegal || mode.sideLock) {
+      pendingVsCompModeResetRef.current = true;
       setMode({ allowIllegal: false, sideLock: null });
     }
-    // Если отрезок «свежий» (только зашли / сразу после reset/edit) — даём человеку
-    // выбрать сторону, сделав первый ход любым цветом.
-    // Иначе фиксируем за тем, чей сейчас ход.
-    if (freshSegment) {
-      setVsComp({ humanColor: null });
-    } else {
-      const sideToMove = (fen.split(' ')[1] ?? 'w') as 'w' | 'b';
-      setVsComp({ humanColor: sideToMove });
-    }
+    // Всегда стартуем с null: первый ход в комнате (учителя или ученика, любой стороной)
+    // определит «человеческую» сторону, дальше движок играет противоположной.
+    setVsComp({ humanColor: null });
+    prevHistoryLenRef.current = history.length;
   };
 
   // Если позиция стала нелегальной (после редактирования) или включили
@@ -341,9 +369,14 @@ export function RoomClient({ meId, room }: Props) {
       return;
     }
     if (mode.allowIllegal || mode.sideLock) {
+      // Ждём, пока сервер подтвердит сброс режима, инициированный самим toggle'ом vsComp.
+      if (pendingVsCompModeResetRef.current) return;
       setVsComp(null);
       compEngine.stop();
       compFenRef.current = null;
+    } else {
+      // Режим стал «чистым» (или уже был) — снимаем защёлку.
+      pendingVsCompModeResetRef.current = false;
     }
   }, [fen, vsComp, mode.allowIllegal, mode.sideLock, compEngine]);
 

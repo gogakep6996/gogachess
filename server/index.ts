@@ -715,9 +715,14 @@ app.prepare().then(() => {
       // «учебными» отклонениями. Корректность хода при дальнейшей игре
       // обеспечивается режимом комнаты (legal/illegal).
       runtime.fen = fen;
+      // Если включён sideLock — синхронизируем сторону в FEN, иначе игрок не сможет
+      // пойти за заблокированный цвет (сервер откажет «сейчас не ваш ход»).
+      if (runtime.mode.sideLock) {
+        runtime.fen = setSideToMove(runtime.fen, runtime.mode.sideLock);
+      }
+      runtime.segmentStartFen = runtime.fen;
       runtime.isEditing = false;
       runtime.editorId = null;
-      runtime.segmentStartFen = fen;
       // После выхода из редактора история партии больше не относится к новой
       // позиции — обнуляем, чтобы навигация назад не показывала фантомы.
       runtime.history = [];
@@ -736,9 +741,14 @@ app.prepare().then(() => {
       if (!runtime) return;
       if (runtime.ownerId !== userId) return;
       runtime.fen = STARTING_FEN;
+      // Если стоит фиксация стороны — выставляем её в FEN, иначе игрок не сможет
+      // пойти за заблокированный цвет после сброса.
+      if (runtime.mode.sideLock) {
+        runtime.fen = setSideToMove(runtime.fen, runtime.mode.sideLock);
+      }
       runtime.isEditing = false;
       runtime.editorId = null;
-      runtime.segmentStartFen = STARTING_FEN;
+      runtime.segmentStartFen = runtime.fen;
       runtime.history = [];
       runtime.arrows = [];
       runtime.marks = [];
@@ -760,6 +770,10 @@ app.prepare().then(() => {
       if (runtime.kind !== 'lesson') return;
       if (runtime.isEditing) return;
       runtime.fen = runtime.segmentStartFen;
+      // Если sideLock — снова выравниваем сторону FEN под него.
+      if (runtime.mode.sideLock) {
+        runtime.fen = setSideToMove(runtime.fen, runtime.mode.sideLock);
+      }
       runtime.history = [];
       runtime.arrows = [];
       runtime.marks = [];
@@ -812,6 +826,11 @@ app.prepare().then(() => {
       runtime.history.pop();
       runtime.fen =
         runtime.history.length > 0 ? runtime.history[runtime.history.length - 1].fen : runtime.segmentStartFen;
+      // Если стоит фиксация стороны — гарантируем, что после отмены стороной хода
+      // снова окажется sideLock (в истории/segmentStartFen она могла быть другой).
+      if (runtime.mode.sideLock) {
+        runtime.fen = setSideToMove(runtime.fen, runtime.mode.sideLock);
+      }
       runtime.arrows = [];
       runtime.marks = [];
       // После отмены — снова «свежий» отрезок: в режиме «оба» можно начать любой стороной.
