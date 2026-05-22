@@ -102,9 +102,13 @@ export function flipSide(fen: string): string {
 export function setSideToMove(fen: string, side: 'w' | 'b'): string {
   const parts = fen.split(' ');
   if (parts.length < 2) return `${parts[0] ?? emptyFen().split(' ')[0]} ${side} - - 0 1`;
+  const prevSide = parts[1];
   parts[1] = side;
-  // Сбрасываем en-passant — он был релевантен только для прежней стороны.
-  if (parts[3] && parts[3] !== '-') parts[3] = '-';
+  // En-passant сбрасываем ТОЛЬКО когда реально меняем сторону хода —
+  // иначе мы убиваем квадрат e.p. и теряем взятие на проходе, например
+  // когда генератор подсказок (chessJsDestinationsIgnoringGlobalTurn)
+  // «выравнивает» FEN под цвет выбранной фигуры.
+  if (prevSide !== side && parts[3] && parts[3] !== '-') parts[3] = '-';
   return parts.join(' ');
 }
 

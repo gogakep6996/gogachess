@@ -34,7 +34,11 @@ export function chessJsDestinationsIgnoringGlobalTurn(fen: string, from: Square)
   const piece = rawPieceAt(parsed.board, idxFrom.r, idxFrom.c);
   if (!piece) return [];
   try {
-    const adj = setSideToMove(fen, piece[0] === 'w' ? 'w' : 'b');
+    const wantSide = piece[0] === 'w' ? 'w' : 'b';
+    // ВАЖНО: если очередь уже совпадает с цветом выбранной фигуры, оставляем
+    // FEN как есть, иначе теряем квадрат en-passant (setSideToMove его обнуляет
+    // при смене стороны). Это блокировало взятие на проходе клиентом.
+    const adj = fenSideToMove(fen) === wantSide ? fen : setSideToMove(fen, wantSide);
     const g = new Chess(adj);
     const moves = g.moves({ square: from as ChessSquare, verbose: true }) as Array<{ to: string }>;
     return moves.map((m) => m.to);
