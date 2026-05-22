@@ -4,6 +4,18 @@
 // Подключается к существующему сокету комнаты через useRoomSocket, рендерит
 // доску, часы, кнопки сдачи/ничьей, материал и перемотку.
 //
+// Лэйаут (desktop):
+//   ┌──────────────┬───────────────────┬──────────────┐
+//   │ Турнирная    │   ШАПКА СОПЕРНИКА │ ⏰ соперник   │
+//   │ таблица      │   (имя · #N · cap)│              │
+//   │ (+ countdown │   ┌─────────────┐ │  ½ / ✕       │
+//   │  турнира)    │   │   ДОСКА     │ │  материал /  │
+//   │              │   └─────────────┘ │  ходы /      │
+//   │              │   ШАПКА МОЯ       │  результат   │
+//   │              │   (имя · #N · cap)│              │
+//   │              │                   │ ⏰ моё        │
+//   └──────────────┴───────────────────┴──────────────┘
+//
 // Жизненный цикл:
 //   1. Партия живая (state.result === null)         → играем
 //   2. Партия окончена (state.result !== null)      → результат + «Вернуться в турнир»
@@ -18,7 +30,13 @@ import { ClockDisplay } from './ClockDisplay';
 import { MaterialBar } from './MaterialBar';
 import { DrawOfferToast } from './DrawOfferToast';
 import { MoveNav } from './MoveNav';
-import { STARTING_FEN } from '@/lib/socket-events';
+import { StandingsTable } from './StandingsTable';
+import { TournamentCountdown } from './TournamentCountdown';
+import {
+  STARTING_FEN,
+  type TournamentLivePayload,
+  type TournamentStandingDto,
+} from '@/lib/socket-events';
 
 interface Props {
   /** Код турнирной комнаты, в которой идёт партия. */
@@ -33,7 +51,15 @@ interface Props {
   blackRank?: number;
   /** Что делать, когда игрок нажал «Вернуться в турнир». */
   onReturnToTournament: () => void;
+  /** Турнирные данные — для левой колонки (таблица + countdown). */
+  tournament: TournamentLivePayload | null;
+  /** Standings отдельно — на случай если нужны актуальнее, чем tournament.standings. */
+  standings: TournamentStandingDto[];
 }
+
+// Размер доски — тот же, что используется при просмотре чужих партий
+// (SelectedBoard.BOARD_SIDE), чтобы визуально не «прыгало» при переходе play↔spectate.
+const BOARD_SIDE = 'min(94vw, 480px)';
 
 export function TournamentGameView({
   roomCode,
@@ -43,24 +69,22 @@ export function TournamentGameView({
   whiteRank,
   blackRank,
   onReturnToTournament,
+  tournament,
+  standings,
 }: Props) {
   const room = useRoomSocket(roomCode);
   const state = room.state;
 
   // ВАЖНО: ВСЕ хуки ОБЯЗАНЫ вызываться в одном и том же порядке на каждом рендере,
-  // даже если state ещё null. Иначе React выбрасывает Minified error #310
-  // («Rendered more hooks during this render than during the previous render»).
-  // Поэтому хуки идут до любого раннего return.
+  // даже если state ещё null. Иначе React выбрасывает Minified error #310.
   const [viewIdx, setViewIdx] = useState<number | null>(null);
   const [confirmResign, setConfirmResign] = useState(false);
 
   const historyLen = state?.history.length ?? 0;
-  // На каждый рост истории — если пришёл новый ход соперника — снап к актуальной.
   useEffect(() => {
     setViewIdx(null);
   }, [historyLen]);
 
-  // FEN, который рендерим на доске: при перемотке — соответствующая историческая позиция.
   const viewedFen = useMemo(() => {
     if (!state) return STARTING_FEN;
     if (viewIdx === null) return state.fen;
@@ -89,7 +113,6 @@ export function TournamentGameView({
   const canMove =
     gameLive && iAmPlayer && !isViewingPast && sideToMove === myColor && room.connected;
 
-  // Подсветка последнего хода — берём из последней записи истории.
   const lastEntry = state.history.length > 0 ? state.history[state.history.length - 1] : null;
   const highlights = lastEntry ? { from: lastEntry.from, to: lastEntry.to } : undefined;
 
@@ -111,22 +134,27 @@ export function TournamentGameView({
     room.resign();
   };
 
-  // ──────────────────────────────────────────────────────────────────────
-  // Layout: доска слева/по центру, sidebar справа.
-  // На мобиле — sidebar уходит ПОД доску (как и на /room в мобильной верстке).
-  // ──────────────────────────────────────────────────────────────────────
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-      {/* Колонка с доской */}
-      <section className="flex flex-col gap-2">
-        {/* Шапка соперника (имя · #ранк · материал) — компактно над доской */}
-        <PlayerHeader
-          name={topName}
-          rank={topRank}
-          fen={viewedFen}
-          materialColor={topColor}
-        />
-        <div className="mx-auto aspect-square w-full max-w-[min(94vw,580px)]">
+    <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_280px]">
+      {/* Левая колонка: countdown турнира + таблица */}
+      <aside className="order-2 flex flex-col gap-3 lg:order-1">
+        {tournament && (
+          <TournamentCountdown status={tournament.status} endsAt={tournament.endsAt} />
+        )}
+        <StandingsTable standings={standings} meId={meId} />
+      </aside>
+
+      {/* Центр: доска */}
+      <section className="order-1 flex flex-col items-center gap-2 lg:order-2">
+        <div className="w-full" style={{ maxWidth: BOARD_SIDE }}>
+          <PlayerHeader
+            name={topName}
+            rank={topRank}
+            fen={viewedFen}
+            materialColor={topColor}
+          />
+        </div>
+        <div className="mx-auto" style={{ width: BOARD_SIDE, height: BOARD_SIDE }}>
           <ChessBoard
             fen={viewedFen}
             canMove={canMove}
@@ -140,77 +168,88 @@ export function TournamentGameView({
             fillContainer
           />
         </div>
-        {/* Шапка моего цвета — материал и имя под доской */}
-        <PlayerHeader
-          name={bottomName}
-          rank={bottomRank}
-          fen={viewedFen}
-          materialColor={bottomColor}
-          isMe={iAmPlayer && bottomColor === myColor}
-        />
+        <div className="w-full" style={{ maxWidth: BOARD_SIDE }}>
+          <PlayerHeader
+            name={bottomName}
+            rank={bottomRank}
+            fen={viewedFen}
+            materialColor={bottomColor}
+            isMe={iAmPlayer && bottomColor === myColor}
+          />
+        </div>
       </section>
 
-      {/* Sidebar */}
-      <aside className="flex flex-col gap-3">
-        {state.clock && (
-          <div className="flex flex-col gap-2">
-            <ClockDisplay clock={state.clock} side={topColor} />
-            <ClockDisplay
-              clock={state.clock}
-              side={bottomColor}
-              isMine={iAmPlayer && bottomColor === myColor}
+      {/* Правая колонка: часы по краям, между ними — функции */}
+      <aside className="order-3 flex flex-col justify-between gap-3" style={{ minHeight: BOARD_SIDE }}>
+        {/* Верх: часы соперника */}
+        {state.clock ? (
+          <ClockDisplay clock={state.clock} side={topColor} />
+        ) : (
+          <div />
+        )}
+
+        {/* Центр: кнопки / ничья / материал / ходы / результат */}
+        <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
+          {iAmPlayer && gameLive && (
+            <div className="flex gap-2">
+              <button
+                className="btn-outline flex-1 text-sm"
+                onClick={() => room.offerDraw()}
+                disabled={!!state.drawOffer && state.drawOffer.fromUserId === meId}
+              >
+                ½ Ничья
+              </button>
+              <button
+                className={`flex-1 text-sm ${confirmResign ? 'btn-primary bg-red-600 hover:bg-red-700' : 'btn-outline'}`}
+                onClick={handleResign}
+              >
+                {confirmResign ? 'Точно сдаюсь' : '✕ Сдаться'}
+              </button>
+            </div>
+          )}
+
+          {state.drawOffer && gameLive && (
+            <DrawOfferToast
+              offer={state.drawOffer}
+              myUserId={meId}
+              onAccept={() => room.acceptDraw()}
+              onDecline={() => room.declineDraw()}
             />
+          )}
+
+          {result && (
+            <GameResultPanel
+              result={result}
+              myColor={myColor}
+              whiteName={whiteName}
+              blackName={blackName}
+              onReturn={onReturnToTournament}
+            />
+          )}
+
+          <div className="card !p-3">
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+              Ходы
+            </h4>
+            <MoveNav history={state.history} viewIdx={viewIdx} onSelect={setViewIdx} />
           </div>
-        )}
 
-        {iAmPlayer && gameLive && (
-          <div className="flex gap-2">
-            <button
-              className="btn-outline flex-1 text-sm"
-              onClick={() => room.offerDraw()}
-              disabled={!!state.drawOffer && state.drawOffer.fromUserId === meId}
-            >
-              ½ Ничья
-            </button>
-            <button
-              className={`flex-1 text-sm ${confirmResign ? 'btn-primary bg-red-600 hover:bg-red-700' : 'btn-outline'}`}
-              onClick={handleResign}
-            >
-              {confirmResign ? 'Точно сдаюсь' : '✕ Сдаться'}
-            </button>
-          </div>
-        )}
-
-        {state.drawOffer && gameLive && (
-          <DrawOfferToast
-            offer={state.drawOffer}
-            myUserId={meId}
-            onAccept={() => room.acceptDraw()}
-            onDecline={() => room.declineDraw()}
-          />
-        )}
-
-        {result && (
-          <GameResultPanel
-            result={result}
-            myColor={myColor}
-            whiteName={whiteName}
-            blackName={blackName}
-            onReturn={onReturnToTournament}
-          />
-        )}
-
-        <div className="card !p-3">
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
-            Ходы
-          </h4>
-          <MoveNav history={state.history} viewIdx={viewIdx} onSelect={setViewIdx} />
+          {room.error && (
+            <div className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-200">
+              {room.error}
+            </div>
+          )}
         </div>
 
-        {room.error && (
-          <div className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-200">
-            {room.error}
-          </div>
+        {/* Низ: мои часы */}
+        {state.clock ? (
+          <ClockDisplay
+            clock={state.clock}
+            side={bottomColor}
+            isMine={iAmPlayer && bottomColor === myColor}
+          />
+        ) : (
+          <div />
         )}
       </aside>
     </div>

@@ -13,6 +13,8 @@ import {
 import { ChessBoard } from '@/components/chess/ChessBoard';
 import { MiniBoard } from '@/components/chess/MiniBoard';
 import { TournamentGameView } from '@/components/tournament/TournamentGameView';
+import { StandingsTable } from '@/components/tournament/StandingsTable';
+import { TournamentCountdown } from '@/components/tournament/TournamentCountdown';
 
 const BOARD_SIDE = 'min(94vw, 480px)';
 
@@ -40,7 +42,6 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
       if (p.id === id) setData(p);
     });
     s.on(SocketEvents.MatchFound, (p: MatchFoundPayload) => {
-      // Когда сервер нашёл нам соперника — сразу переключаем экран на свою партию.
       setActiveMatchCode(p.code);
       setSpectateCode(null);
     });
@@ -93,8 +94,6 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
     if (r.ok) setJoined(false);
   }, [id]);
 
-  // «Вернуться в турнир» после завершения моей партии: гасим экран игры и
-  // снова делаем себя доступным для подбора.
   const handleReturnFromGame = useCallback(async () => {
     setActiveMatchCode(null);
     if (data?.status === 'running') {
@@ -112,7 +111,6 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
     [data],
   );
 
-  // Если я в активной партии — показываем ТОЛЬКО её (sidebar с таблицей остаётся).
   const activeMatch: TournamentMatchDto | null = useMemo(() => {
     if (!activeMatchCode) return null;
     return (data?.matches ?? []).find((m) => m.roomCode === activeMatchCode) ?? null;
@@ -130,21 +128,29 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
     return map;
   }, [data?.standings]);
 
+  // Я в активной партии? Тогда лэйаут другой: [standings_left | board_center | sidebar_right].
+  if (activeMatch && meId) {
+    return (
+      <TournamentGameView
+        key={activeMatch.roomCode}
+        roomCode={activeMatch.roomCode!}
+        meId={meId}
+        whiteName={activeMatch.whiteName}
+        blackName={activeMatch.blackName}
+        whiteRank={ranks.get(activeMatch.whiteId)}
+        blackRank={ranks.get(activeMatch.blackId)}
+        onReturnToTournament={handleReturnFromGame}
+        tournament={data}
+        standings={data?.standings ?? []}
+      />
+    );
+  }
+
+  // Я НЕ в активной партии: классический лэйаут [content | sidebar справа].
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
       <section>
-        {activeMatch && meId ? (
-          <TournamentGameView
-            key={activeMatch.roomCode}
-            roomCode={activeMatch.roomCode!}
-            meId={meId}
-            whiteName={activeMatch.whiteName}
-            blackName={activeMatch.blackName}
-            whiteRank={ranks.get(activeMatch.whiteId)}
-            blackRank={ranks.get(activeMatch.blackId)}
-            onReturnToTournament={handleReturnFromGame}
-          />
-        ) : spectateMatch ? (
+        {spectateMatch ? (
           <SelectedBoard
             roomCode={spectateMatch.roomCode!}
             whiteName={spectateMatch.whiteName}
@@ -155,7 +161,7 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
           />
         ) : (
           <>
-            {joined && !activeMatch && (
+            {joined && (
               <div className="mb-4 rounded-xl border border-brand-300/60 bg-brand-50 px-4 py-2 text-sm text-brand-800 dark:border-brand-700 dark:bg-brand-900/30 dark:text-brand-200">
                 Ищем соперника… можно пока посмотреть чужие партии.
               </div>
@@ -173,7 +179,7 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
             />
           </>
         )}
-        {finishedMatches.length > 0 && !activeMatch && !spectateMatch && (
+        {finishedMatches.length > 0 && !spectateMatch && (
           <div className="mt-6">
             <h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-stone-500">
               Завершённые партии
@@ -201,71 +207,23 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
       </section>
 
       <aside className="space-y-4">
-        <div className="card">
-          <h3 className="mb-2 font-semibold">
-            Статус: <span className="font-normal">{data?.status ?? '…'}</span>
-          </h3>
-          {data?.endsAt && data.status === 'running' && (
-            <p className="text-xs text-stone-500">
-              Завершится: {new Date(data.endsAt).toLocaleTimeString('ru-RU')}
-            </p>
-          )}
-          {meId && data?.status !== 'finished' && !activeMatch && (
-            <button
-              onClick={joined ? leave : join}
-              className={joined ? 'btn-ghost mt-3 w-full' : 'btn-primary mt-3 w-full'}
-            >
-              {joined ? 'Я в игре · отменить' : 'Участвовать'}
-            </button>
-          )}
-          {activeMatch && (
-            <p className="mt-3 text-xs text-stone-500">
-              Идёт ваша партия — кнопка возврата появится после её завершения.
-            </p>
-          )}
-          {!meId && (
-            <Link href="/login" className="btn-primary mt-3 w-full">
-              Войти, чтобы участвовать
-            </Link>
-          )}
-        </div>
+        {data && <TournamentCountdown status={data.status} endsAt={data.endsAt} />}
 
-        <div className="card">
-          <h3 className="mb-2 font-semibold">Турнирная таблица</h3>
-          {!data || data.standings.length === 0 ? (
-            <p className="text-sm text-stone-500">Пока нет участников.</p>
-          ) : (
-            <ol className="text-sm">
-              {data.standings.map((p) => (
-                <li
-                  key={p.userId}
-                  className={`flex items-center justify-between gap-2 border-b border-stone-200/60 py-1.5 last:border-0 dark:border-stone-800/60 ${
-                    meId === p.userId ? 'font-semibold text-brand-700 dark:text-brand-300' : ''
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="inline-flex h-5 min-w-[28px] items-center justify-center rounded bg-brand-500/15 px-1 text-xs font-semibold tabular-nums text-brand-700 dark:text-brand-300">
-                      #{p.rank}
-                    </span>
-                    <span>{p.name}</span>
-                    {p.isAvailable ? (
-                      <span className="badge bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                        свободен
-                      </span>
-                    ) : (
-                      <span className="badge bg-stone-100 text-stone-500 dark:bg-stone-800 dark:text-stone-400">
-                        играет
-                      </span>
-                    )}
-                  </span>
-                  <span className="tabular-nums">
-                    {p.score.toFixed(1).replace('.0', '')} / {p.played}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
+        {meId && data?.status !== 'finished' && (
+          <button
+            onClick={joined ? leave : join}
+            className={joined ? 'btn-ghost w-full' : 'btn-primary w-full'}
+          >
+            {joined ? 'Я в игре · отменить' : 'Участвовать'}
+          </button>
+        )}
+        {!meId && (
+          <Link href="/login" className="btn-primary w-full">
+            Войти, чтобы участвовать
+          </Link>
+        )}
+
+        <StandingsTable standings={data?.standings ?? []} meId={meId} />
       </aside>
     </div>
   );
@@ -305,14 +263,14 @@ function LiveGrid({
             <div className="font-medium">
               {m.whiteName}
               {m.whiteRank ? (
-                <span className="ml-1 text-xs text-brand-700 dark:text-brand-300">#{m.whiteRank}</span>
+                <span className="ml-1 text-xs text-stone-500">{m.whiteRank}</span>
               ) : null}
             </div>
             <div className="text-xs text-stone-500">vs</div>
             <div className="font-medium">
               {m.blackName}
               {m.blackRank ? (
-                <span className="ml-1 text-xs text-brand-700 dark:text-brand-300">#{m.blackRank}</span>
+                <span className="ml-1 text-xs text-stone-500">{m.blackRank}</span>
               ) : null}
             </div>
           </div>
@@ -355,13 +313,13 @@ function SelectedBoard({
         <div className="text-sm">
           <span className="font-semibold">{whiteName}</span>
           {whiteRank ? (
-            <span className="ml-1 text-xs text-brand-700 dark:text-brand-300">#{whiteRank}</span>
+            <span className="ml-1 text-xs text-stone-500">{whiteRank}</span>
           ) : null}{' '}
           <span className="text-stone-500">— белые</span>
           <span className="mx-2 text-stone-400">·</span>
           <span className="font-semibold">{blackName}</span>
           {blackRank ? (
-            <span className="ml-1 text-xs text-brand-700 dark:text-brand-300">#{blackRank}</span>
+            <span className="ml-1 text-xs text-stone-500">{blackRank}</span>
           ) : null}{' '}
           <span className="text-stone-500">— чёрные</span>
         </div>

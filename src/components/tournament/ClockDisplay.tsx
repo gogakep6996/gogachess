@@ -72,17 +72,18 @@ export function ClockDisplay({ clock, side, isMine, className }: Props) {
 
   const low = display < 30_000;
   const critical = display < 10_000;
+  // Цвета цифр чуть мягче — пользователь жаловался на излишнюю яркость.
   return (
     <div
       className={[
         'rounded-xl px-4 py-3 text-3xl font-semibold tabular-nums shadow-sm transition-colors',
         running
           ? critical
-            ? 'bg-red-500 text-white'
+            ? 'bg-red-500/85 text-white/95'
             : low
-              ? 'bg-amber-400 text-stone-900'
-              : 'bg-stone-900 text-stone-50 dark:bg-stone-100 dark:text-stone-900'
-          : 'bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-200',
+              ? 'bg-amber-300/80 text-stone-800'
+              : 'bg-stone-700 text-stone-100 dark:bg-stone-200/90 dark:text-stone-800'
+          : 'bg-stone-100 text-stone-500 dark:bg-stone-800/70 dark:text-stone-400',
         isMine ? 'ring-2 ring-brand-400/60' : '',
         className ?? '',
       ].join(' ')}
