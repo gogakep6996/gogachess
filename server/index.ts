@@ -10,6 +10,7 @@ import {
   SocketEvents,
   STARTING_FEN,
   DEFAULT_ROOM_MODE,
+  parseTimeControl,
   type Participant,
   type RoomStatePayload,
   type ChatMessageDto,
@@ -22,6 +23,9 @@ import {
   type BoardArrow,
   type BoardMark,
   type ArrowColor,
+  type ClockState,
+  type DrawOfferState,
+  type GameResultState,
 } from '../src/lib/socket-events';
 import {
   forceMove,
@@ -75,6 +79,12 @@ interface RoomRuntime {
   /** Текущая позиция, на которую смотрит учитель (для синхронизации перемотки с учениками).
    *  null = «следить за текущей позицией» (показываем последний ход / старт). */
   historyViewIdx: number | null;
+  /** Часы партии (только для турнирных / казуальных партий с timeControl). */
+  clock: ClockState | null;
+  /** Активное предложение ничьей (только для tournament/casual). */
+  drawOffer: DrawOfferState | null;
+  /** Итог партии (для tournament/casual после завершения). */
+  result: GameResultState | null;
 }
 
 const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
@@ -163,7 +173,46 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     marks: room.marks,
     freshSegment: room.freshSegment,
     historyViewIdx: room.historyViewIdx,
+    clock: room.clock,
+    drawOffer: room.drawOffer,
+    whiteId: room.whiteId ?? null,
+    blackId: room.blackId ?? null,
+    result: room.result,
   };
+}
+
+/** Создаёт начальное состояние часов для партии с заданным timeControl.
+ *  Возвращает null, если timeControl не задан или не распознан. */
+function makeClock(timeControl: string | null): ClockState | null {
+  const parsed = parseTimeControl(timeControl);
+  if (!parsed) return null;
+  return {
+    initialMs: parsed.initialMs,
+    incrementMs: parsed.incrementMs,
+    whiteMs: parsed.initialMs,
+    blackMs: parsed.initialMs,
+    // Оба таймера стоят, пока не сделан первый ход — потом запускается соперник.
+    running: null,
+    lastTickAt: Date.now(),
+  };
+}
+
+/** Применяет логику часов после хода: списывает время мовера (если его часы тикали),
+ *  начисляет инкремент, передаёт ход сопернику. */
+function applyClockOnMove(runtime: RoomRuntime, moverColor: 'w' | 'b'): void {
+  if (!runtime.clock) return;
+  const c = runtime.clock;
+  const now = Date.now();
+  if (c.running === moverColor) {
+    const elapsed = now - c.lastTickAt;
+    if (moverColor === 'w') c.whiteMs = Math.max(0, c.whiteMs - elapsed);
+    else c.blackMs = Math.max(0, c.blackMs - elapsed);
+  }
+  // Инкремент за сделанный ход (стандарт Fischer).
+  if (moverColor === 'w') c.whiteMs += c.incrementMs;
+  else c.blackMs += c.incrementMs;
+  c.running = moverColor === 'w' ? 'b' : 'w';
+  c.lastTickAt = now;
 }
 
 async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
@@ -177,6 +226,7 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
   if (!dbRoom) return null;
 
   const initialFen = dbRoom.fen || STARTING_FEN;
+  const needsClock = dbRoom.kind === 'tournament' || dbRoom.kind === 'casual';
   const runtime: RoomRuntime = {
     code: dbRoom.code,
     name: dbRoom.name,
@@ -200,6 +250,9 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     marks: [],
     freshSegment: true,
     historyViewIdx: null,
+    clock: needsClock ? makeClock(dbRoom.timeControl) : null,
+    drawOffer: null,
+    result: null,
   };
   rooms.set(code, runtime);
   return runtime;
@@ -252,6 +305,25 @@ app.prepare().then(() => {
     socket.data.userName = auth.name;
     nextFn();
   });
+
+  // Универсальное завершение партии: фиксирует runtime.result, останавливает часы,
+  // оповещает участников и (для турнирной партии) обновляет TournamentMatch + очки.
+  function endGame(
+    runtime: RoomRuntime,
+    outcome: 'white' | 'black' | 'draw',
+    reason: GameResultState['reason'],
+  ): void {
+    if (runtime.finished) return;
+    runtime.finished = true;
+    runtime.result = { outcome, reason };
+    if (runtime.clock) runtime.clock.running = null;
+    runtime.drawOffer = null;
+    io.to(runtime.code).emit(SocketEvents.RoomState, buildState(runtime));
+    io.to(runtime.code).emit(SocketEvents.GameOver, { outcome, reason });
+    if (runtime.kind === 'tournament' && runtime.matchId) {
+      void finishMatch(runtime.matchId, outcome);
+    }
+  }
 
   // ---- Турниры: live broadcast по комнатам tournament:<id> ----
   async function broadcastTournament(tournamentId: string): Promise<void> {
@@ -388,6 +460,9 @@ app.prepare().then(() => {
         marks: [],
         freshSegment: true,
         historyViewIdx: null,
+        clock: makeClock(t.timeControl),
+        drawOffer: null,
+        result: null,
       });
     }
     await broadcastTournament(tournamentId);
@@ -409,13 +484,15 @@ app.prepare().then(() => {
     });
     const whiteScore = status === 'white' ? 1 : status === 'draw' ? 0.5 : 0;
     const blackScore = status === 'black' ? 1 : status === 'draw' ? 0.5 : 0;
+    // После завершения партии игрок НЕ возвращается автоматически в подбор —
+    // пусть нажмёт «Вернуться в турнир» (POST /join), чтобы снова стать isAvailable.
     await prisma.tournamentPlayer.update({
       where: { tournamentId_userId: { tournamentId: m.tournamentId, userId: m.whiteId } },
-      data: { score: { increment: whiteScore }, played: { increment: 1 }, isAvailable: true },
+      data: { score: { increment: whiteScore }, played: { increment: 1 }, isAvailable: false },
     });
     await prisma.tournamentPlayer.update({
       where: { tournamentId_userId: { tournamentId: m.tournamentId, userId: m.blackId } },
-      data: { score: { increment: blackScore }, played: { increment: 1 }, isAvailable: true },
+      data: { score: { increment: blackScore }, played: { increment: 1 }, isAvailable: false },
     });
     await broadcastTournament(m.tournamentId);
     await tryPairInTournament(m.tournamentId);
@@ -454,6 +531,35 @@ app.prepare().then(() => {
       console.error('tournament tick error', err);
     }
   }, 5000);
+
+  // Тикер часов: каждые 250 мс пробегаем по всем активным партиям и проверяем флаг.
+  // Если часы тикающего цвета истекли — завершаем партию по timeout.
+  // Также убираем истёкшие предложения ничьей.
+  setInterval(() => {
+    const now = Date.now();
+    for (const runtime of rooms.values()) {
+      if (runtime.finished) continue;
+      // Истечение оффера ничьей.
+      if (runtime.drawOffer && now > runtime.drawOffer.expiresAt) {
+        runtime.drawOffer = null;
+        io.to(runtime.code).emit(SocketEvents.RoomState, buildState(runtime));
+      }
+      // Тикаем часы.
+      const c = runtime.clock;
+      if (!c || c.running === null) continue;
+      const elapsed = now - c.lastTickAt;
+      const sideMs = c.running === 'w' ? c.whiteMs : c.blackMs;
+      if (elapsed >= sideMs) {
+        if (c.running === 'w') c.whiteMs = 0;
+        else c.blackMs = 0;
+        const loser = c.running;
+        c.running = null;
+        c.lastTickAt = now;
+        const winner: 'white' | 'black' = loser === 'w' ? 'black' : 'white';
+        endGame(runtime, winner, 'timeout');
+      }
+    }
+  }, 250);
 
   io.on('connection', (socket: Socket) => {
     const userId = socket.data.userId as string;
@@ -510,7 +616,11 @@ app.prepare().then(() => {
 
       // ---------- Турнирная / casual партия: строго по правилам ----------
       if (runtime.kind === 'tournament' || runtime.kind === 'casual') {
-        if (runtime.kind === 'tournament' && (runtime.whiteId || runtime.blackId)) {
+        if (runtime.finished) {
+          socket.emit(SocketEvents.RoomError, 'Партия уже окончена');
+          return;
+        }
+        if (runtime.whiteId || runtime.blackId) {
           if (userId !== runtime.whiteId && userId !== runtime.blackId) {
             socket.emit(SocketEvents.RoomError, 'Вы зритель этой партии');
             return;
@@ -547,22 +657,33 @@ app.prepare().then(() => {
           runtime.freshSegment = false;
           // После хода все возвращаются к актуальной позиции (= history.length - 1).
           runtime.historyViewIdx = null;
+          // Часы: списываем время мовера, +инкремент, передаём ход сопернику.
+          applyClockOnMove(runtime, turn);
+          // Любой ход отменяет действующее предложение ничьей.
+          runtime.drawOffer = null;
           io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
           await persistFen(code, runtime.fen);
 
-          if (runtime.kind === 'tournament' && runtime.matchId && !runtime.finished) {
-            let outcome: 'white' | 'black' | 'draw' | null = null;
-            if (game.isCheckmate()) {
-              outcome = turn === 'w' ? 'white' : 'black';
-            } else if (game.isStalemate() || game.isInsufficientMaterial() || game.isThreefoldRepetition() || game.isDraw()) {
-              outcome = 'draw';
-            }
-            if (outcome) {
-              runtime.finished = true;
-              io.to(code).emit(SocketEvents.GameOver, { outcome });
-              await finishMatch(runtime.matchId, outcome);
-            }
+          // Проверяем окончание партии по правилам.
+          let outcome: 'white' | 'black' | 'draw' | null = null;
+          let reason: GameResultState['reason'] = 'other';
+          if (game.isCheckmate()) {
+            outcome = turn === 'w' ? 'white' : 'black';
+            reason = 'checkmate';
+          } else if (game.isStalemate()) {
+            outcome = 'draw';
+            reason = 'stalemate';
+          } else if (game.isInsufficientMaterial()) {
+            outcome = 'draw';
+            reason = 'insufficient-material';
+          } else if (game.isThreefoldRepetition()) {
+            outcome = 'draw';
+            reason = 'threefold';
+          } else if (game.isDraw()) {
+            outcome = 'draw';
+            reason = 'fifty-move';
           }
+          if (outcome) endGame(runtime, outcome, reason);
         } catch {
           socket.emit(SocketEvents.RoomError, 'Невозможный ход');
         }
@@ -1072,6 +1193,9 @@ app.prepare().then(() => {
           marks: [],
           freshSegment: true,
           historyViewIdx: null,
+          clock: makeClock(timeControl),
+          drawOffer: null,
+          result: null,
         });
         const payloadA: MatchFoundPayload = {
           code,
@@ -1093,6 +1217,71 @@ app.prepare().then(() => {
 
     socket.on(SocketEvents.MatchCancel, () => {
       matchQueue.delete(socket.id);
+    });
+
+    // ---------- Сдача / Ничья ----------
+    // Только участник турнирной/casual партии может сдаться или предложить ничью.
+    socket.on(SocketEvents.Resign, () => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.kind !== 'tournament' && runtime.kind !== 'casual') return;
+      if (runtime.finished) return;
+      if (userId !== runtime.whiteId && userId !== runtime.blackId) return;
+      const winner: 'white' | 'black' =
+        userId === runtime.whiteId ? 'black' : 'white';
+      endGame(runtime, winner, 'resignation');
+    });
+
+    // Игрок предлагает ничью. Один активный оффер на партию.
+    socket.on(SocketEvents.DrawOffer, () => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.kind !== 'tournament' && runtime.kind !== 'casual') return;
+      if (runtime.finished) return;
+      if (userId !== runtime.whiteId && userId !== runtime.blackId) return;
+      // Не даём «спамить» предложением.
+      if (runtime.drawOffer && runtime.drawOffer.fromUserId === userId) return;
+      runtime.drawOffer = {
+        fromUserId: userId,
+        expiresAt: Date.now() + 15_000, // 15 секунд на ответ
+      };
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+    });
+
+    socket.on(SocketEvents.DrawAccept, () => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.kind !== 'tournament' && runtime.kind !== 'casual') return;
+      if (runtime.finished) return;
+      if (!runtime.drawOffer) return;
+      // Принять может только тот, кому предложили (т.е. НЕ автор оффера),
+      // и только если он участвует в партии.
+      if (userId !== runtime.whiteId && userId !== runtime.blackId) return;
+      if (userId === runtime.drawOffer.fromUserId) return;
+      if (Date.now() > runtime.drawOffer.expiresAt) {
+        runtime.drawOffer = null;
+        io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+        return;
+      }
+      endGame(runtime, 'draw', 'draw-agreement');
+    });
+
+    socket.on(SocketEvents.DrawDecline, () => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (!runtime.drawOffer) return;
+      if (userId !== runtime.whiteId && userId !== runtime.blackId) return;
+      if (userId === runtime.drawOffer.fromUserId) return;
+      runtime.drawOffer = null;
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
     });
 
     // ---------- Подписка на лайв-турнир ----------

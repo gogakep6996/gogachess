@@ -49,6 +49,12 @@ export const SocketEvents = {
   MatchFound: 'match:found',
   MatchSearching: 'match:searching',
 
+  // Партия — соревновательные действия (turniry / casual)
+  Resign: 'chess:resign',
+  DrawOffer: 'chess:draw-offer',
+  DrawAccept: 'chess:draw-accept',
+  DrawDecline: 'chess:draw-decline',
+
   // Турниры (live-обновления)
   TournamentLive: 'tournament:live',   // подписка на конкретный турнир
   TournamentState: 'tournament:state', // апдейты с матчами/таблицей
@@ -111,6 +117,49 @@ export interface BoardAnnotations {
   marks: BoardMark[];
 }
 
+/** Серверное состояние шахматных часов партии. */
+export interface ClockState {
+  /** База в миллисекундах для каждой стороны. */
+  initialMs: number;
+  /** Прибавка за каждый ход в миллисекундах. */
+  incrementMs: number;
+  /** Остаток на часах белых (в момент последнего серверного snap-shot'а). */
+  whiteMs: number;
+  /** Остаток на часах чёрных. */
+  blackMs: number;
+  /** Чьи часы сейчас тикают: 'w' / 'b' / null (партия не начата или закончена). */
+  running: 'w' | 'b' | null;
+  /** Timestamp (ms epoch) последнего обновления часов на сервере.
+   *  Клиент использует его для локального тика между серверными апдейтами. */
+  lastTickAt: number;
+}
+
+/** Активное предложение ничьей в партии. */
+export interface DrawOfferState {
+  /** Кто предложил. */
+  fromUserId: string;
+  /** Когда истекает право принять (ms epoch). */
+  expiresAt: number;
+}
+
+/** Результат партии — для отображения «партия окончена». */
+export interface GameResultState {
+  /** 'white' / 'black' = выигрыш цвета; 'draw' = ничья. */
+  outcome: 'white' | 'black' | 'draw';
+  /** Кодовая причина: для тоста/описания. */
+  reason:
+    | 'checkmate'
+    | 'stalemate'
+    | 'resignation'
+    | 'timeout'
+    | 'draw-agreement'
+    | 'insufficient-material'
+    | 'threefold'
+    | 'fifty-move'
+    | 'tournament-end'
+    | 'other';
+}
+
 export interface RoomStatePayload {
   code: string;
   name: string;
@@ -135,6 +184,15 @@ export interface RoomStatePayload {
   /** Текущий индекс просматриваемого хода у учителя.
    *  null = «следить за текущей позицией» (последний ход или старт). */
   historyViewIdx: number | null;
+  /** Часы для турнирных / казуальных партий. null для уроков. */
+  clock: ClockState | null;
+  /** Активное предложение ничьей (null если нет). */
+  drawOffer: DrawOfferState | null;
+  /** Кто играет белыми / чёрными (для турнирных и казуальных партий). */
+  whiteId: string | null;
+  blackId: string | null;
+  /** Итог партии (если она окончена). */
+  result: GameResultState | null;
 }
 
 export interface ChatMessageDto {
@@ -195,4 +253,18 @@ export type TimeControlId = (typeof TIME_CONTROLS)[number]['id'];
 export function timeControlLabel(id: string | null | undefined): string {
   if (!id) return 'Без таймера';
   return TIME_CONTROLS.find((t) => t.id === id)?.label ?? id;
+}
+
+/** Парсер строки timeControl вида 'blitz-5+0' / 'rapid-15+10' в миллисекунды.
+ *  Возвращает null, если контроль не задан или строка нераспознана. */
+export function parseTimeControl(
+  id: string | null | undefined,
+): { initialMs: number; incrementMs: number } | null {
+  if (!id) return null;
+  const m = id.match(/^[a-z]+-(\d+)\+(\d+)$/);
+  if (!m) return null;
+  const minutes = Number(m[1]);
+  const incSec = Number(m[2]);
+  if (!Number.isFinite(minutes) || !Number.isFinite(incSec)) return null;
+  return { initialMs: minutes * 60_000, incrementMs: incSec * 1000 };
 }

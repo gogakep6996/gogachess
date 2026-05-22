@@ -33,6 +33,14 @@ interface UseRoomSocketResult {
   /** Учитель сообщает серверу, какую позицию он сейчас смотрит — сервер броадкастит
    *  ученикам, чтобы у них показывался тот же ход. null = «следить за текущей». */
   setHistoryView: (idx: number | null) => void;
+  /** Сдаться в турнирной / казуальной партии. */
+  resign: () => void;
+  /** Предложить ничью. */
+  offerDraw: () => void;
+  /** Принять активное предложение ничьей. */
+  acceptDraw: () => void;
+  /** Отклонить активное предложение ничьей. */
+  declineDraw: () => void;
 }
 
 export function useRoomSocket(roomCode: string): UseRoomSocketResult {
@@ -116,6 +124,10 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
   const setHistoryView = useCallback((idx: number | null) => {
     socketRef.current?.emit(SocketEvents.HistoryView, idx);
   }, []);
+  const resign = useCallback(() => socketRef.current?.emit(SocketEvents.Resign), []);
+  const offerDraw = useCallback(() => socketRef.current?.emit(SocketEvents.DrawOffer), []);
+  const acceptDraw = useCallback(() => socketRef.current?.emit(SocketEvents.DrawAccept), []);
+  const declineDraw = useCallback(() => socketRef.current?.emit(SocketEvents.DrawDecline), []);
 
   // Очищаем ошибку через 4 сек
   useEffect(() => {
@@ -142,5 +154,9 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     setAnnotations,
     undoMove,
     setHistoryView,
+    resign,
+    offerDraw,
+    acceptDraw,
+    declineDraw,
   };
 }
