@@ -54,10 +54,12 @@ interface Props {
   /** Чьё «лицо» рисуем — для какого цвета показать съеденное им + его +N. */
   color: 'w' | 'b';
   className?: string;
+  /** Компактный режим: маленькие иконки, без min-h, ничего не показываем если нет захватов. */
+  compact?: boolean;
 }
 
 /** Маленькая полоска с захваченными фигурами и значком +N (если есть перевес). */
-export function MaterialBar({ fen, color, className }: Props) {
+export function MaterialBar({ fen, color, className, compact }: Props) {
   const { captured, diff } = computeMaterial(fen);
   const mine = captured[color]; // что СЪЕЛ этот цвет
   const advantage = color === 'w' ? diff : -diff;
@@ -68,9 +70,14 @@ export function MaterialBar({ fen, color, className }: Props) {
     if (n > 0) items.push({ type, count: n });
   }
 
+  if (compact && items.length === 0 && advantage <= 0) return null;
+
+  const sizePx = compact ? 18 : 24;
+  const overlapPx = compact ? -7 : -10;
+
   return (
     <div
-      className={`flex min-h-[28px] items-center gap-1 ${className ?? ''}`}
+      className={`flex items-center gap-1 ${compact ? '' : 'min-h-[28px]'} ${className ?? ''}`}
       aria-label={`Захвачено игроком ${color === 'w' ? 'белых' : 'чёрных'}`}
     >
       {items.map(({ type, count }) => {
@@ -78,12 +85,16 @@ export function MaterialBar({ fen, color, className }: Props) {
         const oppColor: 'w' | 'b' = color === 'w' ? 'b' : 'w';
         const code = `${oppColor}${type}` as PieceCode;
         return (
-          <div key={type} className="flex items-center -space-x-3">
+          <div key={type} className="flex items-center">
             {Array.from({ length: count }).map((_, i) => (
               <span
                 key={i}
-                className="inline-flex h-6 w-6 items-center justify-center"
-                style={{ marginLeft: i === 0 ? 0 : '-10px' }}
+                className="inline-flex items-center justify-center"
+                style={{
+                  width: sizePx,
+                  height: sizePx,
+                  marginLeft: i === 0 ? 0 : `${overlapPx}px`,
+                }}
               >
                 <PieceSvg code={code} className="h-full w-full" />
               </span>

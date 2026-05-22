@@ -26,10 +26,12 @@ interface Props {
   side: 'w' | 'b';
   /** Подсветка «это мой таймер». */
   isMine?: boolean;
+  /** sm — компактный (для inline-блока «имя · ранг · часы»). */
+  size?: 'sm' | 'lg';
   className?: string;
 }
 
-export function ClockDisplay({ clock, side, isMine, className }: Props) {
+export function ClockDisplay({ clock, side, isMine, size = 'lg', className }: Props) {
   const running = clock.running === side;
   // Чтобы локальный тик не «прыгал» при каждом серверном snapshot'е,
   // фиксируем базу: server'овский остаток + момент, когда мы её получили.
@@ -72,11 +74,16 @@ export function ClockDisplay({ clock, side, isMine, className }: Props) {
 
   const low = display < 30_000;
   const critical = display < 10_000;
+  const sizeCls =
+    size === 'sm'
+      ? 'rounded-md px-2.5 py-1 text-lg'
+      : 'rounded-xl px-4 py-3 text-3xl';
   // Цвета цифр чуть мягче — пользователь жаловался на излишнюю яркость.
   return (
     <div
       className={[
-        'rounded-xl px-4 py-3 text-3xl font-semibold tabular-nums shadow-sm transition-colors',
+        sizeCls,
+        'font-semibold tabular-nums shadow-sm transition-colors',
         running
           ? critical
             ? 'bg-red-500/85 text-white/95'

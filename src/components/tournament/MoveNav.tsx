@@ -149,13 +149,19 @@ function MoveCell({ san, active, onClick }: { san: string; active: boolean; onCl
       type="button"
       data-active={active ? 'true' : 'false'}
       onClick={onClick}
-      className={`w-full rounded px-1.5 py-0.5 text-left text-sm ${
-        active
-          ? 'bg-brand-500 text-white'
-          : 'text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800'
-      }`}
+      className="w-full rounded px-1.5 py-0.5 text-left text-sm text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800"
     >
-      {san}
+      {/* Активный ход — подчёркивание ровно под координатой, цветом самой координаты.
+          inline-block, чтобы линия не растягивалась на всю ширину кнопки. */}
+      <span
+        className={
+          active
+            ? 'inline-block font-semibold underline decoration-current decoration-1 underline-offset-2'
+            : 'inline-block'
+        }
+      >
+        {san}
+      </span>
     </button>
   );
 }

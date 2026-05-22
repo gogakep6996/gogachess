@@ -20,13 +20,10 @@ export default async function TournamentPage(
   return (
     <>
       <Header />
-      <main className="mx-auto max-w-6xl px-4 py-4 sm:px-6">
-        <header className="mb-4">
-          <h1 className="font-display text-2xl font-semibold">{t.name}</h1>
-        </header>
-
+      <main className="mx-auto max-w-6xl px-4 py-3 sm:px-6">
         <TournamentClient
           id={t.id}
+          name={t.name}
           meId={auth?.sub ?? null}
           initiallyJoined={t.players.length > 0}
         />

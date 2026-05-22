@@ -1,27 +1,21 @@
 'use client';
 
-// Полноценная игровая зона для турнирной партии — без редиректа в /room/CODE.
-// Подключается к существующему сокету комнаты через useRoomSocket, рендерит
-// доску, часы, кнопки сдачи/ничьей, материал и перемотку.
+// Игровая зона турнирной партии в стиле Lichess-арены:
 //
-// Лэйаут (desktop):
-//   ┌──────────────┬───────────────────┬──────────────┐
-//   │ Турнирная    │   ШАПКА СОПЕРНИКА │ ⏰ соперник   │
-//   │ таблица      │   (имя · #N · cap)│              │
-//   │ (+ countdown │   ┌─────────────┐ │  ½ / ✕       │
-//   │  турнира)    │   │   ДОСКА     │ │  материал /  │
-//   │              │   └─────────────┘ │  ходы /      │
-//   │              │   ШАПКА МОЯ       │  результат   │
-//   │              │   (имя · #N · cap)│              │
-//   │              │                   │ ⏰ моё        │
-//   └──────────────┴───────────────────┴──────────────┘
-//
-// Жизненный цикл:
-//   1. Партия живая (state.result === null)         → играем
-//   2. Партия окончена (state.result !== null)      → результат + «Вернуться в турнир»
-//
-// onReturnToTournament() — родитель отписывает игрока от текущей партии и
-// (при желании) запускает новый join, чтобы попасть в подбор.
+//   ┌────────┬─────────────┬────────────────────┐
+//   │        │             │  ⏰ Соперник        │ ← часы вверху
+//   │ Турнир.│             ├────────────────────┤
+//   │ табл.  │   ДОСКА     │  ● opponent  #1    │
+//   │ + врем.│  по центру  ├────────────────────┤
+//   │ конца  │             │  |◀ ◀ ▶ ▶|         │
+//   │        │             │  список ходов      │
+//   │        │             ├────────────────────┤
+//   │        │             │     ↶  ½  🏳️       │ ← иконки действий
+//   │        │             ├────────────────────┤
+//   │        │             │  ● Я  #2           │
+//   │        │             ├────────────────────┤
+//   │        │             │  ⏰ Мои             │ ← часы снизу
+//   └────────┴─────────────┴────────────────────┘
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRoomSocket } from '@/hooks/useRoomSocket';
@@ -39,26 +33,18 @@ import {
 } from '@/lib/socket-events';
 
 interface Props {
-  /** Код турнирной комнаты, в которой идёт партия. */
   roomCode: string;
-  /** Мой userId — нужен, чтобы понять, играю я или зритель. */
   meId: string;
-  /** Имена сторон (рендерим вокруг часов). Из TournamentMatchDto. */
   whiteName: string;
   blackName: string;
-  /** Места в турнирной таблице (для значка #N рядом с никами). */
   whiteRank?: number;
   blackRank?: number;
-  /** Что делать, когда игрок нажал «Вернуться в турнир». */
   onReturnToTournament: () => void;
-  /** Турнирные данные — для левой колонки (таблица + countdown). */
   tournament: TournamentLivePayload | null;
-  /** Standings отдельно — на случай если нужны актуальнее, чем tournament.standings. */
   standings: TournamentStandingDto[];
 }
 
-// Размер доски — тот же, что используется при просмотре чужих партий
-// (SelectedBoard.BOARD_SIDE), чтобы визуально не «прыгало» при переходе play↔spectate.
+// Доска того же размера, что в просмотре чужих партий.
 const BOARD_SIDE = 'min(94vw, 480px)';
 
 export function TournamentGameView({
@@ -75,8 +61,7 @@ export function TournamentGameView({
   const room = useRoomSocket(roomCode);
   const state = room.state;
 
-  // ВАЖНО: ВСЕ хуки ОБЯЗАНЫ вызываться в одном и том же порядке на каждом рендере,
-  // даже если state ещё null. Иначе React выбрасывает Minified error #310.
+  // ВАЖНО: все хуки сверху, до любого раннего return.
   const [viewIdx, setViewIdx] = useState<number | null>(null);
   const [confirmResign, setConfirmResign] = useState(false);
 
@@ -116,13 +101,19 @@ export function TournamentGameView({
   const lastEntry = state.history.length > 0 ? state.history[state.history.length - 1] : null;
   const highlights = lastEntry ? { from: lastEntry.from, to: lastEntry.to } : undefined;
 
-  // Сверху всегда — соперник, снизу — я (если я игрок). Зрителю — белые снизу.
   const topColor: 'w' | 'b' = flipped ? 'w' : 'b';
   const bottomColor: 'w' | 'b' = flipped ? 'b' : 'w';
   const topName = topColor === 'w' ? whiteName : blackName;
   const bottomName = bottomColor === 'w' ? whiteName : blackName;
   const topRank = topColor === 'w' ? whiteRank : blackRank;
   const bottomRank = bottomColor === 'w' ? whiteRank : blackRank;
+  const topUserId = topColor === 'w' ? state.whiteId : state.blackId;
+  const bottomUserId = bottomColor === 'w' ? state.whiteId : state.blackId;
+
+  // Присутствие игрока «за доской» — он в этой room по сокетам.
+  const presentIds = new Set(state.participants.map((p) => p.userId));
+  const topPresent = topUserId ? presentIds.has(topUserId) : false;
+  const bottomPresent = bottomUserId ? presentIds.has(bottomUserId) : false;
 
   const handleResign = () => {
     if (!confirmResign) {
@@ -135,8 +126,8 @@ export function TournamentGameView({
   };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_280px]">
-      {/* Левая колонка: countdown турнира + таблица */}
+    <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_260px]">
+      {/* Левая колонка: countdown + таблица */}
       <aside className="order-2 flex flex-col gap-3 lg:order-1">
         {tournament && (
           <TournamentCountdown status={tournament.status} endsAt={tournament.endsAt} />
@@ -144,16 +135,9 @@ export function TournamentGameView({
         <StandingsTable standings={standings} meId={meId} />
       </aside>
 
-      {/* Центр: доска */}
-      <section className="order-1 flex flex-col items-center gap-2 lg:order-2">
-        <div className="w-full" style={{ maxWidth: BOARD_SIDE }}>
-          <PlayerHeader
-            name={topName}
-            rank={topRank}
-            fen={viewedFen}
-            materialColor={topColor}
-          />
-        </div>
+      {/* Центр: только доска, без полосок сверху/снизу — чтобы её верх лёг
+          ровно по верху строки (на уровень блока «До окончания турнира»). */}
+      <section className="order-1 flex flex-col items-center lg:order-2">
         <div className="mx-auto" style={{ width: BOARD_SIDE, height: BOARD_SIDE }}>
           <ChessBoard
             fen={viewedFen}
@@ -168,119 +152,172 @@ export function TournamentGameView({
             fillContainer
           />
         </div>
-        <div className="w-full" style={{ maxWidth: BOARD_SIDE }}>
-          <PlayerHeader
-            name={bottomName}
-            rank={bottomRank}
-            fen={viewedFen}
-            materialColor={bottomColor}
-            isMe={iAmPlayer && bottomColor === myColor}
-          />
-        </div>
       </section>
 
-      {/* Правая колонка: часы по краям, между ними — функции */}
-      <aside className="order-3 flex flex-col justify-between gap-3" style={{ minHeight: BOARD_SIDE }}>
-        {/* Верх: часы соперника */}
-        {state.clock ? (
-          <ClockDisplay clock={state.clock} side={topColor} />
-        ) : (
-          <div />
-        )}
+      {/* Правая колонка: Lichess-style, центрирована по высоте доски,
+          MaterialBar перенесён в ряды с никами. */}
+      <aside className="order-3 flex flex-col justify-center gap-2 self-stretch">
+        {state.clock && <ClockDisplay clock={state.clock} side={topColor} />}
 
-        {/* Центр: кнопки / ничья / материал / ходы / результат */}
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
-          {iAmPlayer && gameLive && (
-            <div className="flex gap-2">
-              <button
-                className="btn-outline flex-1 text-sm"
-                onClick={() => room.offerDraw()}
-                disabled={!!state.drawOffer && state.drawOffer.fromUserId === meId}
-              >
-                ½ Ничья
-              </button>
-              <button
-                className={`flex-1 text-sm ${confirmResign ? 'btn-primary bg-red-600 hover:bg-red-700' : 'btn-outline'}`}
-                onClick={handleResign}
-              >
-                {confirmResign ? 'Точно сдаюсь' : '✕ Сдаться'}
-              </button>
-            </div>
-          )}
+        <PlayerRow
+          name={topName}
+          rank={topRank}
+          present={topPresent}
+          isMe={iAmPlayer && topColor === myColor}
+          fen={viewedFen}
+          capturedColor={topColor}
+        />
 
-          {state.drawOffer && gameLive && (
-            <DrawOfferToast
-              offer={state.drawOffer}
-              myUserId={meId}
-              onAccept={() => room.acceptDraw()}
-              onDecline={() => room.declineDraw()}
-            />
-          )}
-
-          {result && (
-            <GameResultPanel
-              result={result}
-              myColor={myColor}
-              whiteName={whiteName}
-              blackName={blackName}
-              onReturn={onReturnToTournament}
-            />
-          )}
-
-          <div className="card !p-3">
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
-              Ходы
-            </h4>
-            <MoveNav history={state.history} viewIdx={viewIdx} onSelect={setViewIdx} />
-          </div>
-
-          {room.error && (
-            <div className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-200">
-              {room.error}
-            </div>
-          )}
+        <div className="card !p-2">
+          <MoveNav history={state.history} viewIdx={viewIdx} onSelect={setViewIdx} />
         </div>
 
-        {/* Низ: мои часы */}
-        {state.clock ? (
+        {iAmPlayer && gameLive && (
+          <div className="flex items-center justify-around rounded-lg bg-stone-100/70 px-2 py-1.5 dark:bg-stone-800/40">
+            <IconButton
+              title="Предложить ничью"
+              onClick={() => room.offerDraw()}
+              disabled={!!state.drawOffer && state.drawOffer.fromUserId === meId}
+            >
+              ½
+            </IconButton>
+            <IconButton
+              title={confirmResign ? 'Точно сдаюсь — нажмите ещё раз' : 'Сдаться'}
+              onClick={handleResign}
+              variant={confirmResign ? 'danger' : 'default'}
+            >
+              {/* Белый флаг — сдача */}
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 3v18M4 4h12l-2 4 2 4H4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </IconButton>
+          </div>
+        )}
+
+        {state.drawOffer && gameLive && (
+          <DrawOfferToast
+            offer={state.drawOffer}
+            myUserId={meId}
+            onAccept={() => room.acceptDraw()}
+            onDecline={() => room.declineDraw()}
+          />
+        )}
+
+        <PlayerRow
+          name={bottomName}
+          rank={bottomRank}
+          present={bottomPresent}
+          isMe={iAmPlayer && bottomColor === myColor}
+          fen={viewedFen}
+          capturedColor={bottomColor}
+        />
+
+        {state.clock && (
           <ClockDisplay
             clock={state.clock}
             side={bottomColor}
             isMine={iAmPlayer && bottomColor === myColor}
           />
-        ) : (
-          <div />
+        )}
+
+        {result && (
+          <GameResultPanel
+            result={result}
+            myColor={myColor}
+            whiteName={whiteName}
+            blackName={blackName}
+            onReturn={onReturnToTournament}
+          />
+        )}
+
+        {room.error && (
+          <div className="rounded-lg border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-200">
+            {room.error}
+          </div>
         )}
       </aside>
     </div>
   );
 }
 
-function PlayerHeader({
+function PlayerRow({
   name,
   rank,
-  fen,
-  materialColor,
+  present,
   isMe,
+  fen,
+  capturedColor,
 }: {
   name: string;
   rank?: number;
-  fen: string;
-  materialColor: 'w' | 'b';
+  present: boolean;
   isMe?: boolean;
+  fen?: string;
+  capturedColor?: 'w' | 'b';
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg bg-stone-100/70 px-3 py-1.5 dark:bg-stone-800/40">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <span className={isMe ? 'text-brand-700 dark:text-brand-300' : ''}>{name}</span>
+    <div
+      className={`flex flex-col gap-1 rounded-md px-2 py-1 text-sm ${
+        isMe ? 'bg-brand-500/10' : ''
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <span
+            className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${
+              present ? 'bg-emerald-500' : 'bg-stone-400 dark:bg-stone-600'
+            }`}
+            title={present ? 'За доской' : 'Вне доски'}
+          />
+          <span
+            className={`truncate font-semibold ${
+              isMe ? 'text-brand-700 dark:text-brand-300' : ''
+            }`}
+          >
+            {name}
+          </span>
+        </span>
         {rank ? (
           <span className="rounded bg-brand-500/15 px-1.5 py-0.5 text-xs font-semibold text-brand-700 dark:text-brand-300">
             #{rank}
           </span>
         ) : null}
       </div>
-      <MaterialBar fen={fen} color={materialColor} />
+      {fen && capturedColor ? (
+        <MaterialBar fen={fen} color={capturedColor} compact />
+      ) : null}
     </div>
+  );
+}
+
+function IconButton({
+  title,
+  onClick,
+  children,
+  disabled,
+  variant = 'default',
+}: {
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  disabled?: boolean;
+  variant?: 'default' | 'danger';
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex h-9 w-9 items-center justify-center rounded-md text-lg font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+        variant === 'danger'
+          ? 'bg-red-500 text-white hover:bg-red-600'
+          : 'text-stone-600 hover:bg-stone-200 dark:text-stone-300 dark:hover:bg-stone-700'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -334,7 +371,7 @@ function GameResultPanel({
 
   return (
     <div
-      className={`card !p-4 text-center ${
+      className={`card !p-3 text-center text-sm ${
         myOutcome === 'win'
           ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-900/30'
           : myOutcome === 'loss'
@@ -342,11 +379,9 @@ function GameResultPanel({
             : ''
       }`}
     >
-      <div className="text-lg font-semibold">{title}</div>
+      <div className="text-base font-semibold">{title}</div>
       {reasonLabel && (
-        <div className="mb-3 text-xs uppercase tracking-wide text-stone-500">
-          {reasonLabel}
-        </div>
+        <div className="mb-2 text-xs uppercase tracking-wide text-stone-500">{reasonLabel}</div>
       )}
       <button onClick={onReturn} className="btn-primary w-full">
         Вернуться в турнир

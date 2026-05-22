@@ -20,11 +20,12 @@ const BOARD_SIDE = 'min(94vw, 480px)';
 
 interface Props {
   id: string;
+  name: string;
   meId: string | null;
   initiallyJoined: boolean;
 }
 
-export function TournamentClient({ id, meId, initiallyJoined }: Props) {
+export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
   const [data, setData] = useState<TournamentLivePayload | null>(null);
   const [joined, setJoined] = useState(initiallyJoined);
   // Просмотр чужой партии (пока я НЕ играю).
@@ -128,7 +129,8 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
     return map;
   }, [data?.standings]);
 
-  // Я в активной партии? Тогда лэйаут другой: [standings_left | board_center | sidebar_right].
+  // Я в активной партии? Заголовок турнира НЕ показываем — экономим вертикальное место,
+  // чтобы вся доска влезала в экран без скролла.
   if (activeMatch && meId) {
     return (
       <TournamentGameView
@@ -146,9 +148,13 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
     );
   }
 
-  // Я НЕ в активной партии: классический лэйаут [content | sidebar справа].
+  // Я НЕ в активной партии: показываем заголовок турнира и классический лэйаут.
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+    <>
+      <header className="mb-4">
+        <h1 className="font-display text-2xl font-semibold">{name}</h1>
+      </header>
+      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
       <section>
         {spectateMatch ? (
           <SelectedBoard
@@ -225,7 +231,8 @@ export function TournamentClient({ id, meId, initiallyJoined }: Props) {
 
         <StandingsTable standings={data?.standings ?? []} meId={meId} />
       </aside>
-    </div>
+      </div>
+    </>
   );
 }
 
