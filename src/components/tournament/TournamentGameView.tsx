@@ -47,16 +47,27 @@ export function TournamentGameView({
   const room = useRoomSocket(roomCode);
   const state = room.state;
 
-  // Локальная перемотка ходов — пересинхронизуется на «текущую», когда соперник делает ход.
+  // ВАЖНО: ВСЕ хуки ОБЯЗАНЫ вызываться в одном и том же порядке на каждом рендере,
+  // даже если state ещё null. Иначе React выбрасывает Minified error #310
+  // («Rendered more hooks during this render than during the previous render»).
+  // Поэтому хуки идут до любого раннего return.
   const [viewIdx, setViewIdx] = useState<number | null>(null);
+  const [confirmResign, setConfirmResign] = useState(false);
+
   const historyLen = state?.history.length ?? 0;
   // На каждый рост истории — если пришёл новый ход соперника — снап к актуальной.
   useEffect(() => {
     setViewIdx(null);
   }, [historyLen]);
 
-  // Подтверждение для деструктивных действий.
-  const [confirmResign, setConfirmResign] = useState(false);
+  // FEN, который рендерим на доске: при перемотке — соответствующая историческая позиция.
+  const viewedFen = useMemo(() => {
+    if (!state) return STARTING_FEN;
+    if (viewIdx === null) return state.fen;
+    if (viewIdx === -1) return state.segmentStartFen || STARTING_FEN;
+    const entry = state.history[viewIdx];
+    return entry?.fen ?? state.fen;
+  }, [viewIdx, state]);
 
   if (!state) {
     return (
@@ -70,14 +81,6 @@ export function TournamentGameView({
     state.whiteId === meId ? 'w' : state.blackId === meId ? 'b' : null;
   const iAmPlayer = myColor !== null;
   const flipped = myColor === 'b';
-
-  // FEN, который рендерим на доске: при перемотке — соответствующая историческая позиция.
-  const viewedFen = useMemo(() => {
-    if (viewIdx === null) return state.fen;
-    if (viewIdx === -1) return state.segmentStartFen || STARTING_FEN;
-    const entry = state.history[viewIdx];
-    return entry?.fen ?? state.fen;
-  }, [viewIdx, state.fen, state.segmentStartFen, state.history]);
 
   const isViewingPast = viewIdx !== null;
   const result = state.result;
