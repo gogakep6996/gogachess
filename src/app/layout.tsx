@@ -3,6 +3,7 @@ import './globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
 import { YandexMetrika } from '@/components/analytics/YandexMetrika';
 import { GoogleAnalytics } from '@/components/analytics/GoogleAnalytics';
+import { VersionWatcher } from '@/components/system/VersionWatcher';
 
 const SITE_URL = (process.env.SITE_URL || 'https://gogachess.ru').replace(/\/$/, '');
 const SITE_TITLE = 'gogachess — шахматы для обучения';
@@ -90,6 +91,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ThemeProvider>{children}</ThemeProvider>
+        {/* Наблюдает за версией сервера. При новой сборке показывает баннер */}
+        {/* "Доступно обновление" — пользователю не нужно жать Ctrl+Shift+R. */}
+        <VersionWatcher />
         {/* Аналитика подключается один раз для всего сайта — присутствует на любой странице, */}
         {/* включая создаваемые в будущем, без необходимости править каждую страницу отдельно. */}
         <YandexMetrika />
