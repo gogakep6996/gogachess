@@ -26,6 +26,8 @@ import {
   type ClockState,
   type DrawOfferState,
   type GameResultState,
+  type ClassStatePayload,
+  type ClassActiveSessionDto,
 } from '../src/lib/socket-events';
 import {
   forceMove,
@@ -264,6 +266,172 @@ async function persistFen(code: string, fen: string): Promise<void> {
   } catch (err) {
     console.error('Failed to persist FEN', err);
   }
+}
+
+// ============================================================================
+// Класс учителя: live-урок, доска-демонстратор, индивидуальные доски учеников.
+// ============================================================================
+
+interface ClassRuntime {
+  classId: string;
+  slug: string;
+  ownerId: string;
+  /** Идёт ли сейчас живой урок. Если false — никаких lobby/demo, только библиотека задач. */
+  lessonActive: boolean;
+  /** Код lobby-комнаты (создаётся при старте урока, удаляется при остановке). */
+  lobbyRoomCode: string | null;
+  /** Раздана какая задача всем? null = ничего пока. */
+  currentTaskId: string | null;
+  /** Код доски-демонстратора (когда учитель нажал «Показать всем»). null = демо выкл. */
+  demoRoomCode: string | null;
+  /** Participant в lobby: userId -> { name, role }.
+   *  Источник истины о «кто на уроке». */
+  lobbyMembers: Map<string, { name: string; role: 'teacher' | 'student' }>;
+}
+
+const classRuntimes = new Map<string, ClassRuntime>(); // classId -> runtime
+
+async function loadOrCreateClassRuntime(classId: string): Promise<ClassRuntime | null> {
+  const cached = classRuntimes.get(classId);
+  if (cached) return cached;
+  const cls = await prisma.class.findUnique({ where: { id: classId } });
+  if (!cls) return null;
+  const rt: ClassRuntime = {
+    classId: cls.id,
+    slug: cls.slug,
+    ownerId: cls.ownerId,
+    lessonActive: false,
+    lobbyRoomCode: null,
+    currentTaskId: null,
+    demoRoomCode: null,
+    lobbyMembers: new Map(),
+  };
+  classRuntimes.set(classId, rt);
+  return rt;
+}
+
+async function buildClassState(rt: ClassRuntime): Promise<ClassStatePayload> {
+  // Подтягиваем активные task-sessions в этом классе (если урок идёт).
+  const sessions: ClassActiveSessionDto[] = [];
+  if (rt.lessonActive && rt.currentTaskId) {
+    const dbSessions = await prisma.taskSession.findMany({
+      where: { task: { classId: rt.classId }, taskId: rt.currentTaskId },
+      include: {
+        task: { select: { title: true } },
+        user: { select: { displayName: true } },
+        room: { select: { code: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    for (const s of dbSessions) {
+      if (!s.room) continue;
+      const roomRuntime = rooms.get(s.room.code);
+      const online = roomRuntime
+        ? Array.from(roomRuntime.participants.values()).some((p) => p.userId === s.userId)
+        : false;
+      sessions.push({
+        sessionId: s.id,
+        taskId: s.taskId,
+        taskTitle: s.task.title,
+        roomCode: s.room.code,
+        userId: s.userId,
+        userName: s.user.displayName,
+        fen: s.fen,
+        movesPlayed: s.movesPlayed,
+        status: s.status,
+        online,
+        updatedAt: s.updatedAt.getTime(),
+      });
+    }
+  }
+  return {
+    classId: rt.classId,
+    slug: rt.slug,
+    lessonActive: rt.lessonActive,
+    currentTaskId: rt.currentTaskId,
+    demoRoomCode: rt.demoRoomCode,
+    lobbyRoomCode: rt.lobbyRoomCode,
+    lobbyParticipants: Array.from(rt.lobbyMembers.entries()).map(([userId, info]) => ({
+      userId,
+      name: info.name,
+      role: info.role,
+    })),
+    sessions,
+  };
+}
+
+async function broadcastClass(io: IOServer, rt: ClassRuntime): Promise<void> {
+  const state = await buildClassState(rt);
+  io.to(`class:${rt.slug}`).emit(SocketEvents.ClassState, state);
+}
+
+/** После любого изменения позиции на student-board комнате — синхронизируем
+ *  TaskSession в БД и пушим обновлённый ClassState учителю (live grid). */
+async function syncTaskSessionAfterMove(io: IOServer, runtime: RoomRuntime): Promise<void> {
+  if (runtime.kind !== 'student-board') return;
+  const session = await prisma.taskSession.findFirst({
+    where: { room: { code: runtime.code } },
+    include: { task: { include: { class: true } } },
+  });
+  if (!session) return;
+  let status = session.status;
+  let solvedAt = session.solvedAt;
+  // Авто-детект решения: если цель «мат» и в FEN мат — фиксируем решение.
+  if (status === 'active' && session.task.goal === 'mate') {
+    try {
+      const g = new Chess(runtime.fen);
+      if (g.isCheckmate()) {
+        status = 'solved';
+        solvedAt = new Date();
+      }
+    } catch {
+      // FEN мог быть некорректный (редактор) — игнорируем.
+    }
+  }
+  await prisma.taskSession.update({
+    where: { id: session.id },
+    data: {
+      fen: runtime.fen,
+      movesPlayed: runtime.history.length,
+      status,
+      solvedAt,
+    },
+  });
+  if (status === 'solved' && session.status !== 'solved') {
+    io.to(`class:${session.task.class.slug}`).emit(SocketEvents.TaskSessionSolved, {
+      sessionId: session.id,
+      userId: session.userId,
+      taskId: session.taskId,
+    });
+  }
+  const rt = classRuntimes.get(session.task.classId);
+  if (rt) void broadcastClass(io, rt);
+}
+
+/** Создаёт служебную Room заданного типа в рамках класса. */
+async function createClassServiceRoom(
+  rt: ClassRuntime,
+  kind: 'class-lobby' | 'student-board' | 'class-demo',
+  opts: { fen?: string; name?: string; studentId?: string } = {},
+): Promise<{ code: string }> {
+  const code = await uniqueRoomCode();
+  await prisma.room.create({
+    data: {
+      code,
+      name:
+        opts.name ??
+        (kind === 'class-lobby'
+          ? `Класс ${rt.slug} · урок`
+          : kind === 'class-demo'
+            ? `Класс ${rt.slug} · показ`
+            : `Доска ${opts.studentId ?? ''} · ${rt.slug}`),
+      isPublic: false,
+      ownerId: rt.ownerId,
+      kind,
+      fen: opts.fen || STARTING_FEN,
+    },
+  });
+  return { code };
 }
 
 const app = next({ dev, hostname, port });
@@ -786,6 +954,7 @@ app.prepare().then(() => {
 
         io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
         await persistFen(code, runtime.fen);
+        void syncTaskSessionAfterMove(io, runtime);
       } catch (err) {
         console.error('move error', err);
         socket.emit(SocketEvents.RoomError, 'Ошибка при выполнении хода');
@@ -853,6 +1022,7 @@ app.prepare().then(() => {
       runtime.historyViewIdx = null;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       await persistFen(code, runtime.fen);
+      void syncTaskSessionAfterMove(io, runtime);
     });
 
     socket.on(SocketEvents.PositionReset, async () => {
@@ -888,7 +1058,7 @@ app.prepare().then(() => {
       const runtime = rooms.get(code);
       if (!runtime) return;
       if (runtime.ownerId !== userId) return;
-      if (runtime.kind !== 'lesson') return;
+      if (runtime.kind !== 'lesson' && runtime.kind !== 'student-board') return;
       if (runtime.isEditing) return;
       runtime.fen = runtime.segmentStartFen;
       // Если sideLock — снова выравниваем сторону FEN под него.
@@ -910,7 +1080,8 @@ app.prepare().then(() => {
       const runtime = rooms.get(code);
       if (!runtime) return;
       if (runtime.ownerId !== userId) return;
-      if (runtime.kind !== 'lesson') return; // турниры/casual игнорируют режимы
+      if (runtime.kind !== 'lesson' && runtime.kind !== 'student-board' && runtime.kind !== 'class-demo')
+        return; // турниры/casual игнорируют режимы
 
       const prevSideLock = runtime.mode.sideLock;
       const next: RoomMode = { ...runtime.mode };
@@ -941,7 +1112,7 @@ app.prepare().then(() => {
       if (!runtime) return;
       // Отменять ход разрешено и учителю, и ученикам — в учебной комнате это удобный
       // инструмент совместного разбора. Остаются только базовые проверки безопасности.
-      if (runtime.kind !== 'lesson') return;
+      if (runtime.kind !== 'lesson' && runtime.kind !== 'student-board' && runtime.kind !== 'class-demo') return;
       if (runtime.isEditing) return;
       if (runtime.history.length === 0) return;
       runtime.history.pop();
@@ -959,6 +1130,7 @@ app.prepare().then(() => {
       runtime.historyViewIdx = null;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       void persistFen(code, runtime.fen);
+      void syncTaskSessionAfterMove(io, runtime);
     });
 
     // Учитель листает историю — броадкастим позицию всем, чтобы ученики видели то же.
@@ -1291,8 +1463,194 @@ app.prepare().then(() => {
       await broadcastTournament(id);
     });
 
+    // ---------- КЛАСС: подписка / lifecycle урока / демо / раздача ----------
+    socket.on(SocketEvents.ClassSubscribe, async (slug: string) => {
+      if (typeof slug !== 'string') return;
+      const cls = await prisma.class.findUnique({ where: { slug } });
+      if (!cls) return;
+      const rt = await loadOrCreateClassRuntime(cls.id);
+      if (!rt) return;
+      socket.join(`class:${rt.slug}`);
+      // Запоминаем, к каким классам этот socket подписан.
+      const subs = (socket.data.classSubs as Set<string> | undefined) ?? new Set<string>();
+      subs.add(rt.classId);
+      socket.data.classSubs = subs;
+      // Регистрируем пользователя в lobby (используется для ростера и презенса).
+      rt.lobbyMembers.set(userId, {
+        name: userName,
+        role: userId === rt.ownerId ? 'teacher' : 'student',
+      });
+      const state = await buildClassState(rt);
+      socket.emit(SocketEvents.ClassState, state);
+      void broadcastClass(io, rt);
+    });
+
+    socket.on(SocketEvents.ClassUnsubscribe, async (slug: string) => {
+      if (typeof slug !== 'string') return;
+      const cls = await prisma.class.findUnique({ where: { slug } });
+      if (!cls) return;
+      const rt = classRuntimes.get(cls.id);
+      if (!rt) return;
+      socket.leave(`class:${rt.slug}`);
+      const subs = socket.data.classSubs as Set<string> | undefined;
+      subs?.delete(rt.classId);
+      // Если у юзера не осталось других сокетов в этой подписке — убираем из lobby.
+      const stillHere = Array.from(io.sockets.adapter.rooms.get(`class:${rt.slug}`) ?? []).some(
+        (sid) => {
+          const s = io.sockets.sockets.get(sid);
+          return s?.data.userId === userId;
+        },
+      );
+      if (!stillHere) rt.lobbyMembers.delete(userId);
+      void broadcastClass(io, rt);
+    });
+
+    socket.on(SocketEvents.ClassLessonStart, async () => {
+      const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
+      if (!cls) return;
+      const rt = await loadOrCreateClassRuntime(cls.id);
+      if (!rt) return;
+      if (rt.ownerId !== userId) return; // только учитель
+      if (!rt.lobbyRoomCode) {
+        const { code } = await createClassServiceRoom(rt, 'class-lobby');
+        rt.lobbyRoomCode = code;
+      }
+      rt.lessonActive = true;
+      void broadcastClass(io, rt);
+    });
+
+    socket.on(SocketEvents.ClassLessonStop, async () => {
+      const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
+      if (!cls) return;
+      const rt = classRuntimes.get(cls.id);
+      if (!rt) return;
+      if (rt.ownerId !== userId) return;
+      rt.lessonActive = false;
+      rt.currentTaskId = null;
+      rt.demoRoomCode = null;
+      // Lobby room оставляем — он легковесный и пригодится в следующий урок.
+      void broadcastClass(io, rt);
+    });
+
+    socket.on(SocketEvents.ClassDistribute, async (payload: { taskId?: string } | string) => {
+      const taskId = typeof payload === 'string' ? payload : payload?.taskId;
+      if (!taskId) return;
+      const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
+      if (!cls) return;
+      const rt = classRuntimes.get(cls.id);
+      if (!rt || !rt.lessonActive) return;
+      if (rt.ownerId !== userId) return;
+      const task = await prisma.task.findUnique({ where: { id: taskId } });
+      if (!task || task.classId !== cls.id) return;
+      rt.currentTaskId = taskId;
+      // Для каждого присутствующего ученика гарантируем TaskSession + Room.
+      const students = Array.from(rt.lobbyMembers.entries()).filter(
+        ([uid]) => uid !== rt.ownerId,
+      );
+      for (const [studentId] of students) {
+        let session = await prisma.taskSession.findUnique({
+          where: { taskId_userId: { taskId, userId: studentId } },
+          include: { room: true },
+        });
+        if (!session || !session.room) {
+          const { code } = await createClassServiceRoom(rt, 'student-board', {
+            fen: task.fen,
+            studentId,
+          });
+          const room = await prisma.room.findUnique({ where: { code } });
+          if (!room) continue;
+          if (session) {
+            session = await prisma.taskSession.update({
+              where: { id: session.id },
+              data: { roomId: room.id, fen: task.fen, status: 'active', movesPlayed: 0 },
+              include: { room: true },
+            });
+          } else {
+            session = await prisma.taskSession.create({
+              data: {
+                taskId,
+                userId: studentId,
+                roomId: room.id,
+                fen: task.fen,
+                status: 'active',
+              },
+              include: { room: true },
+            });
+          }
+        } else {
+          // Уже есть — сбрасываем в начало задачи.
+          await prisma.room.update({ where: { id: session.roomId! }, data: { fen: task.fen } });
+          await prisma.taskSession.update({
+            where: { id: session.id },
+            data: { fen: task.fen, status: 'active', movesPlayed: 0 },
+          });
+          const roomRt = rooms.get(session.room.code);
+          if (roomRt) {
+            roomRt.fen = task.fen;
+            roomRt.segmentStartFen = task.fen;
+            roomRt.history = [];
+            roomRt.freshSegment = true;
+            roomRt.historyViewIdx = null;
+            io.to(session.room.code).emit(SocketEvents.RoomState, buildState(roomRt));
+          }
+        }
+      }
+      void broadcastClass(io, rt);
+    });
+
+    socket.on(SocketEvents.ClassDemoStart, async (payload?: { fen?: string }) => {
+      const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
+      if (!cls) return;
+      const rt = classRuntimes.get(cls.id);
+      if (!rt || !rt.lessonActive) return;
+      if (rt.ownerId !== userId) return;
+      const fen = (typeof payload === 'object' && payload?.fen) || undefined;
+      if (!rt.demoRoomCode) {
+        const { code } = await createClassServiceRoom(rt, 'class-demo', { fen });
+        rt.demoRoomCode = code;
+      } else if (fen) {
+        await prisma.room.update({ where: { code: rt.demoRoomCode }, data: { fen } });
+        const roomRt = rooms.get(rt.demoRoomCode);
+        if (roomRt) {
+          roomRt.fen = fen;
+          roomRt.segmentStartFen = fen;
+          roomRt.history = [];
+          roomRt.freshSegment = true;
+          io.to(rt.demoRoomCode).emit(SocketEvents.RoomState, buildState(roomRt));
+        }
+      }
+      void broadcastClass(io, rt);
+    });
+
+    socket.on(SocketEvents.ClassDemoStop, async () => {
+      const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
+      if (!cls) return;
+      const rt = classRuntimes.get(cls.id);
+      if (!rt) return;
+      if (rt.ownerId !== userId) return;
+      rt.demoRoomCode = null;
+      void broadcastClass(io, rt);
+    });
+
     socket.on('disconnect', () => {
       matchQueue.delete(socket.id);
+      // Очистка class-подписок: если у юзера нет других живых сокетов в подписке — убираем из lobby.
+      const subs = socket.data.classSubs as Set<string> | undefined;
+      if (subs && subs.size > 0) {
+        for (const classId of subs) {
+          const rt = classRuntimes.get(classId);
+          if (!rt) continue;
+          const stillHere = Array.from(io.sockets.adapter.rooms.get(`class:${rt.slug}`) ?? []).some(
+            (sid) => {
+              if (sid === socket.id) return false;
+              const s = io.sockets.sockets.get(sid);
+              return s?.data.userId === userId;
+            },
+          );
+          if (!stillHere) rt.lobbyMembers.delete(userId);
+          void broadcastClass(io, rt);
+        }
+      }
       const code = socket.data.roomCode as string | undefined;
       if (!code) return;
       const runtime = rooms.get(code);

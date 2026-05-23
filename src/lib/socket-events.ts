@@ -58,6 +58,26 @@ export const SocketEvents = {
   // Турниры (live-обновления)
   TournamentLive: 'tournament:live',   // подписка на конкретный турнир
   TournamentState: 'tournament:state', // апдейты с матчами/таблицей
+
+  // Класс учителя (live-обновления для дашборда учителя и страницы ученика)
+  /** Подписка на состояние класса (учитель / ученик). Сразу шлём текущий ClassState. */
+  ClassSubscribe: 'class:subscribe',
+  /** Отписка — клиент уходит со страницы класса. */
+  ClassUnsubscribe: 'class:unsubscribe',
+  /** Снэпшот класса: lesson active?, distributed task, demo room code, sessions live grid. */
+  ClassState: 'class:state',
+  /** Учитель: начать живой урок (создаёт lobby room). */
+  ClassLessonStart: 'class:lesson-start',
+  /** Учитель: завершить живой урок. */
+  ClassLessonStop: 'class:lesson-stop',
+  /** Учитель: раздать задачу всем присутствующим (создаёт student-board комнаты). */
+  ClassDistribute: 'class:distribute',
+  /** Учитель: включить демонстрацию классу (поднимает class-demo комнату). */
+  ClassDemoStart: 'class:demo-start',
+  /** Учитель: закрыть демонстрацию (всех возвращает к личным доскам). */
+  ClassDemoStop: 'class:demo-stop',
+  /** Авто-уведомление: ученик решил задачу. */
+  TaskSessionSolved: 'task:solved',
 } as const;
 
 export type ParticipantRole = 'teacher' | 'student';
@@ -235,6 +255,44 @@ export interface TournamentLivePayload {
   endsAt: string | null;
   matches: TournamentMatchDto[];
   standings: TournamentStandingDto[];
+}
+
+/** Активная сессия ученика в задаче — для live grid учителя. */
+export interface ClassActiveSessionDto {
+  /** sessionId в БД. */
+  sessionId: string;
+  taskId: string;
+  taskTitle: string;
+  /** Код комнаты ученика — учитель открывает её, чтобы войти за доску. */
+  roomCode: string;
+  userId: string;
+  userName: string;
+  /** Текущая позиция (для мини-доски). */
+  fen: string;
+  movesPlayed: number;
+  status: string; // 'active' | 'solved' | 'abandoned'
+  /** Сейчас за доской (есть в участниках сокет-комнаты). */
+  online: boolean;
+  /** ms epoch последней активности. */
+  updatedAt: number;
+}
+
+/** Состояние одного класса (live-урок + сессии). */
+export interface ClassStatePayload {
+  classId: string;
+  slug: string;
+  /** Идёт ли сейчас живой урок. */
+  lessonActive: boolean;
+  /** ID задачи, которая раздана классу (или null). */
+  currentTaskId: string | null;
+  /** Код комнаты-демонстратора (если включён режим «Показать всем»). */
+  demoRoomCode: string | null;
+  /** Код комнаты-lobby (для общего аудио/чата). Создаётся со стартом урока. */
+  lobbyRoomCode: string | null;
+  /** Все участники lobby (учитель + ученики, кто подключён). */
+  lobbyParticipants: Array<{ userId: string; name: string; role: 'teacher' | 'student' }>;
+  /** Активные сессии учеников в этом классе. */
+  sessions: ClassActiveSessionDto[];
 }
 
 /** Каноничные тайм-контроли. */

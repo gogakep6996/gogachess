@@ -23,6 +23,8 @@ model User {
   ownedTournaments    Tournament[]           @relation("TournamentOwner")
   whiteMatches        TournamentMatch[]      @relation("MatchWhite")
   blackMatches        TournamentMatch[]      @relation("MatchBlack")
+  ownedClass          Class?                 @relation("ClassOwner")
+  taskSessions        TaskSession[]
 }
 
 model Room {
@@ -33,7 +35,7 @@ model Room {
   ownerId     String
   owner       User      @relation("RoomOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   fen         String    @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
-  /// "lesson" | "casual" | "tournament"
+  /// "lesson" | "casual" | "tournament" | "class-lobby" | "student-board" | "class-demo"
   kind        String    @default("lesson")
   /// Например "blitz-5+0", "rapid-10+0"; пусто для уроков.
   timeControl String?
@@ -44,6 +46,7 @@ model Room {
 
   messages    Message[]
   match       TournamentMatch?
+  taskSession TaskSession?
 }
 
 model Message {
@@ -110,4 +113,78 @@ model TournamentMatch {
   finishedAt   DateTime?
 
   @@index([tournamentId, status])
+}
+
+/// «Класс» учителя — постоянный учебный кабинет.
+/// Один класс на учителя (1:1 c User). URL: /class/<slug>.
+model Class {
+  id          String   @id @default(cuid())
+  ownerId     String   @unique
+  owner       User     @relation("ClassOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  /// URL-slug — генерируется из displayName.
+  slug        String   @unique
+  /// Опциональное «дружелюбное» название (если null — используем displayName).
+  name        String?
+  /// Если задан — для входа на урок ученик должен ввести этот код.
+  accessCode  String?
+  /// Виден ли в общем поиске (true) или только по прямой ссылке (false).
+  isPublic    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks       Task[]
+}
+
+/// Учебная задача (позиция-заготовка) в библиотеке учителя.
+model Task {
+  id          String   @id @default(cuid())
+  classId     String
+  class       Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  fen         String
+  /// 'w' / 'b' — чья очередь хода в задаче (= за кого играет ученик).
+  sideToPlay  String   @default("w")
+  /// 'easy' | 'medium' | 'hard'
+  difficulty  String   @default("medium")
+  /// Свободный тэг ("эндшпиль", "тактика", "мат в N").
+  category    String?
+  /// 'mate' | 'win-material' | 'custom' — для авто-детекта решения.
+  goal        String   @default("mate")
+  /// Сила движка 0..20 (Stockfish skill level).
+  engineLevel Int      @default(10)
+  /// Опубликована (видна на витрине ученикам) или черновик.
+  isPublished Boolean  @default(true)
+  /// Порядок в списке.
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sessions    TaskSession[]
+
+  @@index([classId, position])
+}
+
+/// Попытка ученика решить задачу. Уникальна по (taskId, userId) — resume на возврате.
+model TaskSession {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Привязка к Room (kind='student-board') — там и крутится сокет / движок / история.
+  roomId      String?  @unique
+  room        Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  /// 'active' | 'solved' | 'abandoned'
+  status      String   @default("active")
+  /// Snapshot текущей позиции (для быстрой загрузки списка).
+  fen         String
+  /// Сколько ходов сделано.
+  movesPlayed Int      @default(0)
+  startedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  solvedAt    DateTime?
+
+  @@unique([taskId, userId])
+  @@index([taskId, status])
 }
