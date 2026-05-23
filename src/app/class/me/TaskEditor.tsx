@@ -105,14 +105,14 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,420px)_1fr]">
+    <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-[minmax(360px,440px)_minmax(0,520px)]">
       {/* Левая колонка: интерактивная доска-редактор */}
       <div className="card flex flex-col items-center gap-3">
         <div className="w-full text-xs font-semibold text-stone-500">
           Расставьте позицию: возьмите фигуру из палитры и перетащите на клетку.
           Чтобы убрать — перетащите фигуру за пределы доски.
         </div>
-        <div className="w-full" style={{ maxWidth: 420 }}>
+        <div className="mx-auto w-full" style={{ maxWidth: 380 }}>
           <ChessBoard
             fen={fen}
             canMove={false}
@@ -120,8 +120,6 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             canEdit
             flipped={sideToPlay === 'b'}
             onEditFen={handleEditFen}
-            compact
-            fillContainer
           />
         </div>
         <div className="flex w-full flex-wrap items-center justify-between gap-2 text-xs">
