@@ -10,8 +10,14 @@ interface Result {
   startLesson: () => void;
   stopLesson: () => void;
   distribute: (taskId: string) => void;
+  /** «Транслировать ученикам мою доску» — открыть демо и сразу включить трансляцию. */
   startDemo: (fen?: string) => void;
+  /** «Прекратить трансляцию» (фактически закрывает демо-комнату полностью). */
   stopDemo: () => void;
+  /** «Моя доска» — открыть личную доску учителя без трансляции ученикам. */
+  openMyBoard: (fen?: string) => void;
+  /** Включить/выключить трансляцию для уже открытой «Моей доски». */
+  toggleBroadcast: (on?: boolean) => void;
 }
 
 /** Подключение к серверу для подписки на ClassState (учитель и ученик). */
@@ -56,6 +62,22 @@ export function useClassSocket(slug: string | null): Result {
   const stopDemo = useCallback(() => {
     socketRef.current?.emit(SocketEvents.ClassDemoStop);
   }, []);
+  const openMyBoard = useCallback((fen?: string) => {
+    socketRef.current?.emit(SocketEvents.ClassMyBoardOpen, { fen });
+  }, []);
+  const toggleBroadcast = useCallback((on?: boolean) => {
+    socketRef.current?.emit(SocketEvents.ClassBroadcastToggle, { on });
+  }, []);
 
-  return { connected, state, startLesson, stopLesson, distribute, startDemo, stopDemo };
+  return {
+    connected,
+    state,
+    startLesson,
+    stopLesson,
+    distribute,
+    startDemo,
+    stopDemo,
+    openMyBoard,
+    toggleBroadcast,
+  };
 }

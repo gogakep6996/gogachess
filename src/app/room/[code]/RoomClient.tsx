@@ -25,9 +25,22 @@ interface Props {
     ownerId: string;
     ownerName: string;
   };
+  /** Встроенный режим: RoomClient рендерится внутри другой страницы (например,
+   *  /class/me с верхней полосой «трансляции») — тогда доске нужен чуть больший
+   *  верхний буфер в формуле высоты, чтобы нижняя нав-строка не обрезалась. */
+  embedded?: boolean;
+  /** Режим «ученик решает задачу учителя». Авто-включает движок (соперник),
+   *  фиксирует цвет ученика, скрывает плашку «Ссылка» и панель «Режим». Сам
+   *  движок и редактор позиции уже спрятаны для не-владельцев (isOwner=false). */
+  studentTaskMode?: { humanColor: 'w' | 'b' };
 }
 
-export function RoomClient({ meId, room }: Props) {
+export function RoomClient({
+  meId,
+  room,
+  embedded = false,
+  studentTaskMode,
+}: Props) {
   const isOwner = meId === room.ownerId;
 
   // Блокируем скролл документа ТОЛЬКО на десктопе — там layout вписывается в один экран.
@@ -97,6 +110,10 @@ export function RoomClient({ meId, room }: Props) {
   const arrows = state?.arrows ?? [];
   const marks = state?.marks ?? [];
   const roomKind = state?.kind ?? 'lesson';
+  /** Lesson-подобные комнаты, в которых учитель распоряжается режимом, движком, отменой ходов и т.п.
+   *  Это сам урок и сервисные комнаты раздела «Класс»: трансляция учителя и личные доски учеников. */
+  const isLessonLike =
+    roomKind === 'lesson' || roomKind === 'class-demo' || roomKind === 'student-board';
   /** Серверный флаг: следующий ход — первый в текущем «свежем» отрезке.
    *  Если режим «оба» (sideLock===null) — этот ход можно сделать любой стороной. */
   const freshSegment = state?.freshSegment ?? history.length === 0;
@@ -148,7 +165,7 @@ export function RoomClient({ meId, room }: Props) {
     followLatestRef.current = clamped === history.length - 1;
     setViewIdx(clamped);
     // Учитель транслирует своё положение в ленте всем ученикам в комнате.
-    if (isOwner && roomKind === 'lesson') {
+    if (isOwner && isLessonLike) {
       const lastIdx = history.length - 1;
       setHistoryView(clamped >= lastIdx ? null : clamped);
     }
@@ -225,9 +242,44 @@ export function RoomClient({ meId, room }: Props) {
   // (только что включили / после reset / undo / editEnd). Первый ход в позиции
   // (любым из участников комнаты — учителем ИЛИ учеником) выставляет humanColor;
   // дальше движок отвечает противоположной стороной.
-  const [vsComp, setVsComp] = useState<{ humanColor: 'w' | 'b' | null } | null>(null);
+  // Если ученик решает задачу учителя — сразу включаем «vs computer» с
+  // фиксированным цветом ученика. Дальше вся существующая логика vsComp
+  // (анализ позиций, ответный ход движка) работает как для обычного «vs computer».
+  const [vsComp, setVsComp] = useState<{ humanColor: 'w' | 'b' | null } | null>(
+    studentTaskMode ? { humanColor: studentTaskMode.humanColor } : null,
+  );
   const compEngine = useStockfish();
   const compFenRef = useRef<string | null>(null);
+
+  // Когда учитель (owner) присутствует в комнате — это значит, что он вмешался
+  // в личную доску ученика. В этом случае ученический Stockfish ДОЛЖЕН паузиться,
+  // чтобы движок не «отбивал» ходы, пока учитель показывает разбор. Когда учитель
+  // выйдет — авто-включаем движок обратно.
+  const ownerInRoom = participants.some((p) => p.userId === room.ownerId);
+  // Единая логика автоуправления движком для не-владельцев:
+  //   • режим задачи + учителя нет → движок включён, играет за противоположную сторону;
+  //   • режим задачи + учитель пришёл за доску → движок выключен (учитель ведёт разбор);
+  //   • НЕ режим задачи (например, ученик смотрит трансляцию учителя в class-demo
+  //     или просто наблюдает в чужой комнате) → движок выключен ВСЕГДА.
+  // Это критично: иначе при переключении учителем «Транслировать» ученик уезжает в
+  // demo-комнату, его vsComp от прежней задачи продолжает считать ходы на новой FEN
+  // и отправлять их в общую комнату — на доске учителя это выглядит как «движок
+  // играет», хотя учитель его выключил.
+  // Владелец (учитель) сам управляет движком кнопкой и эта логика его не трогает.
+  useEffect(() => {
+    if (isOwner) return;
+    const shouldBeOn = !!studentTaskMode && !ownerInRoom;
+    if (shouldBeOn) {
+      if (!vsComp) {
+        setVsComp({ humanColor: studentTaskMode.humanColor });
+      }
+    } else if (vsComp) {
+      setVsComp(null);
+      compEngine.stop();
+      compFenRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOwner, ownerInRoom, studentTaskMode]);
   /** Отслеживаем переход freshSegment false → true, чтобы один раз сбросить humanColor. */
   const prevFreshRef = useRef<boolean | null>(null);
   /** Отслеживаем длину истории — определяем humanColor только когда был сделан НОВЫЙ ход
@@ -380,9 +432,16 @@ export function RoomClient({ meId, room }: Props) {
     }
   }, [fen, vsComp, mode.allowIllegal, mode.sideLock, compEngine]);
 
-  // Размер доски: на мобильном — почти на всю ширину, на десктопе ограничиваем высотой вьюпорта.
-  const boardClassName =
-    'relative z-10 aspect-square shrink-0 w-[min(96vw,480px)] lg:w-[min(94vw,480px,calc(100dvh-9.5rem))]';
+  // Размер доски.
+  // Мобильный: квадрат шириной min(96vw, 480px).
+  // Десктоп: flex-1 внутри ряда с боковой полоской (она 120px + gap),
+  //   max-w ограничена min(480px, calc(100dvh - запас)). Так доска автоматически
+  //   ужмётся, чтобы рядом уместилась aside-полоса, и не залезет в правую колонку.
+  //   Запас по высоте: action/nav-строки больше не в потоке (вынесены в aside),
+  //   остаются только Header + малые отступы. Для embedded — +1.5rem на полосу статуса.
+  const boardClassName = embedded
+    ? 'relative z-10 aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,480px,calc(100dvh-6.5rem))]'
+    : 'relative z-10 aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,480px,calc(100dvh-5rem))]';
 
   return (
     <main
@@ -398,42 +457,9 @@ export function RoomClient({ meId, room }: Props) {
         </div>
       )}
 
-      {/* Верхняя строка с кнопками управления — над всем (и на мобильном, и на десктопе). */}
-      <div className="flex shrink-0 justify-end gap-1 py-1">
-        <button
-          type="button"
-          onClick={copyLink}
-          className="btn-outline px-2 py-1 text-[11px] sm:text-xs"
-          title="Копировать ссылку"
-        >
-          {copied ? '✓' : '🔗'}
-        </button>
-        {isOwner &&
-          (isEditing ? (
-            <button type="button" onClick={handleEditEnd} className="btn-primary px-2 py-1 text-[11px] sm:text-xs">
-              ▶ Далее
-            </button>
-          ) : (
-            <button type="button" onClick={handleEditStart} className="btn-primary px-2 py-1 text-[11px] sm:text-xs">
-              ✎ Редактор
-            </button>
-          ))}
-        {!isOwner && isEditing && mode.studentsCanEdit && (
-          <span className="rounded-md bg-amber-100 px-2 py-1 text-[11px] font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-            ✎ редактируете
-          </span>
-        )}
-        {isOwner && (
-          <button
-            type="button"
-            onClick={resetPosition}
-            className="btn-ghost px-2 py-1 text-[11px] sm:text-xs"
-            title="Сброс позиции"
-          >
-            ↺
-          </button>
-        )}
-      </div>
+      {/* Кнопки управления (копировать ссылку / ✎ Редактор / Сброс) теперь
+          вынесены ВНУТРЬ board-секции ниже — там они в правом верхнем углу самой доски,
+          не пересекаются с правой колонкой (аудио) и не отжимают другие блоки. */}
 
       {/* Адаптивный «движок» компоновки:
           - на телефоне: одна колонка, элементы по order-* (доска первая);
@@ -446,101 +472,129 @@ export function RoomClient({ meId, room }: Props) {
           'lg:grid-rows-[auto_1fr]',
         )}
       >
-        {/* ───────── ДОСКА + НАВИГАЦИЯ + ОТМЕНИТЬ ХОД ───────── */}
+        {/* ───────── ДОСКА + БОКОВАЯ ПОЛОСКА КНОПОК ─────────
+            На мобильном: вертикальный flow — actions сверху, доска, nav снизу.
+            На lg+: доска центрируется в своей колонке грида. Боковая полоска
+                  (aside) спозиционирована абсолютно относительно обёртки доски:
+                  left:100% (правый край доски), top:0, bottom:0 → её высота
+                  ровно равна высоте доски, и она не влияет на центрирование. */}
         <section
           className={cn(
-            'order-1 flex flex-col items-center lg:order-none',
-            // row-start-1 + row-end-3 — явная привязка: занимает обе строки сетки
-            // (auto + 1fr), чтобы не зависеть от auto-placement.
-            'lg:col-start-2 lg:row-start-1 lg:row-end-3 lg:min-h-0',
-            isEditing ? 'overflow-visible' : 'lg:overflow-hidden',
+            'order-1 flex flex-col items-center gap-2 lg:order-none',
+            // overflow-visible нужен, чтобы абсолютно позиционированный aside
+            // справа от доски не обрезался границей колонки грида.
+            'lg:col-start-2 lg:row-start-1 lg:row-end-3 lg:min-h-0 lg:overflow-visible',
           )}
         >
-          {/* Доска (фиксированный квадрат). */}
-          <div className={boardClassName}>
-            <ChessBoard
-              fen={displayFen}
-              canMove={canMove}
+          {/* ── Мобильная верхняя action-строка (lg:hidden) ── */}
+          <div className="mb-1 flex w-[min(96vw,480px)] shrink-0 justify-end gap-1 lg:hidden">
+            <ActionButtons
+              isOwner={isOwner}
               isEditing={isEditing}
-              canEdit={canEditNow}
-              allowIllegal={!vsComp && mode.allowIllegal}
-              sideLock={vsComp ? null : mode.sideLock}
-              // «Любой цвет первым» работает в двух случаях:
-              //   1. Обычный режим «оба» в свежем отрезке (после reset/undo/initial).
-              //   2. Vs Computer, пока пользователь не определил, какой стороной играть
-              //      (после reset/undo/initial — мы сбросили humanColor в null).
-              canStartAnySide={
-                vsComp
-                  ? vsComp.humanColor === null
-                  : !mode.allowIllegal && mode.sideLock === null && freshSegment
-              }
-              onPromotionRequest={handlePromotionRequest}
-              onMove={vsComp ? sendMoveVsComp : sendMove}
-              onEditFen={handleEditChange}
-              arrows={arrows}
-              marks={marks}
-              onAnnotationsChange={setAnnotations}
-              compact
-              fillContainer
-              silent={isViewingPast}
+              onEditStart={handleEditStart}
+              onEditEnd={handleEditEnd}
+              onReset={resetPosition}
+              showStudentEditing={!isOwner && isEditing && mode.studentsCanEdit}
             />
           </div>
-          {/* Навигация по ходам + Отменить ход. На мобильном умещаем в одну строку,
-              на широком — оставляем привычный вид. */}
-          <div className="mt-1 flex w-[min(96vw,480px)] shrink-0 flex-wrap items-center justify-center gap-1.5 lg:w-[min(94vw,480px)]">
-            <button
-              type="button"
-              onClick={goStart}
-              disabled={viewIdx === -1}
-              className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
-              title="К началу партии"
-            >
-              «
-            </button>
-            <button
-              type="button"
-              onClick={goPrev}
-              disabled={viewIdx === -1}
-              className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
-              title="Ход назад"
-            >
-              ‹
-            </button>
-            <div className="min-w-[5rem] flex-1 text-center text-xs font-semibold tabular-nums text-stone-500 sm:text-sm">
-              {history.length === 0
-                ? 'Старт'
-                : isViewingPast
-                  ? `Ход ${viewIdx + 1} / ${lastIdx + 1}`
-                  : `Текущая · ход ${lastIdx + 1}`}
+
+          {/* ── Доска (квадрат) + абсолютно позиционированный aside ── */}
+          <div className="relative">
+            <div className={boardClassName}>
+              <ChessBoard
+                fen={displayFen}
+                canMove={canMove}
+                isEditing={isEditing}
+                canEdit={canEditNow}
+                allowIllegal={!vsComp && mode.allowIllegal}
+                sideLock={vsComp ? null : mode.sideLock}
+                canStartAnySide={
+                  vsComp
+                    ? vsComp.humanColor === null
+                    : !mode.allowIllegal && mode.sideLock === null && freshSegment
+                }
+                onPromotionRequest={handlePromotionRequest}
+                onMove={vsComp ? sendMoveVsComp : sendMove}
+                onEditFen={handleEditChange}
+                arrows={arrows}
+                marks={marks}
+                onAnnotationsChange={setAnnotations}
+                compact
+                fillContainer
+                silent={isViewingPast}
+              />
             </div>
-            <button
-              type="button"
-              onClick={goNext}
-              disabled={!isViewingPast}
-              className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
-              title="Ход вперёд"
-            >
-              ›
-            </button>
-            <button
-              type="button"
-              onClick={goEnd}
-              disabled={!isViewingPast}
-              className="btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl"
-              title="К текущей позиции"
-            >
-              »
-            </button>
-            {roomKind === 'lesson' && (
-              <button
-                type="button"
-                onClick={undoMove}
-                disabled={history.length === 0 || isEditing}
-                className="shrink-0 rounded-lg border border-stone-300/80 bg-white/90 px-3.5 py-2 text-sm font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 sm:ml-auto dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
-                title="Отменить последний ход"
-              >
-                ↩ Отменить ход
-              </button>
+
+            {/* Десктопная боковая полоска (hidden < lg). Абсолютно справа
+                от доски, высота = высота доски (top:0, bottom:0). */}
+            <aside className="absolute bottom-0 left-full top-0 ml-2 hidden w-[110px] flex-col justify-between lg:flex">
+              {/* Top: блок с action-кнопками (✎ Редактор / ↺) */}
+              <div className="rounded-lg border border-stone-200/70 bg-white/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
+                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                  <ActionButtons
+                    isOwner={isOwner}
+                    isEditing={isEditing}
+                    onEditStart={handleEditStart}
+                    onEditEnd={handleEditEnd}
+                    onReset={resetPosition}
+                    showStudentEditing={!isOwner && isEditing && mode.studentsCanEdit}
+                    size="lg"
+                  />
+                </div>
+              </div>
+
+              {/* Bottom: nav + Отменить */}
+              <div className="rounded-lg border border-stone-200/70 bg-white/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
+                <div className="flex items-center justify-between gap-0.5">
+                  <NavButton onClick={goStart} disabled={viewIdx === -1} title="К началу" small>
+                    «
+                  </NavButton>
+                  <NavButton onClick={goPrev} disabled={viewIdx === -1} title="Назад" small>
+                    ‹
+                  </NavButton>
+                  <NavButton onClick={goNext} disabled={!isViewingPast} title="Вперёд" small>
+                    ›
+                  </NavButton>
+                  <NavButton onClick={goEnd} disabled={!isViewingPast} title="К текущей" small>
+                    »
+                  </NavButton>
+                </div>
+                <div className="mt-1 text-center text-[10px] font-semibold tabular-nums text-stone-500">
+                  {history.length === 0
+                    ? 'Старт'
+                    : isViewingPast
+                      ? `${viewIdx + 1}/${lastIdx + 1}`
+                      : `ход ${lastIdx + 1}`}
+                </div>
+                {isLessonLike && (
+                  <button
+                    type="button"
+                    onClick={undoMove}
+                    disabled={history.length === 0 || isEditing}
+                    className="mt-1.5 w-full rounded-md border border-stone-300/80 bg-white/90 px-1.5 py-1 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+                    title="Отменить последний ход"
+                  >
+                    ↩ Отменить
+                  </button>
+                )}
+              </div>
+            </aside>
+          </div>
+
+          {/* ── Мобильная нижняя nav-строка (lg:hidden) ── */}
+          <div className="mt-1 flex w-[min(96vw,480px)] shrink-0 flex-wrap items-center justify-center gap-1.5 lg:hidden">
+            <NavRow
+              goStart={goStart}
+              goPrev={goPrev}
+              goNext={goNext}
+              goEnd={goEnd}
+              isViewingPast={isViewingPast}
+              viewIdx={viewIdx}
+              historyLength={history.length}
+              lastIdx={lastIdx}
+            />
+            {isLessonLike && (
+              <UndoButton onClick={undoMove} disabled={history.length === 0 || isEditing} />
             )}
           </div>
         </section>
@@ -576,8 +630,17 @@ export function RoomClient({ meId, room }: Props) {
             'lg:col-start-1 lg:row-start-1 lg:row-end-3 lg:min-h-0 lg:overflow-y-auto',
           )}
         >
-          <ModePanel mode={mode} canEdit={isOwner} onChange={setMode} />
-          {isOwner && roomKind === 'lesson' && (
+          {/* Плашка «Ссылка» — только владельцу комнаты (учителю/автору комнаты).
+              Ученикам, решающим задачу, ссылка на их личную доску не нужна. */}
+          {isOwner && (
+            <LinkBadge roomCode={room.code} copied={copied} onCopy={copyLink} />
+          )}
+          {/* Панель режимов: владельцу — полная (можно менять), остальным —
+              скрываем (студенту с задачей лишний UI ни к чему). */}
+          {isOwner && (
+            <ModePanel mode={mode} canEdit={isOwner} onChange={setMode} />
+          )}
+          {isOwner && isLessonLike && (
             <button
               type="button"
               onClick={resetToInitial}
@@ -630,5 +693,186 @@ export function RoomClient({ meId, room }: Props) {
         />
       )}
     </main>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────
+// Маленькие переиспользуемые подкомпоненты для action / nav-row,
+// чтобы не дублировать markup между мобильной и десктопной вёрсткой.
+// ───────────────────────────────────────────────────────────────
+
+function LinkBadge({
+  roomCode,
+  copied,
+  onCopy,
+}: {
+  roomCode: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  // Полный URL вычисляем на клиенте; во время SSR показываем относительный путь.
+  const url =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/room/${roomCode}`
+      : `/room/${roomCode}`;
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      title="Скопировать ссылку на комнату"
+      className="group flex w-full flex-col items-stretch gap-1 rounded-xl border border-stone-200/80 bg-white/90 px-2.5 py-1.5 text-left shadow-sm transition-colors hover:border-brand-300 hover:bg-brand-50/60 dark:border-stone-700/70 dark:bg-stone-900/65 dark:hover:border-brand-700 dark:hover:bg-brand-900/20"
+    >
+      <span className="flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+        <span>Ссылка</span>
+        <span
+          className={cn(
+            'rounded px-1 py-px text-[9px] font-semibold',
+            copied
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+              : 'bg-stone-100 text-stone-500 group-hover:bg-brand-100 group-hover:text-brand-700 dark:bg-stone-800 dark:text-stone-400 dark:group-hover:bg-brand-900/40 dark:group-hover:text-brand-200',
+          )}
+        >
+          {copied ? '✓ Скопировано' : 'Копировать'}
+        </span>
+      </span>
+      <span className="truncate font-mono text-[11px] text-brand-600 dark:text-brand-300">
+        {url}
+      </span>
+    </button>
+  );
+}
+
+function ActionButtons({
+  isOwner,
+  isEditing,
+  onEditStart,
+  onEditEnd,
+  onReset,
+  showStudentEditing,
+  size = 'sm',
+}: {
+  isOwner: boolean;
+  isEditing: boolean;
+  onEditStart: () => void;
+  onEditEnd: () => void;
+  onReset: () => void;
+  showStudentEditing: boolean;
+  size?: 'sm' | 'lg';
+}) {
+  // На обоих размерах «Редактор» теперь компактный (как в исходной версии),
+  // а ↺ Сброс на size="lg" остаётся крупным, но на 15% меньше предыдущего.
+  const editorCls = 'btn-primary px-2 py-1 text-[11px] sm:text-xs';
+  const resetCls =
+    size === 'lg'
+      ? 'btn-ghost px-2.5 py-1.5 text-xl leading-none'
+      : 'btn-ghost px-2 py-1 text-[11px] sm:text-xs';
+  const badgeCls = 'rounded-md bg-amber-100 px-2 py-1 text-[11px] font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-200';
+  return (
+    <>
+      {isOwner &&
+        (isEditing ? (
+          <button type="button" onClick={onEditEnd} className={editorCls}>
+            ▶ Далее
+          </button>
+        ) : (
+          <button type="button" onClick={onEditStart} className={editorCls}>
+            ✎ Редактор
+          </button>
+        ))}
+      {showStudentEditing && <span className={badgeCls}>✎ редактируете</span>}
+      {isOwner && (
+        <button type="button" onClick={onReset} className={resetCls} title="Сброс позиции">
+          ↺
+        </button>
+      )}
+    </>
+  );
+}
+
+function NavRow({
+  goStart,
+  goPrev,
+  goNext,
+  goEnd,
+  isViewingPast,
+  viewIdx,
+  historyLength,
+  lastIdx,
+}: {
+  goStart: () => void;
+  goPrev: () => void;
+  goNext: () => void;
+  goEnd: () => void;
+  isViewingPast: boolean;
+  viewIdx: number;
+  historyLength: number;
+  lastIdx: number;
+}) {
+  return (
+    <>
+      <NavButton onClick={goStart} disabled={viewIdx === -1} title="К началу партии">
+        «
+      </NavButton>
+      <NavButton onClick={goPrev} disabled={viewIdx === -1} title="Ход назад">
+        ‹
+      </NavButton>
+      <div className="min-w-[5rem] flex-1 text-center text-xs font-semibold tabular-nums text-stone-500 sm:text-sm">
+        {historyLength === 0
+          ? 'Старт'
+          : isViewingPast
+            ? `Ход ${viewIdx + 1} / ${lastIdx + 1}`
+            : `Текущая · ход ${lastIdx + 1}`}
+      </div>
+      <NavButton onClick={goNext} disabled={!isViewingPast} title="Ход вперёд">
+        ›
+      </NavButton>
+      <NavButton onClick={goEnd} disabled={!isViewingPast} title="К текущей позиции">
+        »
+      </NavButton>
+    </>
+  );
+}
+
+function NavButton({
+  onClick,
+  disabled,
+  title,
+  children,
+  small,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  title: string;
+  children: React.ReactNode;
+  small?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={
+        small
+          ? 'btn-ghost shrink-0 px-1 py-0.5 text-base font-black leading-none disabled:opacity-40'
+          : 'btn-ghost shrink-0 px-2.5 py-1.5 text-[22px] font-black leading-none disabled:opacity-40 sm:text-2xl'
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="shrink-0 rounded-lg border border-stone-300/80 bg-white/90 px-3.5 py-2 text-sm font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 sm:ml-auto dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+      title="Отменить последний ход"
+    >
+      ↩ Отменить ход
+    </button>
   );
 }

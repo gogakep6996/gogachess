@@ -21,7 +21,7 @@ export function MiniBoard({ fen = STARTING_FEN, size = 140, flipped = false }: P
 
   return (
     <div
-      className="grid overflow-hidden rounded-md border border-brand-200/60 shadow-sm dark:border-stone-700/60"
+      className="grid overflow-hidden"
       style={{ width: size, height: size, gridTemplateColumns: 'repeat(8, 1fr)', gridTemplateRows: 'repeat(8, 1fr)' }}
     >
       {rows.map((row, ri) =>

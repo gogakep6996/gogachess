@@ -831,13 +831,14 @@ export function ChessBoard({
         </div>
       )}
 
+      {/* Внешняя «рамка» вокруг доски удалена по запросу — никакого border/padding/радиуса/тени/фона,
+          чтобы клетки начинались строго с края. Сохраняем только relative+overflow и aspect-square. */}
       <div
         className={cn(
-          'relative overflow-hidden border border-brand-200/60 bg-brand-50/60 shadow-soft dark:border-stone-700/60 dark:bg-stone-900/40',
+          'relative overflow-hidden',
           paletteAside && 'h-full w-full',
           fillContainer && !paletteAside && 'min-h-0 flex-1',
           !paletteAside && !fillContainer && 'aspect-square w-full',
-          compact ? 'rounded-lg p-1 sm:p-1.5' : 'rounded-2xl p-3',
         )}
       >
         <div
@@ -846,10 +847,7 @@ export function ChessBoard({
           onPointerMove={onBoardPointerMove}
           onPointerUp={onBoardPointerUp}
           onContextMenu={onBoardContextMenu}
-          className={cn(
-            'relative grid h-full w-full grid-cols-8 grid-rows-8 overflow-hidden touch-none',
-            compact ? 'rounded-md' : 'rounded-xl',
-          )}
+          className="relative grid h-full w-full grid-cols-8 grid-rows-8 overflow-hidden touch-none"
         >
           <ArrowsOverlay
             arrows={arrows}

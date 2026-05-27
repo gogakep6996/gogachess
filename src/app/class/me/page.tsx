@@ -22,22 +22,27 @@ export default async function ClassMePage() {
   });
 
   return (
-    <>
-      <Header />
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
-        <ClassMeClient
-          meId={auth.sub}
-          initialClass={{
-            id: cls.id,
-            slug: cls.slug,
-            name: cls.name,
-            accessCode: cls.accessCode,
-            isPublic: cls.isPublic,
-            ownerName: cls.owner.displayName,
-          }}
-          initialTasks={tasks}
-        />
-      </main>
-    </>
+    // Контейнер как в /room/[code]: фиксированная высота на десктопе, чтобы
+    // вложенный RoomClient (когда учитель открывает «Мою доску»/трансляцию)
+    // мог занять весь вьюпорт без скролла страницы. Сам ClassMeClient уже
+    // включает прокручиваемую область для обычного дашборда.
+    <div className="flex min-h-dvh flex-col overscroll-none bg-surface dark:bg-surface-dark lg:h-dvh lg:overflow-hidden">
+      <div className="shrink-0">
+        <Header />
+      </div>
+      <ClassMeClient
+        meId={auth.sub}
+        meName={auth.name}
+        initialClass={{
+          id: cls.id,
+          slug: cls.slug,
+          name: cls.name,
+          accessCode: cls.accessCode,
+          isPublic: cls.isPublic,
+          ownerName: cls.owner.displayName,
+        }}
+        initialTasks={tasks}
+      />
+    </div>
   );
 }

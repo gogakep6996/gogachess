@@ -32,24 +32,29 @@ export default async function ClassPublicPage({
         });
 
   return (
-    <>
-      <Header />
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
-        <ClassPublicClient
-          meId={auth?.sub ?? null}
-          cls={{
-            id: cls.id,
-            slug: cls.slug,
-            name: cls.name,
-            ownerId: cls.ownerId,
-            ownerName: cls.owner.displayName,
-            hasAccessCode,
-          }}
-          initialTasks={tasks}
-          isOwner={isOwner}
-        />
-      </main>
-    </>
+    // Контейнер как в /class/me: фиксированная высота на десктопе. Это нужно,
+    // чтобы при активной задаче ученика вложенный RoomClient мог занять весь
+    // вьюпорт без скролла. ClassPublicClient сам решает, рендерить ли
+    // полноэкранную доску или обычный лендинг класса с прокруткой.
+    <div className="flex min-h-dvh flex-col overscroll-none bg-surface dark:bg-surface-dark lg:h-dvh lg:overflow-hidden">
+      <div className="shrink-0">
+        <Header />
+      </div>
+      <ClassPublicClient
+        meId={auth?.sub ?? null}
+        meName={auth?.name ?? null}
+        cls={{
+          id: cls.id,
+          slug: cls.slug,
+          name: cls.name,
+          ownerId: cls.ownerId,
+          ownerName: cls.owner.displayName,
+          hasAccessCode,
+        }}
+        initialTasks={tasks}
+        isOwner={isOwner}
+      />
+    </div>
   );
 }
 

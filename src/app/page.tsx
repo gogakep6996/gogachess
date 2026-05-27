@@ -58,6 +58,16 @@ export default async function HomePage() {
           />
         </section>
 
+        <section className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          <Tile
+            href={user ? '/class' : '/login?next=/class'}
+            title="Класс"
+            text="Групповые уроки: задачи учителя, личные доски учеников, разбор и трансляция."
+            icon={<IconGraduation />}
+            tone="rose"
+          />
+        </section>
+
         <section className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           <Feature
             title="Живая доска"
@@ -85,13 +95,14 @@ export default async function HomePage() {
   );
 }
 
-type Tone = 'amber' | 'emerald' | 'violet' | 'sky';
+type Tone = 'amber' | 'emerald' | 'violet' | 'sky' | 'rose';
 
 const TONE_BG: Record<Tone, string> = {
   amber: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
   emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
   violet: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200',
   sky: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200',
+  rose: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200',
 };
 
 function Tile({
@@ -166,6 +177,13 @@ function IconBook() {
   return (
     <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>
       <path d="M4 4h7a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4V4zm9 0h7v13h-7a3 3 0 0 0-3 3V7a3 3 0 0 1 3-3z" />
+    </svg>
+  );
+}
+function IconGraduation() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>
+      <path d="M12 2 1 8l11 6 9-4.9V16h2V8L12 2zM4 13.5V17c0 1.7 3.6 3 8 3s8-1.3 8-3v-3.5l-8 4.4-8-4.4z" />
     </svg>
   );
 }

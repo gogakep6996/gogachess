@@ -10,18 +10,34 @@ interface Props {
   meId: string;
   /** Учитель ли я? (для force-mute-all и т.п.) */
   isTeacher: boolean;
+  /** Опциональный блок, который будет вставлен между аудио и чатом (например, ростер учеников). */
+  middleSlot?: React.ReactNode;
+  /** Горизонтальная (рядом) или вертикальная (стопкой, для боковой колонки) раскладка. */
+  layout?: 'vertical' | 'horizontal';
 }
 
 /**
  * Общеклассовый канал: подключается к lobby-комнате класса,
  * даёт аудио (WebRTC mesh) и текстовый чат всем участникам урока.
  */
-export function ClassLobbyPanel({ lobbyRoomCode, meId, isTeacher }: Props) {
+export function ClassLobbyPanel({
+  lobbyRoomCode,
+  meId,
+  isTeacher,
+  middleSlot,
+  layout = 'vertical',
+}: Props) {
   const room = useRoomSocket(lobbyRoomCode);
   const audio = useAudioRoom(room.socket);
 
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
+    <div
+      className={
+        layout === 'horizontal'
+          ? 'grid gap-3 lg:grid-cols-2'
+          : 'flex flex-col gap-3'
+      }
+    >
       <div className="card !p-2">
         <AudioPanel
           variant="compact"
@@ -44,7 +60,11 @@ export function ClassLobbyPanel({ lobbyRoomCode, meId, isTeacher }: Props) {
           onForceMuteAll={audio.forceMuteAll}
         />
       </div>
-      <div className="card !p-2">
+      {middleSlot}
+      {/* Чат: фиксированная высота, чтобы при добавлении сообщений блок
+          не растягивался бесконечно вниз. Внутренняя область с сообщениями
+          прокручивается сама (overflow-y-auto в ChatPanel). */}
+      <div className="card !p-2 h-[440px]">
         <ChatPanel
           variant="compact"
           messages={room.messages}

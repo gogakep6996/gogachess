@@ -282,8 +282,12 @@ interface ClassRuntime {
   lobbyRoomCode: string | null;
   /** Раздана какая задача всем? null = ничего пока. */
   currentTaskId: string | null;
-  /** Код доски-демонстратора (когда учитель нажал «Показать всем»). null = демо выкл. */
+  /** Код доски-демонстратора (когда открыта «Моя доска» или идёт трансляция).
+   *  null = демо-комнаты нет совсем. */
   demoRoomCode: string | null;
+  /** true = ученики тоже видят demoRoomCode (трансляция включена);
+   *  false = только учитель видит свою доску («Моя доска» в личном режиме). */
+  demoBroadcast: boolean;
   /** Participant в lobby: userId -> { name, role }.
    *  Источник истины о «кто на уроке». */
   lobbyMembers: Map<string, { name: string; role: 'teacher' | 'student' }>;
@@ -304,6 +308,7 @@ async function loadOrCreateClassRuntime(classId: string): Promise<ClassRuntime |
     lobbyRoomCode: null,
     currentTaskId: null,
     demoRoomCode: null,
+    demoBroadcast: false,
     lobbyMembers: new Map(),
   };
   classRuntimes.set(classId, rt);
@@ -350,6 +355,7 @@ async function buildClassState(rt: ClassRuntime): Promise<ClassStatePayload> {
     lessonActive: rt.lessonActive,
     currentTaskId: rt.currentTaskId,
     demoRoomCode: rt.demoRoomCode,
+    demoBroadcast: rt.demoBroadcast,
     lobbyRoomCode: rt.lobbyRoomCode,
     lobbyParticipants: Array.from(rt.lobbyMembers.entries()).map(([userId, info]) => ({
       userId,
@@ -1058,7 +1064,12 @@ app.prepare().then(() => {
       const runtime = rooms.get(code);
       if (!runtime) return;
       if (runtime.ownerId !== userId) return;
-      if (runtime.kind !== 'lesson' && runtime.kind !== 'student-board') return;
+      if (
+        runtime.kind !== 'lesson' &&
+        runtime.kind !== 'student-board' &&
+        runtime.kind !== 'class-demo'
+      )
+        return;
       if (runtime.isEditing) return;
       runtime.fen = runtime.segmentStartFen;
       // Если sideLock — снова выравниваем сторону FEN под него.
@@ -1142,7 +1153,14 @@ app.prepare().then(() => {
       if (!runtime) return;
       // Только владелец комнаты управляет перемоткой урока.
       if (runtime.ownerId !== userId) return;
-      if (runtime.kind !== 'lesson') return;
+      // Перемотка работает во всех учебных комнатах: lesson, классовая трансляция и
+      // личная доска ученика (учитель пришёл за доску и листает разбор).
+      if (
+        runtime.kind !== 'lesson' &&
+        runtime.kind !== 'class-demo' &&
+        runtime.kind !== 'student-board'
+      )
+        return;
       let next: number | null;
       if (idxRaw === null || idxRaw === undefined) {
         next = null;
@@ -1528,6 +1546,7 @@ app.prepare().then(() => {
       rt.lessonActive = false;
       rt.currentTaskId = null;
       rt.demoRoomCode = null;
+      rt.demoBroadcast = false;
       // Lobby room оставляем — он легковесный и пригодится в следующий урок.
       void broadcastClass(io, rt);
     });
@@ -1598,6 +1617,8 @@ app.prepare().then(() => {
       void broadcastClass(io, rt);
     });
 
+    /** Учитель: «Транслировать ученикам мою доску» — открыть демо-комнату
+     *  и сразу включить трансляцию (ученики увидят её вместо своих задач). */
     socket.on(SocketEvents.ClassDemoStart, async (payload?: { fen?: string }) => {
       const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
       if (!cls) return;
@@ -1619,16 +1640,55 @@ app.prepare().then(() => {
           io.to(rt.demoRoomCode).emit(SocketEvents.RoomState, buildState(roomRt));
         }
       }
+      rt.demoBroadcast = true;
       void broadcastClass(io, rt);
     });
 
+    /** Учитель: «Прекратить трансляцию» — комната демо ОСТАЁТСЯ открытой
+     *  (учитель может продолжать работать в «Моей доске»), но ученики возвращаются
+     *  к своим задачам.  Полное закрытие — отдельный ClassMyBoardStop ниже. */
     socket.on(SocketEvents.ClassDemoStop, async () => {
       const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
       if (!cls) return;
       const rt = classRuntimes.get(cls.id);
       if (!rt) return;
       if (rt.ownerId !== userId) return;
+      // По умолчанию закрываем демо полностью — это поведение прежнего ClassDemoStop.
       rt.demoRoomCode = null;
+      rt.demoBroadcast = false;
+      void broadcastClass(io, rt);
+    });
+
+    /** Учитель: открыть «Мою доску» — личный демо-room без трансляции.
+     *  Если демо-комнаты ещё нет — поднимаем её и держим в режиме приватности
+     *  (демо есть, broadcast=false → ученики её НЕ видят). */
+    socket.on(SocketEvents.ClassMyBoardOpen, async (payload?: { fen?: string }) => {
+      const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
+      if (!cls) return;
+      const rt = classRuntimes.get(cls.id);
+      if (!rt || !rt.lessonActive) return;
+      if (rt.ownerId !== userId) return;
+      const fen = (typeof payload === 'object' && payload?.fen) || undefined;
+      if (!rt.demoRoomCode) {
+        const { code } = await createClassServiceRoom(rt, 'class-demo', { fen });
+        rt.demoRoomCode = code;
+      }
+      // Личный режим — снимаем трансляцию, если была.
+      rt.demoBroadcast = false;
+      void broadcastClass(io, rt);
+    });
+
+    /** Учитель: переключить флаг трансляции «как есть» — без открытия/закрытия комнаты.
+     *  Используется, чтобы из «Моей доски» одной кнопкой запустить показ ученикам. */
+    socket.on(SocketEvents.ClassBroadcastToggle, async (payload?: { on?: boolean }) => {
+      const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
+      if (!cls) return;
+      const rt = classRuntimes.get(cls.id);
+      if (!rt || !rt.lessonActive) return;
+      if (rt.ownerId !== userId) return;
+      if (!rt.demoRoomCode) return;
+      const next = typeof payload?.on === 'boolean' ? payload.on : !rt.demoBroadcast;
+      rt.demoBroadcast = next;
       void broadcastClass(io, rt);
     });
 

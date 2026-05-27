@@ -76,6 +76,10 @@ export const SocketEvents = {
   ClassDemoStart: 'class:demo-start',
   /** Учитель: закрыть демонстрацию (всех возвращает к личным доскам). */
   ClassDemoStop: 'class:demo-stop',
+  /** Учитель: открыть «Мою доску» — личный демо-room без трансляции ученикам. */
+  ClassMyBoardOpen: 'class:my-board-open',
+  /** Учитель: переключить флаг трансляции (видна ли ученикам). */
+  ClassBroadcastToggle: 'class:broadcast-toggle',
   /** Авто-уведомление: ученик решил задачу. */
   TaskSessionSolved: 'task:solved',
 } as const;
@@ -285,8 +289,12 @@ export interface ClassStatePayload {
   lessonActive: boolean;
   /** ID задачи, которая раздана классу (или null). */
   currentTaskId: string | null;
-  /** Код комнаты-демонстратора (если включён режим «Показать всем»). */
+  /** Код комнаты-демонстратора (если открыта «Моя доска» или идёт трансляция). */
   demoRoomCode: string | null;
+  /** Транслируется ли demoRoomCode ученикам прямо сейчас.
+   *  false = только учитель видит свою доску («Моя доска»);
+   *  true  = ученики тоже видят её вместо своих задач. */
+  demoBroadcast: boolean;
   /** Код комнаты-lobby (для общего аудио/чата). Создаётся со стартом урока. */
   lobbyRoomCode: string | null;
   /** Все участники lobby (учитель + ученики, кто подключён). */

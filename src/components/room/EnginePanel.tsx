@@ -153,17 +153,40 @@ export function EnginePanel({
           <button
             type="button"
             onClick={onTogglePlayVsComputer}
+            title={
+              vsComputerActive
+                ? 'Сейчас за противоположную сторону играет движок. Нажмите, чтобы выключить.'
+                : 'Включить игру против компьютера. Движок будет автоматически делать ответные ходы.'
+            }
             className={
               vsComputerActive
-                ? 'mt-2 w-full rounded-md border border-emerald-500/70 bg-emerald-500/15 px-1.5 py-1.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-500/25 dark:text-emerald-300'
-                : 'mt-2 w-full rounded-md bg-brand-500 px-1.5 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-brand-600'
+                ? 'mt-2 flex w-full items-center justify-between gap-1.5 rounded-md border border-emerald-500/70 bg-emerald-500/15 px-2 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-500/25 dark:text-emerald-300'
+                : 'mt-2 flex w-full items-center justify-between gap-1.5 rounded-md border border-stone-300/70 bg-stone-100 px-2 py-1.5 text-[11px] font-semibold text-stone-700 hover:bg-stone-200 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700'
             }
           >
-            {vsComputerActive
-              ? vsComputerThinking
-                ? '⏳ Компьютер думает…'
-                : '■ Остановить игру с ПК'
-              : '🤖 Сыграть с компьютером'}
+            <span className="flex items-center gap-1.5">
+              <span
+                className={
+                  vsComputerActive
+                    ? 'inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-500'
+                    : 'inline-block h-2 w-2 shrink-0 rounded-full bg-stone-400'
+                }
+              />
+              {vsComputerActive
+                ? vsComputerThinking
+                  ? 'Движок ВКЛ · думает…'
+                  : 'Движок ВКЛ'
+                : 'Движок ВЫКЛ'}
+            </span>
+            <span
+              className={
+                vsComputerActive
+                  ? 'rounded bg-emerald-600/80 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white'
+                  : 'rounded bg-brand-500 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white'
+              }
+            >
+              {vsComputerActive ? 'Выключить' : 'Включить'}
+            </span>
           </button>
         )}
       </div>

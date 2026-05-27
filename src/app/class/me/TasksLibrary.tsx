@@ -137,64 +137,59 @@ export function TasksLibrary({
               : 'Пока нет ни одной позиции. Создайте первую — она сохранится в библиотеку.'}
         </div>
       ) : (
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredTasks.map((t) => {
             const diff = DIFFICULTY_LABEL[t.difficulty] ?? DIFFICULTY_LABEL.medium;
             return (
               <li
                 key={t.id}
-                className={`card flex flex-col gap-3 ${
-                  t.isPublished ? '' : 'opacity-90 ring-1 ring-amber-200/60 dark:ring-amber-800/40'
+                className={`group flex flex-col gap-1.5 rounded-xl border border-stone-200 bg-white p-2 shadow-sm transition-shadow hover:shadow-md dark:border-stone-700 dark:bg-stone-900 ${
+                  t.isPublished ? '' : 'ring-1 ring-amber-200/60 dark:ring-amber-800/40'
                 }`}
               >
                 <div className="flex justify-center">
-                  <MiniBoard fen={t.fen || STARTING_FEN} size={140} flipped={t.sideToPlay === 'b'} />
+                  <MiniBoard
+                    fen={t.fen || STARTING_FEN}
+                    size={140}
+                    flipped={t.sideToPlay === 'b'}
+                  />
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase">
-                  <span className={`rounded px-1.5 py-0.5 font-semibold ${diff.tone}`}>
+                <div className="truncate text-sm font-semibold leading-tight">{t.title}</div>
+                <div className="flex flex-wrap items-center gap-1 text-[10px] uppercase">
+                  <span className={`rounded px-1 py-0.5 font-semibold ${diff.tone}`}>
                     {diff.label}
                   </span>
-                  <span className="rounded bg-stone-100 px-1.5 py-0.5 font-semibold text-stone-600 dark:bg-stone-800 dark:text-stone-300">
-                    {GOAL_LABEL[t.goal] ?? t.goal}
-                  </span>
                   {t.category && (
-                    <span className="rounded bg-brand-100 px-1.5 py-0.5 font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                    <span className="rounded bg-brand-100 px-1 py-0.5 font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
                       {t.category}
                     </span>
                   )}
-                  {t.isPublished ? (
-                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                      🟢 опубл.
-                    </span>
-                  ) : (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                      📝 черновик
-                    </span>
-                  )}
+                  <span className="text-stone-400">·</span>
+                  <span className="text-stone-500 lowercase">{GOAL_LABEL[t.goal] ?? t.goal}</span>
                 </div>
-                <div>
-                  <div className="text-sm font-semibold">{t.title}</div>
-                  {t.description && (
-                    <div className="mt-1 line-clamp-2 text-xs text-stone-500">{t.description}</div>
-                  )}
-                </div>
-                <div className="mt-auto flex gap-2">
+                <div className="mt-auto flex items-center gap-1">
                   <button
                     onClick={() => togglePublish(t)}
-                    className={`flex-1 rounded-lg px-2 py-1 text-xs font-semibold transition-colors ${
+                    title={t.isPublished ? 'Снять с публикации' : 'Опубликовать ученикам'}
+                    className={`flex-1 rounded-md px-1.5 py-1 text-[11px] font-semibold transition-colors ${
                       t.isPublished
                         ? 'border border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/30'
                         : 'bg-emerald-500 text-white hover:bg-emerald-600'
                     }`}
                   >
-                    {t.isPublished ? 'Снять с публикации' : '↑ Опубликовать'}
+                    {t.isPublished ? '⤓ В черновики' : '↑ Опубликовать'}
                   </button>
-                  <button onClick={() => setEditingId(t.id)} className="btn-outline text-xs">
+                  <button
+                    onClick={() => setEditingId(t.id)}
+                    title="Редактировать"
+                    className="rounded-md border border-stone-300 px-1.5 py-1 text-[11px] text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+                  >
                     ✎
                   </button>
                   <button
                     onClick={() => remove(t.id)}
-                    className="rounded-lg border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/30"
+                    title="Удалить"
+                    className="rounded-md border border-red-300 px-1.5 py-1 text-[11px] text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/30"
                   >
                     🗑
                   </button>
