@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useEffect, useState } from 'react';
 import { EmailVerifyBanner } from '@/components/auth/EmailVerifyBanner';
@@ -18,6 +19,7 @@ interface MeResponse {
 
 export function Header() {
   const [user, setUser] = useState<MeUser | null>(null);
+  const pathname = usePathname();
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -33,7 +35,20 @@ export function Header() {
 
   // Плашка «Подтвердите email» показывается под основным хедером,
   // если пользователь залогинен, у него есть email и он ещё не подтверждён.
-  const showVerifyBanner = Boolean(user && user.email && !user.emailVerifiedAt);
+  // На страницах с доской (комната, личный кабинет класса, публичная страница
+  // класса) её прячем — там каждый пиксель высоты на счету, иначе доска
+  // сжимается и съезжает раскладка.
+  const hideBannerOnBoardPage = Boolean(
+    pathname &&
+      (pathname.startsWith('/room/') ||
+        pathname === '/class/me' ||
+        pathname.startsWith('/class/me/') ||
+        // /class/<slug> — публичная страница класса, кроме /class и /classes
+        /^\/class\/[^/]+$/.test(pathname)),
+  );
+  const showVerifyBanner = Boolean(
+    user && user.email && !user.emailVerifiedAt && !hideBannerOnBoardPage,
+  );
 
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200/60 bg-surface/70 backdrop-blur-md dark:border-stone-800/60 dark:bg-surface-dark/70">

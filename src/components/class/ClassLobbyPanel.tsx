@@ -1,12 +1,10 @@
 'use client';
 
-import { useRoomSocket } from '@/hooks/useRoomSocket';
-import { useAudioRoom } from '@/hooks/useAudioRoom';
 import { AudioPanel } from '@/components/room/AudioPanel';
 import { ChatPanel } from '@/components/room/ChatPanel';
+import { useClassAudio } from '@/contexts/ClassAudioContext';
 
 interface Props {
-  lobbyRoomCode: string;
   meId: string;
   /** Учитель ли я? (для force-mute-all и т.п.) */
   isTeacher: boolean;
@@ -17,18 +15,31 @@ interface Props {
 }
 
 /**
- * Общеклассовый канал: подключается к lobby-комнате класса,
- * даёт аудио (WebRTC mesh) и текстовый чат всем участникам урока.
+ * Общеклассовый канал: аудио (WebRTC mesh) + чат класса.
+ *
+ * Сами хуки `useRoomSocket(lobbyRoomCode)` и `useAudioRoom(socket)` теперь
+ * живут в `<ClassAudioProvider>` уровнем выше, чтобы WebRTC mesh переживал
+ * любые переключения главной колонки (дашборд ↔ доска ученика ↔ «Моя доска»).
+ * Эта панель — чистое отображение для контекста.
+ *
+ * Если контекста нет — отрисуем заглушку: значит, родитель не обернул нас
+ * в провайдер (вероятно, урок ещё не начат).
  */
 export function ClassLobbyPanel({
-  lobbyRoomCode,
   meId,
   isTeacher,
   middleSlot,
   layout = 'vertical',
 }: Props) {
-  const room = useRoomSocket(lobbyRoomCode);
-  const audio = useAudioRoom(room.socket);
+  const ctx = useClassAudio();
+  if (!ctx) {
+    return (
+      <div className="card text-xs text-stone-500">
+        Аудио, ученики и чат класса появятся, когда урок будет запущен.
+      </div>
+    );
+  }
+  const { audio, participants, messages, sendChat } = ctx;
 
   return (
     <div
@@ -44,7 +55,7 @@ export function ClassLobbyPanel({
           joined={audio.joined}
           micEnabled={audio.micEnabled}
           forcedMute={audio.forcedMute}
-          participants={room.participants}
+          participants={participants}
           meId={meId}
           isOwner={isTeacher}
           levels={audio.levels}
@@ -67,9 +78,9 @@ export function ClassLobbyPanel({
       <div className="card !p-2 h-[440px]">
         <ChatPanel
           variant="compact"
-          messages={room.messages}
+          messages={messages}
           meId={meId}
-          onSend={(text) => room.sendChat(text)}
+          onSend={(text) => sendChat(text)}
         />
       </div>
     </div>

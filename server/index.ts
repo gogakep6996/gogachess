@@ -1192,8 +1192,10 @@ app.prepare().then(() => {
 
     // Учитель переключает движок-соперник на доске ученика. Имеет смысл
     // только для student-board: только в нём ученик автоматически играет
-    // против движка. Серверный флаг переживает уход учителя — следующий вход
-    // учителя за доску покажет ровно то состояние движка, в котором учитель его оставил.
+    // против движка. Выключение действует, ПОКА учитель стоит за доской ученика
+    // (можно спокойно разобрать позицию, движок не отвечает). Как только учитель
+    // уходит — движок снова включается автоматически (см. обработчик disconnect),
+    // чтобы ученик продолжил игру.
     socket.on(SocketEvents.EngineToggle, (nextRaw: unknown) => {
       const code = socket.data.roomCode as string | undefined;
       if (!code) return;
@@ -1751,6 +1753,20 @@ app.prepare().then(() => {
         runtime.audioReady.forEach((sid) => io.to(sid).emit('audio:peer-left', socket.id));
       }
       io.to(code).emit(SocketEvents.ParticipantsUpdate, Array.from(runtime.participants.values()));
+
+      // student-board: если учитель (владелец) покинул доску ученика, а движок
+      // был выключен им для разбора позиции — снова включаем его, чтобы ученик
+      // продолжил играть против движка автоматически. Выключение движка имеет
+      // смысл только пока учитель сам стоит за доской.
+      if (runtime.kind === 'student-board' && !runtime.engineEnabled) {
+        const ownerStillHere = Array.from(runtime.participants.values()).some(
+          (p) => p.userId === runtime.ownerId,
+        );
+        if (!ownerStillHere) {
+          runtime.engineEnabled = true;
+          io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+        }
+      }
       if (runtime.editorId && !Array.from(runtime.participants.values()).find((p) => p.userId === runtime.editorId)) {
         runtime.isEditing = false;
         runtime.editorId = null;

@@ -11,6 +11,7 @@ import { ModePanel } from '@/components/room/ModePanel';
 import { useRoomSocket } from '@/hooks/useRoomSocket';
 import { useAudioRoom } from '@/hooks/useAudioRoom';
 import { useStockfish } from '@/hooks/useStockfish';
+import { useClassAudio } from '@/contexts/ClassAudioContext';
 import { DEFAULT_ROOM_MODE, STARTING_FEN } from '@/lib/socket-events';
 import { getPiece, type Square } from '@/lib/fen';
 import { cn } from '@/lib/utils';
@@ -33,11 +34,6 @@ interface Props {
    *  фиксирует цвет ученика, скрывает плашку «Ссылка» и панель «Режим». Сам
    *  движок и редактор позиции уже спрятаны для не-владельцев (isOwner=false). */
   studentTaskMode?: { humanColor: 'w' | 'b' };
-  /** Не рендерить внутреннюю панель аудио (для случаев, когда RoomClient
-   *  встроен в более крупную раскладку — например, в /class/me, где общая
-   *  аудио-комната класса уже живёт в правой колонке и НЕ должна отваливаться
-   *  при переключении вида). */
-  hideAudioPanel?: boolean;
 }
 
 export function RoomClient({
@@ -45,7 +41,6 @@ export function RoomClient({
   room,
   embedded = false,
   studentTaskMode,
-  hideAudioPanel = false,
 }: Props) {
   const isOwner = meId === room.ownerId;
 
@@ -107,12 +102,17 @@ export function RoomClient({
     toggleEngine,
   } = useRoomSocket(room.code);
 
-  // Когда родитель сам держит общую аудио-комнату (см. ClassMeClient/ClassPublicClient),
-  // внутренний useAudioRoom не запускается — иначе на каждом переключении вида
-  // (вход за доску ученика, открытие трансляции и т.п.) RoomClient вновь подключается
-  // к WebRTC mesh-у, и связь у учителя/ученика «слетает». Передаём `null` —
-  // хук возвращает no-op API. См. реализацию useAudioRoom.
-  const audio = useAudioRoom(hideAudioPanel ? null : socket);
+  // Когда RoomClient открыт внутри класса (под `<ClassAudioProvider>`),
+  // берём аудио-mesh из контекста — он живёт у провайдера и НЕ пересобирается
+  // при переключении главной колонки (дашборд ↔ доска ученика ↔ «Моя доска»).
+  // Снаружи класса (`/room/[code]` standalone) контекста нет — поднимаем
+  // собственный per-room mesh на сокете этой комнаты.
+  // `useAudioRoom` вызываем ВСЕГДА (правила хуков), но с `null` под провайдером,
+  // чтобы лишний WebRTC mesh не поднимался.
+  const classAudio = useClassAudio();
+  const ownAudio = useAudioRoom(classAudio ? null : socket);
+  const audio = classAudio?.audio ?? ownAudio;
+  const audioParticipants = classAudio?.participants ?? participants;
 
   const fen = state?.fen ?? STARTING_FEN;
   const isEditing = state?.isEditing ?? false;
@@ -452,16 +452,27 @@ export function RoomClient({
   // Десктоп: ограничен сразу четырьмя факторами, чтобы у всех пользователей доска
   //   была максимально крупной и при этом ничего не наезжало на соседние блоки:
   //     • 94vw          — не вылазит за пределы окна;
-  //     • 100dvh - запас — помещается по высоте (запас = Header + nav/панель);
-  //     • 100vw - 30rem — учитывает две колонки по ~14rem + gap'ы/боковая полоска,
-  //                       чтобы доска не залезала в колонки слева/справа;
-  //     • 820px         — финальный hard-кап, чтобы на гигантских мониторах доска
-  //                       не превращалась в стену.
-  //   На большинстве ноутбуков (1440-1920px) теперь даёт ~640–820px вместо
-  //   прежних 480px — и одинаковую визуально доску у учителя и учеников. */
+  // ── Размер доски ──────────────────────────────────────────────────────
+  // МОБИЛЬНЫЙ (< lg): не трогаем — `w-[min(96vw,480px)]`.
+  // ДЕСКТОП (lg+): доска масштабируется ПРОПОРЦИОНАЛЬНО размеру окна, но так,
+  // чтобы НИКОГДА не было наложений на боковые колонки/панели. Берём минимум из:
+  //   • 100dvh − Yrem  — влезаем по высоте (Y = Header + статус-бар встроенного
+  //                       режима). Доска квадратная (aspect-square), поэтому этот
+  //                       лимит ограничивает и высоту, и ширину.
+  //   • 100vw − 48rem  — оставляем место под обе боковые grid-колонки
+  //                       (13.5rem + 13.75/15rem), gap'ы, паддинг страницы И
+  //                       абсолютные «ушки» по бокам доски (≈128px слева у
+  //                       ученика с «Начать заново» + ≈118px справа с nav/undo).
+  //                       Доска центрирована в средней колонке, значит на каждый
+  //                       бок остаётся (колонка − доска)/2 ≥ ~128px — «ушки»
+  //                       помещаются, ничего не перекрывается.
+  //   • 760px          — финальный hard-кап, чтобы на 2K/4K доска не разрасталась.
+  // КРИТИЧНО: ширина задаётся явным calc/min — НЕ `w-full`. С `w-full` обёртка
+  // `<div className="relative">` без собственной ширины схлопывается в ноль
+  // внутри flex-секции с items-center (доска исчезала).
   const boardClassName = embedded
-    ? 'relative z-10 mx-auto aspect-square w-[min(96vw,560px)] lg:w-full lg:max-w-[min(94vw,calc(100dvh-6.5rem),820px)]'
-    : 'relative z-10 mx-auto aspect-square w-[min(96vw,560px)] lg:w-full lg:max-w-[min(94vw,calc(100dvh-5rem),820px)]';
+    ? 'relative z-10 mx-auto aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,calc(100dvh-6.5rem),calc(100vw-48rem),760px)]'
+    : 'relative z-10 mx-auto aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,calc(100dvh-5rem),calc(100vw-48rem),760px)]';
 
   return (
     <main
@@ -654,27 +665,32 @@ export function RoomClient({
         {/* ───────── АУДИО ─────────
             На мобильном — сразу под доской/навигацией.
             На десктопе — верхняя ячейка правой колонки (col 3, row 1).
-            Если родитель сам держит общий канал класса (hideAudioPanel) —
-            эту панель не рендерим, чтобы не дублировать UI и WebRTC mesh. */}
-        {!hideAudioPanel && (
-          <section className="order-2 w-full lg:order-none lg:col-start-3 lg:row-start-1">
-            <AudioPanel
-              variant="compact"
-              joined={audio.joined}
-              micEnabled={audio.micEnabled}
-              forcedMute={audio.forcedMute}
-              participants={participants}
-              meId={meId}
-              isOwner={isOwner}
-              levels={audio.levels}
-              onJoin={audio.join}
-              onLeave={audio.leave}
-              onToggleMic={() => audio.setMic(!audio.micEnabled)}
-              onForceMute={audio.forceMute}
-              onForceMuteAll={audio.forceMuteAll}
-            />
-          </section>
-        )}
+            Внутри класса берёт mesh из `ClassAudioProvider` (живёт у родителя,
+            не пересобирается при переключении вида). Снаружи класса — собственный
+            per-room WebRTC mesh. Список участников: в классе — все из лобби,
+            снаружи — участники этой конкретной комнаты. */}
+        <section className="order-2 w-full lg:order-none lg:col-start-3 lg:row-start-1">
+          <AudioPanel
+            variant="compact"
+            joined={audio.joined}
+            micEnabled={audio.micEnabled}
+            forcedMute={audio.forcedMute}
+            participants={audioParticipants}
+            meId={meId}
+            isOwner={isOwner}
+            levels={audio.levels}
+            onJoin={() => {
+              audio.join().catch((err: unknown) => {
+                // eslint-disable-next-line no-console
+                console.warn('audio join failed', err);
+              });
+            }}
+            onLeave={audio.leave}
+            onToggleMic={() => audio.setMic(!audio.micEnabled)}
+            onForceMute={audio.forceMute}
+            onForceMuteAll={audio.forceMuteAll}
+          />
+        </section>
 
         {/* ───────── РЕЖИМ + НАЧАЛЬНАЯ ПОЗИЦИЯ + ДВИЖОК (учителю) ─────────
             Мобильный: ниже аудио. Десктоп: левая колонка (col 1), от верха грида до низа.
@@ -737,15 +753,12 @@ export function RoomClient({
         </section>
 
         {/* ───────── ИСТОРИЯ + ЧАТ ─────────
-            Мобильный: в конце страницы. Десктоп: правая колонка (col 3).
-            Если внутренняя панель аудио скрыта (родитель сам держит аудио
-            класса), история+чат занимают ОБА ряда правой колонки —
-            row-span-2, чтобы не было пустой ячейки сверху. */}
+            Мобильный: в конце страницы. Десктоп: правая колонка (col 3), row 2.
+            Над ним — секция АУДИО (row 1). */}
         <section
           className={cn(
             'order-4 flex w-full flex-col gap-2 lg:order-none',
-            'lg:col-start-3 lg:min-h-0 lg:overflow-hidden',
-            hideAudioPanel ? 'lg:row-start-1 lg:row-end-3' : 'lg:row-start-2',
+            'lg:col-start-3 lg:row-start-2 lg:min-h-0 lg:overflow-hidden',
           )}
         >
           <HistoryPanel
@@ -786,11 +799,15 @@ function LinkBadge({
   copied: boolean;
   onCopy: () => void;
 }) {
-  // Полный URL вычисляем на клиенте; во время SSR показываем относительный путь.
-  const url =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/room/${roomCode}`
-      : `/room/${roomCode}`;
+  // SSR не знает window.location.origin → начинаем с относительного пути.
+  // После маунта useEffect подставляет полный URL. Так первый рендер на
+  // клиенте совпадает с серверным — нет hydration mismatch.
+  const [url, setUrl] = useState<string>(`/room/${roomCode}`);
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setUrl(`${window.location.origin}/room/${roomCode}`);
+    }
+  }, [roomCode]);
   return (
     <button
       type="button"
