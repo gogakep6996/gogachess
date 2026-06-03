@@ -33,6 +33,9 @@ interface UseRoomSocketResult {
   /** Учитель сообщает серверу, какую позицию он сейчас смотрит — сервер броадкастит
    *  ученикам, чтобы у них показывался тот же ход. null = «следить за текущей». */
   setHistoryView: (idx: number | null) => void;
+  /** Учитель переключает движок-соперник на доске ученика (только для student-board).
+   *  Если next не передан — сервер инвертирует текущее значение. */
+  toggleEngine: (next?: boolean) => void;
   /** Сдаться в турнирной / казуальной партии. */
   resign: () => void;
   /** Предложить ничью. */
@@ -124,6 +127,9 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
   const setHistoryView = useCallback((idx: number | null) => {
     socketRef.current?.emit(SocketEvents.HistoryView, idx);
   }, []);
+  const toggleEngine = useCallback((next?: boolean) => {
+    socketRef.current?.emit(SocketEvents.EngineToggle, next);
+  }, []);
   const resign = useCallback(() => socketRef.current?.emit(SocketEvents.Resign), []);
   const offerDraw = useCallback(() => socketRef.current?.emit(SocketEvents.DrawOffer), []);
   const acceptDraw = useCallback(() => socketRef.current?.emit(SocketEvents.DrawAccept), []);
@@ -154,6 +160,7 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     setAnnotations,
     undoMove,
     setHistoryView,
+    toggleEngine,
     resign,
     offerDraw,
     acceptDraw,

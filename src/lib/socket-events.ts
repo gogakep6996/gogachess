@@ -24,6 +24,9 @@ export const SocketEvents = {
   ModeSet: 'chess:mode',          // учитель меняет режим комнаты
   MoveUndo: 'chess:undo',       // отменить последний ход ( lesson )
   ArrowsUpdate: 'chess:arrows',   // стрелки и выделения клеток (broadcast)
+  /** Учитель переключил движок на доске ученика (student-board): включён/выключен.
+   *  Сервер хранит флаг runtime.engineEnabled и броадкастит новое RoomState. */
+  EngineToggle: 'chess:engine-toggle',
   /** Учитель листает историю ходов — броадкастим всем, чтобы у учеников
    *  показывалась та же позиция, что и у учителя. */
   HistoryView: 'chess:history-view',
@@ -217,6 +220,10 @@ export interface RoomStatePayload {
   blackId: string | null;
   /** Итог партии (если она окончена). */
   result: GameResultState | null;
+  /** Включён ли движок-соперник на доске ученика (student-board).
+   *  По умолчанию true. Учитель может выключить кнопкой, когда зашёл за доску
+   *  ученика — состояние сохраняется и после ухода учителя. */
+  engineEnabled: boolean;
 }
 
 export interface ChatMessageDto {

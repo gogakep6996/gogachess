@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, requireVerifiedUser } from '@/lib/auth';
 import { TIME_CONTROLS } from '@/lib/socket-events';
 
 export async function GET() {
@@ -38,8 +38,15 @@ interface CreateBody {
 }
 
 export async function POST(request: Request) {
-  const auth = await getCurrentUser();
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Создание турнира — действие с реальным impact на других пользователей
+  // (рассылка в общую ленту), поэтому требуем подтверждённый email.
+  const guard = await requireVerifiedUser();
+  if (!guard.ok) {
+    return NextResponse.json(
+      { error: guard.error, needsVerification: true },
+      { status: guard.status },
+    );
+  }
 
   let body: CreateBody;
   try {
@@ -59,7 +66,7 @@ export async function POST(request: Request) {
   }
 
   const t = await prisma.tournament.create({
-    data: { name, timeControl, durationMin, startsAt, ownerId: auth.sub },
+    data: { name, timeControl, durationMin, startsAt, ownerId: guard.userId },
   });
   return NextResponse.json({ id: t.id });
 }

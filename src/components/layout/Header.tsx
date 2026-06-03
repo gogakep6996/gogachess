@@ -3,13 +3,21 @@
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useEffect, useState } from 'react';
+import { EmailVerifyBanner } from '@/components/auth/EmailVerifyBanner';
+
+interface MeUser {
+  id: string;
+  displayName: string;
+  email: string | null;
+  emailVerifiedAt: string | null;
+}
 
 interface MeResponse {
-  user: { id: string; displayName: string } | null;
+  user: MeUser | null;
 }
 
 export function Header() {
-  const [user, setUser] = useState<MeResponse['user']>(null);
+  const [user, setUser] = useState<MeUser | null>(null);
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -22,6 +30,10 @@ export function Header() {
     await fetch('/api/auth/logout', { method: 'POST' });
     window.location.href = '/';
   }
+
+  // Плашка «Подтвердите email» показывается под основным хедером,
+  // если пользователь залогинен, у него есть email и он ещё не подтверждён.
+  const showVerifyBanner = Boolean(user && user.email && !user.emailVerifiedAt);
 
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200/60 bg-surface/70 backdrop-blur-md dark:border-stone-800/60 dark:bg-surface-dark/70">
@@ -70,6 +82,7 @@ export function Header() {
           )}
         </nav>
       </div>
+      {showVerifyBanner && user?.email && <EmailVerifyBanner email={user.email} />}
     </header>
   );
 }

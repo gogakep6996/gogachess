@@ -11,3 +11,6 @@ prisma/dev.db
 prisma/dev.db-journal
 .vscode
 .idea
+# Локальные артефакты, которые не должны попадать в репозиторий
+*.bak
+tsconfig.tsbuildinfo

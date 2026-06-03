@@ -87,6 +87,10 @@ interface RoomRuntime {
   drawOffer: DrawOfferState | null;
   /** Итог партии (для tournament/casual после завершения). */
   result: GameResultState | null;
+  /** Включён ли движок-соперник на доске ученика (только для student-board).
+   *  По умолчанию true. Учитель может выключить кнопкой; флаг сохраняется
+   *  на сервере и переживает входы/выходы учителя за доску ученика. */
+  engineEnabled: boolean;
 }
 
 const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
@@ -180,6 +184,7 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     whiteId: room.whiteId ?? null,
     blackId: room.blackId ?? null,
     result: room.result,
+    engineEnabled: room.engineEnabled,
   };
 }
 
@@ -255,6 +260,7 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     clock: needsClock ? makeClock(dbRoom.timeControl) : null,
     drawOffer: null,
     result: null,
+    engineEnabled: true,
   };
   rooms.set(code, runtime);
   return runtime;
@@ -1063,13 +1069,20 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      if (runtime.ownerId !== userId) return;
       if (
         runtime.kind !== 'lesson' &&
         runtime.kind !== 'student-board' &&
         runtime.kind !== 'class-demo'
       )
         return;
+      // student-board: разрешаем сброс любому участнику комнаты — ученик нажал
+      // «Начать заново» у себя на доске задачи, чтобы повторить решение. В
+      // остальных типах (lesson/class-demo) распоряжаться позицией может только учитель.
+      const isOwner = runtime.ownerId === userId;
+      const isParticipant = Array.from(runtime.participants.values()).some(
+        (p) => p.userId === userId,
+      );
+      if (!isOwner && !(runtime.kind === 'student-board' && isParticipant)) return;
       if (runtime.isEditing) return;
       runtime.fen = runtime.segmentStartFen;
       // Если sideLock — снова выравниваем сторону FEN под него.
@@ -1175,6 +1188,24 @@ app.prepare().then(() => {
       if (runtime.historyViewIdx === next) return;
       runtime.historyViewIdx = next;
       io.to(code).emit(SocketEvents.HistoryView, runtime.historyViewIdx);
+    });
+
+    // Учитель переключает движок-соперник на доске ученика. Имеет смысл
+    // только для student-board: только в нём ученик автоматически играет
+    // против движка. Серверный флаг переживает уход учителя — следующий вход
+    // учителя за доску покажет ровно то состояние движка, в котором учитель его оставил.
+    socket.on(SocketEvents.EngineToggle, (nextRaw: unknown) => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.kind !== 'student-board') return;
+      if (runtime.ownerId !== userId) return; // только учитель класса
+      const next =
+        typeof nextRaw === 'boolean' ? nextRaw : !runtime.engineEnabled;
+      if (runtime.engineEnabled === next) return;
+      runtime.engineEnabled = next;
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
     });
 
     socket.on(SocketEvents.ArrowsUpdate, (payload: { arrows?: unknown; marks?: unknown }) => {

@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { ensureClassForUser } from '@/lib/class-service';
 import { prisma } from '@/lib/db';
 import { ClassMeClient } from './ClassMeClient';
+import { ClassMeLockedView } from './ClassMeLockedView';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +16,28 @@ export default async function ClassMePage() {
   const auth = await getCurrentUser();
   if (!auth) redirect('/login?next=/class/me');
 
-  const cls = await ensureClassForUser(auth.sub);
+  // Если класс ещё не создан — требуем подтверждённый email перед созданием.
+  // У существующих учителей класс уже есть, поэтому проверка их не затрагивает.
+  const existing = await prisma.class.findUnique({
+    where: { ownerId: auth.sub },
+    include: { owner: { select: { id: true, displayName: true } } },
+  });
+  if (!existing) {
+    const me = await prisma.user.findUnique({
+      where: { id: auth.sub },
+      select: { email: true, emailVerifiedAt: true },
+    });
+    if (!me?.emailVerifiedAt) {
+      return (
+        <div className="flex min-h-dvh flex-col bg-surface dark:bg-surface-dark">
+          <Header />
+          <ClassMeLockedView email={me?.email ?? null} />
+        </div>
+      );
+    }
+  }
+
+  const cls = existing ?? (await ensureClassForUser(auth.sub));
   const tasks = await prisma.task.findMany({
     where: { classId: cls.id },
     orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, requireVerifiedUser } from '@/lib/auth';
 import { ensureClassForUser } from '@/lib/class-service';
 import { prisma } from '@/lib/db';
 
@@ -12,6 +12,19 @@ const VALID_GOAL = new Set(['mate', 'win-material', 'custom']);
 export async function POST(req: Request) {
   const auth = await getCurrentUser();
   if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  // Если класса ещё нет — мы его сейчас создадим. Это требует подтверждённого
+  // email (тот же гейт, что и на /api/class/me и /class/me).
+  const existing = await prisma.class.findUnique({ where: { ownerId: auth.sub } });
+  if (!existing) {
+    const guard = await requireVerifiedUser();
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, needsVerification: true },
+        { status: guard.status },
+      );
+    }
+  }
 
   const cls = await ensureClassForUser(auth.sub);
   const body = (await req.json().catch(() => ({}))) as {

@@ -75,12 +75,17 @@ export default function LoginPage() {
               {loading ? 'Входим…' : 'Войти'}
             </button>
 
-            <p className="text-center text-sm text-stone-500">
-              Нет аккаунта?{' '}
-              <Link href="/register" className="text-brand-600 hover:underline">
-                Зарегистрироваться
+            <div className="flex flex-col gap-1 text-center text-sm text-stone-500">
+              <Link href="/forgot-password" className="text-brand-600 hover:underline">
+                Забыли пароль?
               </Link>
-            </p>
+              <p>
+                Нет аккаунта?{' '}
+                <Link href="/register" className="text-brand-600 hover:underline">
+                  Зарегистрироваться
+                </Link>
+              </p>
+            </div>
           </form>
         </div>
       </main>

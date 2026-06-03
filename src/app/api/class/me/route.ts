@@ -1,16 +1,31 @@
 import { NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, requireVerifiedUser } from '@/lib/auth';
 import { ensureClassForUser } from '@/lib/class-service';
 import { prisma } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
 // GET /api/class/me — возвращает класс текущего пользователя и его задачи.
+// Создание класса (ensureClassForUser) требует подтверждённого email — иначе
+// каждый бот мог бы засеять базу пустыми классами.
 export async function GET() {
   const auth = await getCurrentUser();
   if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
-  const cls = await ensureClassForUser(auth.sub);
+  // Если у пользователя уже есть класс — отдадим без проверки email,
+  // чтобы прежние учителя могли работать как раньше. Гейтим только создание.
+  const existing = await prisma.class.findUnique({
+    where: { ownerId: auth.sub },
+    include: { owner: { select: { id: true, displayName: true } } },
+  });
+  if (!existing) {
+    const guard = await requireVerifiedUser();
+    if (!guard.ok) {
+      return NextResponse.json({ error: guard.error, needsVerification: true }, { status: guard.status });
+    }
+  }
+
+  const cls = existing ?? (await ensureClassForUser(auth.sub));
   const tasks = await prisma.task.findMany({
     where: { classId: cls.id },
     orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],

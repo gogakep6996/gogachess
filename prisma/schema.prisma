@@ -10,12 +10,16 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  email         String?  @unique
-  phone         String?  @unique
-  passwordHash  String
-  displayName   String
-  createdAt     DateTime @default(now())
+  id              String    @id @default(cuid())
+  email           String?   @unique
+  phone           String?   @unique
+  passwordHash    String
+  displayName     String
+  /// Когда email был подтверждён ссылкой из письма. null = ещё не подтверждён.
+  /// Используется для «soft»-блокировок: создавать класс/турнир можно только
+  /// после подтверждения, но обычный логин работает и без него.
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
 
   ownedRooms          Room[]                 @relation("RoomOwner")
   messages            Message[]
@@ -25,6 +29,27 @@ model User {
   blackMatches        TournamentMatch[]      @relation("MatchBlack")
   ownedClass          Class?                 @relation("ClassOwner")
   taskSessions        TaskSession[]
+  authTokens          AuthToken[]
+}
+
+/// Одноразовые токены для email-flow (подтверждение почты, сброс пароля).
+/// В БД хранится только SHA-256 хэш токена, в письмо уходит «сырой» токен —
+/// если БД утечёт, существующие токены нельзя будет использовать.
+model AuthToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256(token) в hex. По нему ищем — поэтому unique.
+  tokenHash String    @unique
+  /// "email-verify" | "password-reset"
+  kind      String
+  expiresAt DateTime
+  /// Когда токен был использован. Не null = расходован, второй раз не сработает.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, kind])
+  @@index([expiresAt])
 }
 
 model Room {

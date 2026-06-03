@@ -241,6 +241,70 @@ docker compose restart turn
 
 ---
 
+## 8a. Подтверждение email (Resend) — настройка на проде
+
+Сайт использует **Resend** (resend.com) для писем с подтверждением почты и
+сброса пароля. Бесплатный тариф — 3000 писем/мес, до 100/день.
+
+### Регистрация и DKIM
+
+1. Зарегистрируйтесь на [resend.com](https://resend.com).
+2. **Domains → Add Domain** → введите свой домен (например, `gogachess.ru`).
+3. Resend покажет три DNS-записи: `SPF`, `DKIM` (две `CNAME`-записи на
+   `resend._domainkey...`) и опционально `DMARC`. Вставьте их в DNS у регистратора.
+4. В Resend нажмите **Verify** — записи DNS должны зазелениться (10–60 минут).
+
+Без верифицированного домена Resend позволит слать только с тестового
+`onboarding@resend.dev`, и многие провайдеры (mail.ru, yandex) сразу
+кинут письма в спам.
+
+### Переменные окружения
+
+В `/opt/gogachess/.env` (или в `docker-compose.yml`):
+
+```env
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+EMAIL_FROM="GogaChess <noreply@gogachess.ru>"
+SITE_URL=https://gogachess.ru
+```
+
+`SITE_URL` обязателен — он подставляется в ссылки писем (`${SITE_URL}/verify?token=...`).
+
+### Применить миграцию БД
+
+В новой схеме добавлены поле `User.emailVerifiedAt` и таблица `AuthToken`.
+После `git pull` на сервере:
+
+```bash
+# Для Docker (если используется docker-compose):
+docker compose exec app npx prisma migrate deploy
+# Для PM2 (Node прямо на хосте):
+cd /opt/gogachess && npx prisma migrate deploy
+```
+
+Существующие пользователи получат `emailVerifiedAt = null` — им покажется
+плашка «Подтвердите email», но они смогут продолжать пользоваться сайтом
+(soft-режим). Чтобы создать новый класс/турнир — потребуется клик по ссылке
+из письма.
+
+### Капча (опционально, но рекомендуется на публичном проде)
+
+Чтобы боты не засеяли регистрацию — Cloudflare Turnstile:
+
+1. Зайдите в Cloudflare Dashboard → **Turnstile** → **Add Site**.
+2. Получите `Site Key` (публичный) и `Secret Key` (серверный).
+3. Добавьте в `.env`:
+   ```env
+   TURNSTILE_SECRET_KEY=0x4AAAAAAA...
+   NEXT_PUBLIC_TURNSTILE_SITE_KEY=0x4AAAAAAA...
+   ```
+4. Пересоберите контейнер (`docker compose up -d --build`) — виджет
+   автоматически появится на `/register`.
+
+Без этих переменных капча не показывается, сервер пропускает проверку.
+
+---
+
 ## 9. Полезные команды
 
 ```bash

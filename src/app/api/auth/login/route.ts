@@ -41,6 +41,12 @@ export async function POST(request: Request) {
   await setAuthCookie(token);
 
   return NextResponse.json({
-    user: { id: user.id, displayName: user.displayName, email: user.email, phone: user.phone },
+    user: {
+      id: user.id,
+      displayName: user.displayName,
+      email: user.email,
+      phone: user.phone,
+      emailVerifiedAt: user.emailVerifiedAt,
+    },
   });
 }

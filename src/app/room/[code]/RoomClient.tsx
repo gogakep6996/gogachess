@@ -33,6 +33,11 @@ interface Props {
    *  фиксирует цвет ученика, скрывает плашку «Ссылка» и панель «Режим». Сам
    *  движок и редактор позиции уже спрятаны для не-владельцев (isOwner=false). */
   studentTaskMode?: { humanColor: 'w' | 'b' };
+  /** Не рендерить внутреннюю панель аудио (для случаев, когда RoomClient
+   *  встроен в более крупную раскладку — например, в /class/me, где общая
+   *  аудио-комната класса уже живёт в правой колонке и НЕ должна отваливаться
+   *  при переключении вида). */
+  hideAudioPanel?: boolean;
 }
 
 export function RoomClient({
@@ -40,6 +45,7 @@ export function RoomClient({
   room,
   embedded = false,
   studentTaskMode,
+  hideAudioPanel = false,
 }: Props) {
   const isOwner = meId === room.ownerId;
 
@@ -98,9 +104,15 @@ export function RoomClient({
     undoMove,
     resetToInitial,
     setHistoryView,
+    toggleEngine,
   } = useRoomSocket(room.code);
 
-  const audio = useAudioRoom(socket);
+  // Когда родитель сам держит общую аудио-комнату (см. ClassMeClient/ClassPublicClient),
+  // внутренний useAudioRoom не запускается — иначе на каждом переключении вида
+  // (вход за доску ученика, открытие трансляции и т.п.) RoomClient вновь подключается
+  // к WebRTC mesh-у, и связь у учителя/ученика «слетает». Передаём `null` —
+  // хук возвращает no-op API. См. реализацию useAudioRoom.
+  const audio = useAudioRoom(hideAudioPanel ? null : socket);
 
   const fen = state?.fen ?? STARTING_FEN;
   const isEditing = state?.isEditing ?? false;
@@ -114,6 +126,13 @@ export function RoomClient({
    *  Это сам урок и сервисные комнаты раздела «Класс»: трансляция учителя и личные доски учеников. */
   const isLessonLike =
     roomKind === 'lesson' || roomKind === 'class-demo' || roomKind === 'student-board';
+  /** Ученик-наблюдатель за трансляцией учителя — в class-demo он не должен «отменять ход»,
+   *  чтобы не отбрасывать ход назад на доске у всех. */
+  const isStudentInBroadcast = !isOwner && roomKind === 'class-demo';
+  /** Может ли пользователь рисовать стрелки/выделять клетки. По требованию —
+   *  ученикам в любых классных комнатах рисование отключаем (видеть стрелки учителя
+   *  они продолжают, изменять не могут). */
+  const canAnnotate = isOwner || !isLessonLike;
   /** Серверный флаг: следующий ход — первый в текущем «свежем» отрезке.
    *  Если режим «оба» (sideLock===null) — этот ход можно сделать любой стороной. */
   const freshSegment = state?.freshSegment ?? history.length === 0;
@@ -251,24 +270,19 @@ export function RoomClient({
   const compEngine = useStockfish();
   const compFenRef = useRef<string | null>(null);
 
-  // Когда учитель (owner) присутствует в комнате — это значит, что он вмешался
-  // в личную доску ученика. В этом случае ученический Stockfish ДОЛЖЕН паузиться,
-  // чтобы движок не «отбивал» ходы, пока учитель показывает разбор. Когда учитель
-  // выйдет — авто-включаем движок обратно.
-  const ownerInRoom = participants.some((p) => p.userId === room.ownerId);
-  // Единая логика автоуправления движком для не-владельцев:
-  //   • режим задачи + учителя нет → движок включён, играет за противоположную сторону;
-  //   • режим задачи + учитель пришёл за доску → движок выключен (учитель ведёт разбор);
-  //   • НЕ режим задачи (например, ученик смотрит трансляцию учителя в class-demo
-  //     или просто наблюдает в чужой комнате) → движок выключен ВСЕГДА.
-  // Это критично: иначе при переключении учителем «Транслировать» ученик уезжает в
-  // demo-комнату, его vsComp от прежней задачи продолжает считать ходы на новой FEN
-  // и отправлять их в общую комнату — на доске учителя это выглядит как «движок
-  // играет», хотя учитель его выключил.
-  // Владелец (учитель) сам управляет движком кнопкой и эта логика его не трогает.
+  // Управление движком на доске ученика теперь ведётся через серверный флаг
+  // `state.engineEnabled` (см. socket-events). Поведение:
+  //   • режим задачи + флаг ON → движок включён, играет за противоположную сторону;
+  //   • режим задачи + флаг OFF → движок выключен (учитель выключил кнопкой);
+  //   • НЕ режим задачи (ученик смотрит трансляцию class-demo или просто наблюдает) →
+  //     движок выключен ВСЕГДА.
+  // Учитель свой движок не запускает на чужой доске; кнопка ниже теперь дёргает
+  // серверный флаг. Учительский локальный vsComp остаётся только для его собственной
+  // «Моей доски» (class-demo, isOwner=true).
+  const engineEnabledByServer = state?.engineEnabled ?? true;
   useEffect(() => {
     if (isOwner) return;
-    const shouldBeOn = !!studentTaskMode && !ownerInRoom;
+    const shouldBeOn = !!studentTaskMode && engineEnabledByServer;
     if (shouldBeOn) {
       if (!vsComp) {
         setVsComp({ humanColor: studentTaskMode.humanColor });
@@ -279,7 +293,7 @@ export function RoomClient({
       compFenRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOwner, ownerInRoom, studentTaskMode]);
+  }, [isOwner, engineEnabledByServer, studentTaskMode]);
   /** Отслеживаем переход freshSegment false → true, чтобы один раз сбросить humanColor. */
   const prevFreshRef = useRef<boolean | null>(null);
   /** Отслеживаем длину истории — определяем humanColor только когда был сделан НОВЫЙ ход
@@ -433,15 +447,21 @@ export function RoomClient({
   }, [fen, vsComp, mode.allowIllegal, mode.sideLock, compEngine]);
 
   // Размер доски.
-  // Мобильный: квадрат шириной min(96vw, 480px).
-  // Десктоп: flex-1 внутри ряда с боковой полоской (она 120px + gap),
-  //   max-w ограничена min(480px, calc(100dvh - запас)). Так доска автоматически
-  //   ужмётся, чтобы рядом уместилась aside-полоса, и не залезет в правую колонку.
-  //   Запас по высоте: action/nav-строки больше не в потоке (вынесены в aside),
-  //   остаются только Header + малые отступы. Для embedded — +1.5rem на полосу статуса.
+  // Мобильный: квадрат шириной min(96vw, 560px) — на больших телефонах/планшетах
+  //   будет крупнее, чем раньше (раньше упирался в 480px).
+  // Десктоп: ограничен сразу четырьмя факторами, чтобы у всех пользователей доска
+  //   была максимально крупной и при этом ничего не наезжало на соседние блоки:
+  //     • 94vw          — не вылазит за пределы окна;
+  //     • 100dvh - запас — помещается по высоте (запас = Header + nav/панель);
+  //     • 100vw - 30rem — учитывает две колонки по ~14rem + gap'ы/боковая полоска,
+  //                       чтобы доска не залезала в колонки слева/справа;
+  //     • 820px         — финальный hard-кап, чтобы на гигантских мониторах доска
+  //                       не превращалась в стену.
+  //   На большинстве ноутбуков (1440-1920px) теперь даёт ~640–820px вместо
+  //   прежних 480px — и одинаковую визуально доску у учителя и учеников. */
   const boardClassName = embedded
-    ? 'relative z-10 aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,480px,calc(100dvh-6.5rem))]'
-    : 'relative z-10 aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,480px,calc(100dvh-5rem))]';
+    ? 'relative z-10 mx-auto aspect-square w-[min(96vw,560px)] lg:w-full lg:max-w-[min(94vw,calc(100dvh-6.5rem),820px)]'
+    : 'relative z-10 mx-auto aspect-square w-[min(96vw,560px)] lg:w-full lg:max-w-[min(94vw,calc(100dvh-5rem),820px)]';
 
   return (
     <main
@@ -500,6 +520,27 @@ export function RoomClient({
 
           {/* ── Доска (квадрат) + абсолютно позиционированный aside ── */}
           <div className="relative">
+            {/* Левая боковая панель — только для ученика, решающего задачу учителя.
+                Содержит «Начать заново», чтобы ученик мог переиграть задачу
+                независимо от остальных. На мобильном — кнопка дублируется ниже. */}
+            {!isOwner && studentTaskMode && (
+              <aside className="absolute bottom-0 right-full top-0 mr-2 hidden w-[120px] flex-col justify-start gap-2 lg:flex">
+                <div className="rounded-lg border border-stone-200/70 bg-white/80 p-2 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/50">
+                  <button
+                    type="button"
+                    onClick={resetToInitial}
+                    disabled={isEditing}
+                    className="w-full rounded-md border border-brand-300 bg-brand-50 px-2 py-1.5 text-[11px] font-semibold text-brand-700 shadow-sm transition-colors hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-brand-700 dark:bg-brand-900/40 dark:text-brand-200 dark:hover:bg-brand-900/60"
+                    title="Сбросить задачу к стартовой позиции"
+                  >
+                    ⟲ Начать заново
+                  </button>
+                  <div className="mt-1 text-center text-[10px] text-stone-500 dark:text-stone-400">
+                    Сброс к стартовой позиции задачи.
+                  </div>
+                </div>
+              </aside>
+            )}
             <div className={boardClassName}>
               <ChessBoard
                 fen={displayFen}
@@ -518,7 +559,7 @@ export function RoomClient({
                 onEditFen={handleEditChange}
                 arrows={arrows}
                 marks={marks}
-                onAnnotationsChange={setAnnotations}
+                onAnnotationsChange={canAnnotate ? setAnnotations : undefined}
                 compact
                 fillContainer
                 silent={isViewingPast}
@@ -566,7 +607,7 @@ export function RoomClient({
                       ? `${viewIdx + 1}/${lastIdx + 1}`
                       : `ход ${lastIdx + 1}`}
                 </div>
-                {isLessonLike && (
+                {isLessonLike && !isStudentInBroadcast && (
                   <button
                     type="button"
                     onClick={undoMove}
@@ -593,32 +634,47 @@ export function RoomClient({
               historyLength={history.length}
               lastIdx={lastIdx}
             />
-            {isLessonLike && (
+            {isLessonLike && !isStudentInBroadcast && (
               <UndoButton onClick={undoMove} disabled={history.length === 0 || isEditing} />
+            )}
+            {!isOwner && studentTaskMode && (
+              <button
+                type="button"
+                onClick={resetToInitial}
+                disabled={isEditing}
+                className="rounded-md border border-brand-300 bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-700 shadow-sm transition-colors hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-brand-700 dark:bg-brand-900/40 dark:text-brand-200 dark:hover:bg-brand-900/60"
+                title="Сбросить задачу к стартовой позиции"
+              >
+                ⟲ Начать заново
+              </button>
             )}
           </div>
         </section>
 
         {/* ───────── АУДИО ─────────
             На мобильном — сразу под доской/навигацией.
-            На десктопе — верхняя ячейка правой колонки (col 3, row 1). */}
-        <section className="order-2 w-full lg:order-none lg:col-start-3 lg:row-start-1">
-          <AudioPanel
-            variant="compact"
-            joined={audio.joined}
-            micEnabled={audio.micEnabled}
-            forcedMute={audio.forcedMute}
-            participants={participants}
-            meId={meId}
-            isOwner={isOwner}
-            levels={audio.levels}
-            onJoin={audio.join}
-            onLeave={audio.leave}
-            onToggleMic={() => audio.setMic(!audio.micEnabled)}
-            onForceMute={audio.forceMute}
-            onForceMuteAll={audio.forceMuteAll}
-          />
-        </section>
+            На десктопе — верхняя ячейка правой колонки (col 3, row 1).
+            Если родитель сам держит общий канал класса (hideAudioPanel) —
+            эту панель не рендерим, чтобы не дублировать UI и WebRTC mesh. */}
+        {!hideAudioPanel && (
+          <section className="order-2 w-full lg:order-none lg:col-start-3 lg:row-start-1">
+            <AudioPanel
+              variant="compact"
+              joined={audio.joined}
+              micEnabled={audio.micEnabled}
+              forcedMute={audio.forcedMute}
+              participants={participants}
+              meId={meId}
+              isOwner={isOwner}
+              levels={audio.levels}
+              onJoin={audio.join}
+              onLeave={audio.leave}
+              onToggleMic={() => audio.setMic(!audio.micEnabled)}
+              onForceMute={audio.forceMute}
+              onForceMuteAll={audio.forceMuteAll}
+            />
+          </section>
+        )}
 
         {/* ───────── РЕЖИМ + НАЧАЛЬНАЯ ПОЗИЦИЯ + ДВИЖОК (учителю) ─────────
             Мобильный: ниже аудио. Десктоп: левая колонка (col 1), от верха грида до низа.
@@ -651,25 +707,45 @@ export function RoomClient({
               ⟲ Вернуть мою позицию
             </button>
           )}
-          {/* Движок Stockfish — только для учителя: ученикам подсказки не показываем. */}
-          {isOwner && (
+          {/* Движок Stockfish — только для учителя: ученикам подсказки не показываем.
+              В student-board (учитель пришёл за доску ученика) кнопка управляет
+              СЕРВЕРНЫМ флагом engineEnabled, чтобы движок ученика продолжал
+              играть и переживал входы/выходы учителя. В остальных случаях
+              (моя доска / трансляция и т.п.) — обычная локальная игра учителя
+              против движка. */}
+          {isOwner && roomKind === 'student-board' ? (
             <EnginePanel
               fen={fen}
               variant="room"
-              showPlayVsComputer={isOwner}
-              vsComputerActive={!!vsComp}
-              vsComputerThinking={!!vsComp && compEngine.thinking}
-              onTogglePlayVsComputer={togglePlayVsComputer}
+              showPlayVsComputer
+              vsComputerActive={engineEnabledByServer}
+              vsComputerThinking={false}
+              onTogglePlayVsComputer={() => toggleEngine(!engineEnabledByServer)}
             />
+          ) : (
+            isOwner && (
+              <EnginePanel
+                fen={fen}
+                variant="room"
+                showPlayVsComputer={isOwner}
+                vsComputerActive={!!vsComp}
+                vsComputerThinking={!!vsComp && compEngine.thinking}
+                onTogglePlayVsComputer={togglePlayVsComputer}
+              />
+            )
           )}
         </section>
 
         {/* ───────── ИСТОРИЯ + ЧАТ ─────────
-            Мобильный: в конце страницы. Десктоп: нижняя ячейка правой колонки (col 3, row 2). */}
+            Мобильный: в конце страницы. Десктоп: правая колонка (col 3).
+            Если внутренняя панель аудио скрыта (родитель сам держит аудио
+            класса), история+чат занимают ОБА ряда правой колонки —
+            row-span-2, чтобы не было пустой ячейки сверху. */}
         <section
           className={cn(
             'order-4 flex w-full flex-col gap-2 lg:order-none',
-            'lg:col-start-3 lg:row-start-2 lg:min-h-0 lg:overflow-hidden',
+            'lg:col-start-3 lg:min-h-0 lg:overflow-hidden',
+            hideAudioPanel ? 'lg:row-start-1 lg:row-end-3' : 'lg:row-start-2',
           )}
         >
           <HistoryPanel
