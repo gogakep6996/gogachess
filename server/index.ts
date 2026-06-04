@@ -297,6 +297,11 @@ interface ClassRuntime {
   /** Participant в lobby: userId -> { name, role }.
    *  Источник истины о «кто на уроке». */
   lobbyMembers: Map<string, { name: string; role: 'teacher' | 'student' }>;
+  /** Кому из учеников уже выдана ТЕКУЩАЯ задача (currentTaskId) в этом уроке.
+   *  Нужен, чтобы отличить опоздавшего (его здесь нет → выдать доску автоматически)
+   *  от переподключения уже получившего задачу ученика (он здесь есть → не сбрасывать
+   *  его прогресс). Очищается при раздаче новой задачи и остановке урока. */
+  distributedTo: Set<string>;
 }
 
 const classRuntimes = new Map<string, ClassRuntime>(); // classId -> runtime
@@ -316,6 +321,7 @@ async function loadOrCreateClassRuntime(classId: string): Promise<ClassRuntime |
     demoRoomCode: null,
     demoBroadcast: false,
     lobbyMembers: new Map(),
+    distributedTo: new Set(),
   };
   classRuntimes.set(classId, rt);
   return rt;
@@ -444,6 +450,66 @@ async function createClassServiceRoom(
     },
   });
   return { code };
+}
+
+/**
+ * Гарантирует, что у ученика есть личная доска (Room) + TaskSession под задачу.
+ *   • нет сессии/комнаты → создаём (первая раздача либо опоздавший ученик);
+ *   • сессия есть и resetExisting=true → сбрасываем доску к началу задачи
+ *     (повторная раздача учителем «Раздать»);
+ *   • сессия есть и resetExisting=false → НЕ трогаем (переподключение ученика —
+ *     сохраняем его прогресс).
+ */
+async function ensureStudentTaskBoard(
+  io: IOServer,
+  rt: ClassRuntime,
+  task: { id: string; fen: string },
+  studentId: string,
+  resetExisting: boolean,
+): Promise<void> {
+  const existing = await prisma.taskSession.findUnique({
+    where: { taskId_userId: { taskId: task.id, userId: studentId } },
+    include: { room: true },
+  });
+  if (!existing || !existing.room) {
+    const { code } = await createClassServiceRoom(rt, 'student-board', {
+      fen: task.fen,
+      studentId,
+    });
+    const room = await prisma.room.findUnique({ where: { code } });
+    if (!room) return;
+    if (existing) {
+      await prisma.taskSession.update({
+        where: { id: existing.id },
+        data: { roomId: room.id, fen: task.fen, status: 'active', movesPlayed: 0 },
+      });
+    } else {
+      await prisma.taskSession.create({
+        data: {
+          taskId: task.id,
+          userId: studentId,
+          roomId: room.id,
+          fen: task.fen,
+          status: 'active',
+        },
+      });
+    }
+  } else if (resetExisting) {
+    await prisma.room.update({ where: { id: existing.roomId! }, data: { fen: task.fen } });
+    await prisma.taskSession.update({
+      where: { id: existing.id },
+      data: { fen: task.fen, status: 'active', movesPlayed: 0 },
+    });
+    const roomRt = rooms.get(existing.room.code);
+    if (roomRt) {
+      roomRt.fen = task.fen;
+      roomRt.segmentStartFen = task.fen;
+      roomRt.history = [];
+      roomRt.freshSegment = true;
+      roomRt.historyViewIdx = null;
+      io.to(existing.room.code).emit(SocketEvents.RoomState, buildState(roomRt));
+    }
+  }
 }
 
 const app = next({ dev, hostname, port });
@@ -1527,10 +1593,25 @@ app.prepare().then(() => {
       subs.add(rt.classId);
       socket.data.classSubs = subs;
       // Регистрируем пользователя в lobby (используется для ростера и презенса).
+      const isStudent = userId !== rt.ownerId;
       rt.lobbyMembers.set(userId, {
         name: userName,
-        role: userId === rt.ownerId ? 'teacher' : 'student',
+        role: isStudent ? 'student' : 'teacher',
       });
+      // Опоздавший ученик: урок уже идёт и задача роздана, но этому ученику её
+      // ещё не выдавали (его нет в distributedTo) → выдаём доску автоматически,
+      // не трогая остальных. Переподключившийся (refresh) ученик уже есть в
+      // distributedTo → сюда не попадёт, его прогресс сохраняется.
+      if (isStudent && rt.lessonActive && rt.currentTaskId && !rt.distributedTo.has(userId)) {
+        const task = await prisma.task.findUnique({ where: { id: rt.currentTaskId } });
+        if (task && task.classId === rt.classId) {
+          // resetExisting=true: опоздавший начинает задачу с начала. Это безопасно —
+          // переподключившиеся ученики уже в distributedTo и сюда не попадают, так что
+          // сброшена может быть только устаревшая сессия с прошлого урока.
+          await ensureStudentTaskBoard(io, rt, task, userId, true);
+          rt.distributedTo.add(userId);
+        }
+      }
       const state = await buildClassState(rt);
       socket.emit(SocketEvents.ClassState, state);
       void broadcastClass(io, rt);
@@ -1580,6 +1661,7 @@ app.prepare().then(() => {
       rt.currentTaskId = null;
       rt.demoRoomCode = null;
       rt.demoBroadcast = false;
+      rt.distributedTo = new Set();
       // Lobby room оставляем — он легковесный и пригодится в следующий урок.
       void broadcastClass(io, rt);
     });
@@ -1595,57 +1677,18 @@ app.prepare().then(() => {
       const task = await prisma.task.findUnique({ where: { id: taskId } });
       if (!task || task.classId !== cls.id) return;
       rt.currentTaskId = taskId;
+      // Новая раздача — сбрасываем список «кому выдано»: сейчас заполним заново
+      // присутствующими учениками. Опоздавшие подхватят задачу при входе
+      // (см. ClassSubscribe), и тоже попадут в этот набор.
+      rt.distributedTo = new Set();
       // Для каждого присутствующего ученика гарантируем TaskSession + Room.
+      // resetExisting=true — повторная раздача всегда начинает задачу заново.
       const students = Array.from(rt.lobbyMembers.entries()).filter(
         ([uid]) => uid !== rt.ownerId,
       );
       for (const [studentId] of students) {
-        let session = await prisma.taskSession.findUnique({
-          where: { taskId_userId: { taskId, userId: studentId } },
-          include: { room: true },
-        });
-        if (!session || !session.room) {
-          const { code } = await createClassServiceRoom(rt, 'student-board', {
-            fen: task.fen,
-            studentId,
-          });
-          const room = await prisma.room.findUnique({ where: { code } });
-          if (!room) continue;
-          if (session) {
-            session = await prisma.taskSession.update({
-              where: { id: session.id },
-              data: { roomId: room.id, fen: task.fen, status: 'active', movesPlayed: 0 },
-              include: { room: true },
-            });
-          } else {
-            session = await prisma.taskSession.create({
-              data: {
-                taskId,
-                userId: studentId,
-                roomId: room.id,
-                fen: task.fen,
-                status: 'active',
-              },
-              include: { room: true },
-            });
-          }
-        } else {
-          // Уже есть — сбрасываем в начало задачи.
-          await prisma.room.update({ where: { id: session.roomId! }, data: { fen: task.fen } });
-          await prisma.taskSession.update({
-            where: { id: session.id },
-            data: { fen: task.fen, status: 'active', movesPlayed: 0 },
-          });
-          const roomRt = rooms.get(session.room.code);
-          if (roomRt) {
-            roomRt.fen = task.fen;
-            roomRt.segmentStartFen = task.fen;
-            roomRt.history = [];
-            roomRt.freshSegment = true;
-            roomRt.historyViewIdx = null;
-            io.to(session.room.code).emit(SocketEvents.RoomState, buildState(roomRt));
-          }
-        }
+        await ensureStudentTaskBoard(io, rt, task, studentId, true);
+        rt.distributedTo.add(studentId);
       }
       void broadcastClass(io, rt);
     });

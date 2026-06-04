@@ -44,7 +44,7 @@ export function EnginePanel({
   }, [ready, skill, setSkill]);
 
   useEffect(() => {
-    if (autoAnalyse && ready) analyse(fen, { depth: room ? 14 : 16 });
+    if (autoAnalyse && ready) analyse(fen, { depth: room ? 15 : 16 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fen, autoAnalyse, ready, room]);
 
@@ -96,7 +96,7 @@ export function EnginePanel({
         <div className="flex gap-1">
           <button
             type="button"
-            onClick={() => analyse(fen, { depth: 13, movetime: 380 })}
+            onClick={() => analyse(fen, { depth: 15, movetime: 800 })}
             disabled={!ready || thinking}
             className="flex-1 rounded-md bg-brand-500 px-2 py-1 text-[11px] font-medium leading-none text-white hover:bg-brand-600 disabled:opacity-50"
           >

@@ -145,6 +145,9 @@ export function RoomClient({
 
   const [copied, setCopied] = useState(false);
 
+  // Переворот доски (чёрные снизу). Локально для каждого пользователя.
+  const [flipped, setFlipped] = useState(false);
+
   // viewIdx ∈ [-1 .. history.length-1]; -1 = стартовая позиция, history.length-1 = текущая.
   const [viewIdx, setViewIdx] = useState<number>(-1);
   const followLatestRef = useRef<boolean>(true);
@@ -555,6 +558,7 @@ export function RoomClient({
             <div className={boardClassName}>
               <ChessBoard
                 fen={displayFen}
+                flipped={flipped}
                 canMove={canMove}
                 isEditing={isEditing}
                 canEdit={canEditNow}
@@ -595,40 +599,50 @@ export function RoomClient({
                 </div>
               </div>
 
-              {/* Bottom: nav + Отменить */}
-              <div className="rounded-lg border border-stone-200/70 bg-white/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
-                <div className="flex items-center justify-between gap-0.5">
-                  <NavButton onClick={goStart} disabled={viewIdx === -1} title="К началу" small>
-                    «
-                  </NavButton>
-                  <NavButton onClick={goPrev} disabled={viewIdx === -1} title="Назад" small>
-                    ‹
-                  </NavButton>
-                  <NavButton onClick={goNext} disabled={!isViewingPast} title="Вперёд" small>
-                    ›
-                  </NavButton>
-                  <NavButton onClick={goEnd} disabled={!isViewingPast} title="К текущей" small>
-                    »
-                  </NavButton>
+              {/* Bottom: перевернуть + nav + Отменить */}
+              <div className="flex flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setFlipped((f) => !f)}
+                  className="w-full rounded-lg border border-stone-200/70 bg-white/70 px-1.5 py-1.5 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 dark:border-stone-700/60 dark:bg-stone-900/40 dark:text-stone-100 dark:hover:bg-stone-800"
+                  title="Перевернуть доску"
+                >
+                  ⇅ Перевернуть
+                </button>
+                <div className="rounded-lg border border-stone-200/70 bg-white/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
+                  <div className="flex items-center justify-between gap-0.5">
+                    <NavButton onClick={goStart} disabled={viewIdx === -1} title="К началу" small>
+                      «
+                    </NavButton>
+                    <NavButton onClick={goPrev} disabled={viewIdx === -1} title="Назад" small>
+                      ‹
+                    </NavButton>
+                    <NavButton onClick={goNext} disabled={!isViewingPast} title="Вперёд" small>
+                      ›
+                    </NavButton>
+                    <NavButton onClick={goEnd} disabled={!isViewingPast} title="К текущей" small>
+                      »
+                    </NavButton>
+                  </div>
+                  <div className="mt-1 text-center text-[10px] font-semibold tabular-nums text-stone-500">
+                    {history.length === 0
+                      ? 'Старт'
+                      : isViewingPast
+                        ? `${viewIdx + 1}/${lastIdx + 1}`
+                        : `ход ${lastIdx + 1}`}
+                  </div>
+                  {isLessonLike && !isStudentInBroadcast && (
+                    <button
+                      type="button"
+                      onClick={undoMove}
+                      disabled={history.length === 0 || isEditing}
+                      className="mt-1.5 w-full rounded-md border border-stone-300/80 bg-white/90 px-1.5 py-1 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+                      title="Отменить последний ход"
+                    >
+                      ↩ Отменить
+                    </button>
+                  )}
                 </div>
-                <div className="mt-1 text-center text-[10px] font-semibold tabular-nums text-stone-500">
-                  {history.length === 0
-                    ? 'Старт'
-                    : isViewingPast
-                      ? `${viewIdx + 1}/${lastIdx + 1}`
-                      : `ход ${lastIdx + 1}`}
-                </div>
-                {isLessonLike && !isStudentInBroadcast && (
-                  <button
-                    type="button"
-                    onClick={undoMove}
-                    disabled={history.length === 0 || isEditing}
-                    className="mt-1.5 w-full rounded-md border border-stone-300/80 bg-white/90 px-1.5 py-1 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
-                    title="Отменить последний ход"
-                  >
-                    ↩ Отменить
-                  </button>
-                )}
               </div>
             </aside>
           </div>
@@ -645,6 +659,14 @@ export function RoomClient({
               historyLength={history.length}
               lastIdx={lastIdx}
             />
+            <button
+              type="button"
+              onClick={() => setFlipped((f) => !f)}
+              className="rounded-md border border-stone-300/80 bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+              title="Перевернуть доску"
+            >
+              ⇅ Перевернуть
+            </button>
             {isLessonLike && !isStudentInBroadcast && (
               <UndoButton onClick={undoMove} disabled={history.length === 0 || isEditing} />
             )}

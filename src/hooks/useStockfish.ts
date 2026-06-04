@@ -7,13 +7,21 @@ import { useEffect, useRef, useState, useCallback } from 'react';
  * Сначала пытаемся локальный файл (его кладёт postinstall-скрипт из npm-пакета stockfish),
  * затем — fallback на unpkg.
  *
- * Используется однопоточная сборка (без SharedArrayBuffer) — работает без COOP/COEP-заголовков.
+ * Stockfish 18, одноядерная сборка «lite-single» (~7 МБ): работает без COOP/COEP-заголовков
+ * (без SharedArrayBuffer) и имеет приемлемый для веба размер. Большая сборка
+ * (stockfish-18-single.wasm) сильнее, но весит ~112 МБ — для браузера непрактично.
  */
 const LOCAL_CANDIDATES = [
+  '/engine/stockfish-18-lite-single.js',
+  // legacy-имена на случай старого билда в public/engine
   '/engine/stockfish-nnue-16-single.js',
   '/engine/stockfish.js',
 ];
-const CDN_URL = 'https://unpkg.com/stockfish@16.0.0/src/stockfish.js';
+const CDN_URL = 'https://unpkg.com/stockfish@18.0.7/bin/stockfish-18-lite-single.js';
+
+// Размер хеш-таблицы движка (МБ). Больше — точнее на глубине, но больше памяти.
+// 32 МБ — безопасный компромисс для одноядерной lite-сборки и слабых устройств.
+const HASH_MB = 32;
 
 async function pickEngineUrl(): Promise<string> {
   for (const url of LOCAL_CANDIDATES) {
@@ -92,6 +100,8 @@ export function useStockfish(): UseStockfishResult {
         if (!line) return;
 
         if (line === 'uciok') {
+          // Опции выставляем, пока движок простаивает (до isready / поиска).
+          w.postMessage(`setoption name Hash value ${HASH_MB}`);
           w.postMessage('isready');
         } else if (line === 'readyok') {
           setReady(true);
