@@ -14,6 +14,9 @@ interface Props {
   vsComputerActive?: boolean;
   vsComputerThinking?: boolean;
   showPlayVsComputer?: boolean;
+  /** Сообщает наружу выбранный уровень (Skill 0..20), чтобы играющий движок
+   *  в комнате использовал именно его. */
+  onSkillChange?: (skill: number) => void;
 }
 
 const SKILL_LEVELS = [
@@ -32,6 +35,7 @@ export function EnginePanel({
   vsComputerActive = false,
   vsComputerThinking = false,
   showPlayVsComputer = false,
+  onSkillChange,
 }: Props) {
   const { ready, thinking, evaluation, setSkill, analyse, stop } = useStockfish();
   const [autoAnalyse, setAutoAnalyse] = useState(false);
@@ -42,6 +46,12 @@ export function EnginePanel({
   useEffect(() => {
     if (ready) setSkill(skill);
   }, [ready, skill, setSkill]);
+
+  // Сообщаем выбранный уровень наружу (первично и при каждой смене), чтобы
+  // играющий движок в комнате использовал именно его.
+  useEffect(() => {
+    onSkillChange?.(skill);
+  }, [skill, onSkillChange]);
 
   useEffect(() => {
     if (autoAnalyse && ready) analyse(fen, { depth: room ? 15 : 16 });

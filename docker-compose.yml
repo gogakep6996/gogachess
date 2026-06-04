@@ -33,6 +33,11 @@ services:
       # каждые 5 секунд) не упирался в дефолтный пул Prisma из 3 коннектов (ошибка P2024).
       DATABASE_URL: postgresql://${POSTGRES_USER:-gogachess}:${POSTGRES_PASSWORD:-gogachess}@db:5432/${POSTGRES_DB:-gogachess}?schema=public&connection_limit=20&pool_timeout=30
       SITE_URL: ${SITE_URL:-}
+      # Resend — отправка писем (подтверждение email, сброс пароля). Без этих
+      # переменных приложение переключается на «консольный» отправитель и письма
+      # НЕ уходят клиентам (только в лог). Значения задавайте в .env на сервере.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
       # ВНИМАНИЕ: NEXT_PUBLIC_ICE_SERVERS оставлен как fallback, если сервер не вернёт ICE-сервера
       # через socket-событие 'audio:get-ice-servers'. Основной путь — динамические HMAC-creds
       # для собственного coturn (см. ниже сервис `turn`).

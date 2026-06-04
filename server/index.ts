@@ -91,6 +91,9 @@ interface RoomRuntime {
    *  По умолчанию true. Учитель может выключить кнопкой; флаг сохраняется
    *  на сервере и переживает входы/выходы учителя за доску ученика. */
   engineEnabled: boolean;
+  /** Сила движка (Stockfish Skill Level 0..20). Для student-board берётся из
+   *  задачи (Task.engineLevel). 20 = полная сила. */
+  engineLevel: number;
 }
 
 const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
@@ -185,6 +188,7 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     blackId: room.blackId ?? null,
     result: room.result,
     engineEnabled: room.engineEnabled,
+    engineLevel: room.engineLevel,
   };
 }
 
@@ -234,6 +238,16 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
 
   const initialFen = dbRoom.fen || STARTING_FEN;
   const needsClock = dbRoom.kind === 'tournament' || dbRoom.kind === 'casual';
+  // Для доски ученика берём силу движка из задачи, которую раздал учитель
+  // (TaskSession уникально связана с этой комнатой через roomId). Иначе — полная сила.
+  let engineLevel = 20;
+  if (dbRoom.kind === 'student-board') {
+    const ts = await prisma.taskSession.findUnique({
+      where: { roomId: dbRoom.id },
+      include: { task: { select: { engineLevel: true } } },
+    });
+    if (ts?.task) engineLevel = ts.task.engineLevel;
+  }
   const runtime: RoomRuntime = {
     code: dbRoom.code,
     name: dbRoom.name,
@@ -261,6 +275,7 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     drawOffer: null,
     result: null,
     engineEnabled: true,
+    engineLevel,
   };
   rooms.set(code, runtime);
   return runtime;

@@ -224,6 +224,10 @@ export interface RoomStatePayload {
    *  По умолчанию true. Учитель может выключить кнопкой, когда зашёл за доску
    *  ученика — состояние сохраняется и после ухода учителя. */
   engineEnabled: boolean;
+  /** Сила движка-соперника (Stockfish Skill Level 0..20) для этой доски.
+   *  Для student-board берётся из задачи (Task.engineLevel), которую раздал учитель.
+   *  20 = полная сила без поддавков. Для прочих комнат — дефолт. */
+  engineLevel: number;
 }
 
 export interface ChatMessageDto {

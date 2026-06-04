@@ -272,6 +272,15 @@ export function RoomClient({
   );
   const compEngine = useStockfish();
   const compFenRef = useRef<string | null>(null);
+  // Уровень соперника при РУЧНОЙ игре в комнате (учитель выбирает в панели).
+  // Для доски ученика уровень берётся из задачи (state.engineLevel) — см. engineSkill.
+  const [vsCompSkill, setVsCompSkill] = useState(15);
+  // Итоговая сила играющего движка: в режиме задачи — из задачи (что задал учитель,
+  // 20 = максимум без поддавков); иначе — из селектора панели.
+  const engineSkill = studentTaskMode ? (state?.engineLevel ?? 20) : vsCompSkill;
+  // Время на ход растёт с уровнем: на максимуме движку нужно больше посчитать,
+  // чтобы не «шаффлить» в технике (например, мат слоном и конём).
+  const compMoveTimeMs = 600 + Math.round(engineSkill * 30);
 
   // Управление движком на доске ученика теперь ведётся через серверный флаг
   // `state.engineEnabled` (см. socket-events). Поведение:
@@ -304,8 +313,8 @@ export function RoomClient({
   const prevHistoryLenRef = useRef<number>(0);
 
   useEffect(() => {
-    if (vsComp && compEngine.ready) compEngine.setSkill(15);
-  }, [vsComp, compEngine.ready, compEngine]);
+    if (vsComp && compEngine.ready) compEngine.setSkill(engineSkill);
+  }, [vsComp, compEngine.ready, compEngine, engineSkill]);
 
   // На каждое «обновление позиции откатом» (reset / resetToInitial / undo / editEnd)
   // освобождаем выбор стороны: пусть первый следующий ход — теперь уже свежего сегмента —
@@ -365,9 +374,9 @@ export function RoomClient({
     if (sideToMove === vsComp.humanColor) return;
     if (compFenRef.current === fen) return;
     compFenRef.current = fen;
-    compEngine.analyse(fen, { movetime: 700 });
+    compEngine.analyse(fen, { movetime: compMoveTimeMs });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fen, vsComp, isEditing, isViewingPast, compEngine.ready, compEngine.thinking]);
+  }, [fen, vsComp, isEditing, isViewingPast, compEngine.ready, compEngine.thinking, compMoveTimeMs]);
 
   useEffect(() => {
     if (!vsComp) return;
@@ -769,6 +778,7 @@ export function RoomClient({
                 vsComputerActive={!!vsComp}
                 vsComputerThinking={!!vsComp && compEngine.thinking}
                 onTogglePlayVsComputer={togglePlayVsComputer}
+                onSkillChange={setVsCompSkill}
               />
             )
           )}
