@@ -70,7 +70,7 @@ export interface UseAudioRoomResult {
   leave: () => void;
   setMic: (on: boolean) => void;
   forceMute: (targetSocketId: string, mute: boolean) => void;
-  forceMuteAll: () => void;
+  forceMuteAll: (mute: boolean) => void;
 }
 
 function micErrorMessage(err: unknown): string {
@@ -311,7 +311,11 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     };
     const onForceMute = (mute: boolean) => {
       setForcedMute(mute);
+      // Замьютили — глушим дорожку. Размьютили — СРАЗУ включаем микрофон обратно,
+      // чтобы ученик продолжал говорить, ничего не нажимая (требование учителя).
+      // toggleMicTrack безопасен без стрима (просто выйдет).
       if (mute) toggleMicTrack(false);
+      else toggleMicTrack(true);
     };
 
     socket.on('audio:peers', onPeers);
@@ -486,7 +490,10 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     },
     [socket],
   );
-  const forceMuteAll = useCallback(() => socket?.emit(SocketEvents.AudioForceMuteAll), [socket]);
+  const forceMuteAll = useCallback(
+    (mute: boolean) => socket?.emit(SocketEvents.AudioForceMuteAll, { mute }),
+    [socket],
+  );
 
   useEffect(() => () => leave(), [leave]);
 

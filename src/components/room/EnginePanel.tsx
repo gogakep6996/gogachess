@@ -17,6 +17,25 @@ interface Props {
   /** Сообщает наружу выбранный уровень (Skill 0..20), чтобы играющий движок
    *  в комнате использовал именно его. */
   onSkillChange?: (skill: number) => void;
+  /** Если задан — уровень не выбирается вручную, а зафиксирован задачей
+   *  (например, на доске ученика). Показываем его только для информации. */
+  lockedSkill?: number;
+}
+
+const SKILL_LABEL: Record<number, string> = {
+  0: 'Новичок',
+  5: 'Лёгкий',
+  10: 'Средний',
+  15: 'Продвинутый',
+  20: 'Максимум',
+};
+function skillLabel(v: number): string {
+  if (SKILL_LABEL[v]) return SKILL_LABEL[v];
+  if (v >= 18) return 'Максимум';
+  if (v >= 13) return 'Продвинутый';
+  if (v >= 8) return 'Средний';
+  if (v >= 3) return 'Лёгкий';
+  return 'Новичок';
 }
 
 const SKILL_LEVELS = [
@@ -36,10 +55,14 @@ export function EnginePanel({
   vsComputerThinking = false,
   showPlayVsComputer = false,
   onSkillChange,
+  lockedSkill,
 }: Props) {
   const { ready, thinking, evaluation, setSkill, analyse, stop } = useStockfish();
   const [autoAnalyse, setAutoAnalyse] = useState(false);
-  const [skill, setSkillState] = useState(15);
+  const [skillState, setSkillState] = useState(15);
+  // Если уровень зафиксирован задачей — используем его, иначе выбор пользователя.
+  const skill = lockedSkill ?? skillState;
+  const skillLocked = lockedSkill !== undefined;
 
   const room = variant === 'room';
 
@@ -90,17 +113,26 @@ export function EnginePanel({
 
         <label className="block">
           <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-stone-500">Уровень</span>
-          <select
-            className="mb-2 w-full rounded-md border border-stone-300/70 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-600 dark:bg-stone-950 dark:text-stone-100"
-            value={skill}
-            onChange={(e) => setSkillState(Number(e.target.value))}
-          >
-            {SKILL_LEVELS.map((l) => (
-              <option key={l.value} value={l.value}>
-                {l.label} (+{l.value})
-              </option>
-            ))}
-          </select>
+          {skillLocked ? (
+            <div
+              className="mb-2 w-full rounded-md border border-brand-300/70 bg-brand-50 px-1.5 py-1 text-[11px] font-semibold text-brand-700 dark:border-brand-700/60 dark:bg-brand-900/30 dark:text-brand-200"
+              title="Сложность задана в задаче и не меняется"
+            >
+              {skillLabel(skill)} (+{skill}) · из задачи
+            </div>
+          ) : (
+            <select
+              className="mb-2 w-full rounded-md border border-stone-300/70 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-600 dark:bg-stone-950 dark:text-stone-100"
+              value={skill}
+              onChange={(e) => setSkillState(Number(e.target.value))}
+            >
+              {SKILL_LEVELS.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label} (+{l.value})
+                </option>
+              ))}
+            </select>
+          )}
         </label>
 
         <div className="flex gap-1">

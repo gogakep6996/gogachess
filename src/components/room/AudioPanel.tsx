@@ -17,7 +17,12 @@ interface Props {
   onLeave: () => void;
   onToggleMic: () => void;
   onForceMute: (socketId: string, mute: boolean) => void;
-  onForceMuteAll: () => void;
+  onForceMuteAll: (mute: boolean) => void;
+  /** Клик по никнейму участника (учителю): размьютить только его и/или дать ход.
+   *  Если не задан — никнеймы некликабельны. */
+  onSelectParticipant?: (p: Participant) => void;
+  /** userId участника, которого нужно подсветить (разрешён говорить/ходить). */
+  spotlightUserId?: string | null;
 }
 
 export function AudioPanel({
@@ -34,8 +39,15 @@ export function AudioPanel({
   onToggleMic,
   onForceMute,
   onForceMuteAll,
+  onSelectParticipant,
+  spotlightUserId = null,
 }: Props) {
   const c = variant === 'compact';
+
+  // Другие участники (не я) и сводка по их принудительному mute.
+  const others = participants.filter((p) => p.userId !== meId);
+  const someMuted = others.some((p) => p.forcedMute);
+  const allMuted = others.length > 0 && others.every((p) => p.forcedMute);
 
   return (
     <div
@@ -49,11 +61,11 @@ export function AudioPanel({
         {isOwner && joined && (
           <button
             type="button"
-            onClick={onForceMuteAll}
+            onClick={() => onForceMuteAll(!allMuted)}
             className={cn('btn-ghost', c ? '!px-1.5 !py-0 text-[10px]' : 'text-xs')}
-            title="Замьютить всех"
+            title={allMuted ? 'Вернуть звук всем' : 'Замьютить всех'}
           >
-            🔇 всем
+            {allMuted ? '🔊 вернуть' : '🔇 всем'}
           </button>
         )}
       </div>
@@ -91,12 +103,38 @@ export function AudioPanel({
           const isMe = p.userId === meId;
           const level = levels[p.socketId] ?? 0;
           const speaking = p.micEnabled && level > 0.06;
+          // Подсветка «избранного» ученика: либо явно выбран (spotlightUserId),
+          // либо после общего mute размьючен индивидуально (говорит один).
+          const spotlighted =
+            !isMe &&
+            (p.userId === spotlightUserId || (someMuted && !p.forcedMute));
+          // Кликать можно по всей строке (а не точно по нику): учителю это
+          // даёт/забирает слово и право хода у ученика. Повторный клик — toggle.
+          const rowClickable = isOwner && !isMe && !!onSelectParticipant;
           return (
             <li
               key={p.socketId}
+              onClick={rowClickable ? () => onSelectParticipant?.(p) : undefined}
+              role={rowClickable ? 'button' : undefined}
+              tabIndex={rowClickable ? 0 : undefined}
+              onKeyDown={
+                rowClickable
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onSelectParticipant?.(p);
+                      }
+                    }
+                  : undefined
+              }
+              title={rowClickable ? 'Нажмите на строку, чтобы дать/забрать слово и ход' : undefined}
               className={cn(
                 'flex items-center justify-between rounded-lg bg-stone-50 dark:bg-stone-800/60',
                 c ? 'gap-1 px-1.5 py-1' : 'rounded-xl px-3 py-2',
+                rowClickable && 'cursor-pointer select-none',
+                rowClickable && !spotlighted && 'hover:bg-brand-50 dark:hover:bg-stone-700/60',
+                spotlighted &&
+                  'bg-amber-100 ring-2 ring-amber-400 dark:bg-amber-900/30 dark:ring-amber-500/70',
               )}
             >
               <div className={cn('flex min-w-0 items-center gap-2', !c && 'gap-3')}>
@@ -111,7 +149,13 @@ export function AudioPanel({
                   {p.name.slice(0, 1).toUpperCase()}
                 </div>
                 <div className="min-w-0">
-                  <div className={cn('truncate font-medium', c ? 'text-[11px]' : 'text-sm')}>
+                  <div
+                    className={cn(
+                      'max-w-full truncate font-medium',
+                      c ? 'text-[11px]' : 'text-sm',
+                      spotlighted && 'text-amber-800 dark:text-amber-200',
+                    )}
+                  >
                     {p.name}
                     {isMe && <span className="ml-0.5 text-[10px] opacity-60">(вы)</span>}
                   </div>
@@ -119,6 +163,7 @@ export function AudioPanel({
                     <div className="text-xs text-stone-500">
                       {p.role === 'teacher' ? 'учитель' : 'ученик'}
                       {p.forcedMute && ' · 🔇 принудительно'}
+                      {spotlighted && ' · ✋ говорит/ходит'}
                     </div>
                   )}
                 </div>
@@ -128,8 +173,13 @@ export function AudioPanel({
                 {isOwner && !isMe && (
                   <button
                     type="button"
-                    onClick={() => onForceMute(p.socketId, !p.forcedMute)}
+                    onClick={(e) => {
+                      // Не даём клику по кнопке всплыть до строки (иначе сработает toggle слова/хода).
+                      e.stopPropagation();
+                      onForceMute(p.socketId, !p.forcedMute);
+                    }}
                     className={cn('btn-ghost whitespace-nowrap', c ? '!px-1 !py-0 text-[10px]' : 'text-[11px]')}
+                    title={p.forcedMute ? 'Размьютить' : 'Замьютить'}
                   >
                     {p.forcedMute ? '≡' : '×'}
                   </button>

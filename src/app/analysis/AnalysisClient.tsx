@@ -60,7 +60,7 @@ export function AnalysisClient() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine.evaluation.bestmove]);
+  }, [engine.bestmoveSeq]);
 
   function applyMove(m: { from: string; to: string; promotion?: string }) {
     try {

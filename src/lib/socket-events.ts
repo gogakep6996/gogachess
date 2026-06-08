@@ -30,11 +30,19 @@ export const SocketEvents = {
   /** Учитель листает историю ходов — броадкастим всем, чтобы у учеников
    *  показывалась та же позиция, что и у учителя. */
   HistoryView: 'chess:history-view',
+  /** Учитель: запретить/разрешить ученикам делать ходы на этой доске
+   *  (например, на трансляции). payload { locked: boolean }. */
+  MovesLock: 'chess:moves-lock',
+  /** Учитель: разрешить ходить только одному ученику (по userId) при
+   *  включённой блокировке. payload { userId: string | null }. */
+  MoveAllow: 'chess:move-allow',
 
   // Чат
   ChatSend: 'chat:send',
   ChatNew: 'chat:new',
   ChatHistory: 'chat:history',
+  /** Учитель: очистить чат комнаты (удаляет историю сообщений). */
+  ChatClear: 'chat:clear',
 
   // Аудио / WebRTC сигналинг
   AudioReady: 'audio:ready',          // клиент готов принимать пиров (нажал «Подключиться»)
@@ -44,6 +52,7 @@ export const SocketEvents = {
   AudioIce: 'audio:ice',
   AudioMicState: 'audio:mic-state',   // клиент сообщает о своём mute
   AudioForceMute: 'audio:force-mute', // учитель требует замьютить
+  /** Учитель мьютит/размьючивает всех учеников разом. payload { mute: boolean }. */
   AudioForceMuteAll: 'audio:force-mute-all',
 
   // Подбор соперника (быстрая игра)
@@ -228,6 +237,12 @@ export interface RoomStatePayload {
    *  Для student-board берётся из задачи (Task.engineLevel), которую раздал учитель.
    *  20 = полная сила без поддавков. Для прочих комнат — дефолт. */
   engineLevel: number;
+  /** Учитель запретил ученикам делать ходы на этой доске (например, на трансляции).
+   *  При true ходить может только владелец комнаты и явно разрешённый ученик. */
+  studentMovesLocked: boolean;
+  /** Единственный ученик (userId), которому разрешено ходить при включённой
+   *  блокировке studentMovesLocked. null = никому, кроме учителя. */
+  allowedMoverUserId: string | null;
 }
 
 export interface ChatMessageDto {

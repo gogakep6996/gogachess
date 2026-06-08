@@ -36,6 +36,12 @@ interface UseRoomSocketResult {
   /** Учитель переключает движок-соперник на доске ученика (только для student-board).
    *  Если next не передан — сервер инвертирует текущее значение. */
   toggleEngine: (next?: boolean) => void;
+  /** Учитель запрещает/разрешает ученикам делать ходы на этой доске. */
+  setMovesLock: (locked: boolean) => void;
+  /** Учитель разрешает ходить только одному ученику (по userId) или никому (null). */
+  setMoveAllow: (userId: string | null) => void;
+  /** Учитель очищает чат комнаты. */
+  clearChat: () => void;
   /** Сдаться в турнирной / казуальной партии. */
   resign: () => void;
   /** Предложить ничью. */
@@ -130,6 +136,15 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
   const toggleEngine = useCallback((next?: boolean) => {
     socketRef.current?.emit(SocketEvents.EngineToggle, next);
   }, []);
+  const setMovesLock = useCallback((locked: boolean) => {
+    socketRef.current?.emit(SocketEvents.MovesLock, { locked });
+  }, []);
+  const setMoveAllow = useCallback((userId: string | null) => {
+    socketRef.current?.emit(SocketEvents.MoveAllow, { userId });
+  }, []);
+  const clearChat = useCallback(() => {
+    socketRef.current?.emit(SocketEvents.ChatClear);
+  }, []);
   const resign = useCallback(() => socketRef.current?.emit(SocketEvents.Resign), []);
   const offerDraw = useCallback(() => socketRef.current?.emit(SocketEvents.DrawOffer), []);
   const acceptDraw = useCallback(() => socketRef.current?.emit(SocketEvents.DrawAccept), []);
@@ -161,6 +176,9 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     undoMove,
     setHistoryView,
     toggleEngine,
+    setMovesLock,
+    setMoveAllow,
+    clearChat,
     resign,
     offerDraw,
     acceptDraw,

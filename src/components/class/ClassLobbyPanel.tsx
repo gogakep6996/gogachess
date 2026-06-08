@@ -39,7 +39,7 @@ export function ClassLobbyPanel({
       </div>
     );
   }
-  const { audio, participants, messages, sendChat } = ctx;
+  const { audio, participants, messages, sendChat, clearChat } = ctx;
 
   return (
     <div
@@ -69,6 +69,9 @@ export function ClassLobbyPanel({
           onToggleMic={() => audio.setMic(!audio.micEnabled)}
           onForceMute={(sid, mute) => audio.forceMute(sid, mute)}
           onForceMuteAll={audio.forceMuteAll}
+          onSelectParticipant={
+            isTeacher ? (p) => audio.forceMute(p.socketId, !p.forcedMute) : undefined
+          }
         />
       </div>
       {middleSlot}
@@ -81,6 +84,7 @@ export function ClassLobbyPanel({
           messages={messages}
           meId={meId}
           onSend={(text) => sendChat(text)}
+          onClear={isTeacher ? clearChat : undefined}
         />
       </div>
     </div>

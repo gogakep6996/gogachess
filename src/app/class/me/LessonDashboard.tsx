@@ -202,9 +202,15 @@ function LiveGrid({
       </div>
     );
   }
+  // Стабильный порядок досок: сервер отдаёт сессии по updatedAt (меняется на
+  // каждый ход → доски «скачут»). Сортируем по имени ученика, затем по
+  // sessionId — порядок фиксирован и не зависит от того, кто только что сходил.
+  const ordered = [...sessions].sort(
+    (a, b) => a.userName.localeCompare(b.userName, 'ru') || a.sessionId.localeCompare(b.sessionId),
+  );
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-      {sessions.map((s) => (
+      {ordered.map((s) => (
         <button
           key={s.sessionId}
           onClick={() => onIntrude(s)}

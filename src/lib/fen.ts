@@ -112,6 +112,55 @@ export function setSideToMove(fen: string, side: 'w' | 'b'): string {
   return parts.join(' ');
 }
 
+/**
+ * Пересчитывает поле прав на рокировку (3-е поле FEN) исходя из расстановки.
+ * Право даётся стороне, если её король стоит на стартовой клетке (e1/e8) и
+ * соответствующая ладья — на угловой (h-сторона = K/k, a-сторона = Q/q).
+ *
+ * Зачем: после свободного редактора 3-е поле FEN остаётся прежним (часто `-`
+ * у позиции, где король уже «ходил»), из-за чего chess.js отказывает в
+ * рокировке, хотя король и ладья визуально стоят на своих местах. После
+ * редактирования мы выводим права заново из позиции — это поведение
+ * стандартных редакторов доски (Lichess и т.п.).
+ */
+export function deriveCastlingRights(fen: string): string {
+  const parts = fen.split(' ');
+  const placement = parts[0] ?? '';
+  const rows = placement.split('/');
+  if (rows.length !== 8) return fen; // нестандартная расстановка — не трогаем
+
+  const expand = (row: string): (string | null)[] => {
+    const out: (string | null)[] = [];
+    for (const ch of row) {
+      if (/[1-8]/.test(ch)) {
+        for (let i = 0; i < Number(ch); i++) out.push(null);
+      } else {
+        out.push(ch);
+      }
+    }
+    while (out.length < 8) out.push(null);
+    return out;
+  };
+
+  const rank8 = expand(rows[0]); // верхняя строка плейсмента = 8-й ряд
+  const rank1 = expand(rows[7]); // нижняя строка = 1-й ряд
+  // Индексы файлов: a=0 … e=4 … h=7
+  let rights = '';
+  const whiteKingHome = rank1[4] === 'K';
+  if (whiteKingHome && rank1[7] === 'R') rights += 'K';
+  if (whiteKingHome && rank1[0] === 'R') rights += 'Q';
+  const blackKingHome = rank8[4] === 'k';
+  if (blackKingHome && rank8[7] === 'r') rights += 'k';
+  if (blackKingHome && rank8[0] === 'r') rights += 'q';
+
+  // Гарантируем наличие всех полей FEN (side, castling, ep, halfmove, fullmove).
+  const side = parts[1] === 'b' ? 'b' : 'w';
+  const ep = parts[3] ?? '-';
+  const half = parts[4] ?? '0';
+  const full = parts[5] ?? '1';
+  return `${placement} ${side} ${rights || '-'} ${ep} ${half} ${full}`;
+}
+
 /** «Силовой» ход без валидации правил: переносит фигуру с from на to,
  *  опционально превращая пешку. Используется в свободном режиме комнаты. */
 export function forceMove(

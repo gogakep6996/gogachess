@@ -11,6 +11,23 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-gogachess}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gogachess}
       POSTGRES_DB: ${POSTGRES_DB:-gogachess}
+    # Тюнинг под маленький VPS (2 ГБ RAM). Дефолты postgres рассчитаны на
+    # большие сервера; здесь срезаем shared_buffers и max_connections (Prisma
+    # держит максимум 20 коннектов), чтобы БД не отъедала лишнюю память.
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=96MB"
+      - "-c"
+      - "effective_cache_size=256MB"
+      - "-c"
+      - "max_connections=30"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "maintenance_work_mem=32MB"
+    # Не даём БД съесть больше ~320 Мб RAM — защита от OOM соседних сервисов.
+    mem_limit: 320m
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -28,6 +45,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      # Ограничиваем heap V8, чтобы Node не разрастался бесконтрольно на 2 ГБ
+      # сервере и не провоцировал OOM-killer. 768 Мб с запасом хватает для
+      # текущей нагрузки; при росте онлайна поднять вместе с тарифом сервера.
+      NODE_OPTIONS: --max-old-space-size=768
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       # connection_limit=20: чтобы тикер турниров (несколько параллельных запросов
       # каждые 5 секунд) не упирался в дефолтный пул Prisma из 3 коннектов (ошибка P2024).
@@ -38,6 +59,9 @@ services:
       # НЕ уходят клиентам (только в лог). Значения задавайте в .env на сервере.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      # Email'ы администраторов (через запятую) — кому доступна страница /admin/users
+      # со списком зарегистрированных аккаунтов. Пусто = страница недоступна никому (404).
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # ВНИМАНИЕ: NEXT_PUBLIC_ICE_SERVERS оставлен как fallback, если сервер не вернёт ICE-сервера
       # через socket-событие 'audio:get-ice-servers'. Основной путь — динамические HMAC-creds
       # для собственного coturn (см. ниже сервис `turn`).
@@ -52,6 +76,9 @@ services:
     # Так не конфликтует с шаблонным Node.js на VPS, который часто занимает :3000.
     ports:
       - "127.0.0.1:3001:3000"
+    # Мягкий потолок памяти приложения. Чуть выше NODE_OPTIONS heap (768 Мб),
+    # чтобы оставить место под не-heap память Node (буферы, WebSocket'ы).
+    mem_limit: 1100m
 
   # ----------------------------------------------------------------------------
   # Собственный TURN/STUN-сервер (coturn).
@@ -96,7 +123,8 @@ services:
       - "--max-port=65535"
       - "--no-cli"
       - "--log-file=stdout"
-      - "--verbose"
+      # --verbose убран: в проде он зря грузит CPU и плодит огромные логи.
+      # Включать только при отладке проблем с аудио.
 
 volumes:
   db-data:

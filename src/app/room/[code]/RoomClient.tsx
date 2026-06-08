@@ -85,7 +85,7 @@ export function RoomClient({
     socket,
     state,
     participants,
-    messages,
+    messages: roomMessages,
     connected,
     error,
     sendMove,
@@ -93,13 +93,16 @@ export function RoomClient({
     updateEdit,
     endEdit,
     resetPosition,
-    sendChat,
+    sendChat: roomSendChat,
     setMode,
     setAnnotations,
     undoMove,
     resetToInitial,
     setHistoryView,
     toggleEngine,
+    setMovesLock,
+    setMoveAllow,
+    clearChat: roomClearChat,
   } = useRoomSocket(room.code);
 
   // Когда RoomClient открыт внутри класса (под `<ClassAudioProvider>`),
@@ -113,6 +116,14 @@ export function RoomClient({
   const ownAudio = useAudioRoom(classAudio ? null : socket);
   const audio = classAudio?.audio ?? ownAudio;
   const audioParticipants = classAudio?.participants ?? participants;
+
+  // Чат: внутри класса используем ОБЩИЙ лобби-чат (один на весь класс), чтобы
+  // ученики за своими досками, на трансляции и учитель всегда писали в один
+  // канал и видели сообщения друг друга. Вне класса (`/room/[code]`) — свой
+  // комнатный чат.
+  const messages = classAudio?.messages ?? roomMessages;
+  const sendChat = classAudio?.sendChat ?? roomSendChat;
+  const clearChat = classAudio?.clearChat ?? roomClearChat;
 
   const fen = state?.fen ?? STARTING_FEN;
   const isEditing = state?.isEditing ?? false;
@@ -133,6 +144,12 @@ export function RoomClient({
    *  ученикам в любых классных комнатах рисование отключаем (видеть стрелки учителя
    *  они продолжают, изменять не могут). */
   const canAnnotate = isOwner || !isLessonLike;
+  /** Учитель запретил ученикам ходить на этой доске (например, на трансляции). */
+  const studentMovesLocked = state?.studentMovesLocked ?? false;
+  /** Кому единственному разрешено ходить при блокировке (userId) или null. */
+  const allowedMoverUserId = state?.allowedMoverUserId ?? null;
+  /** Заблокированы ли ходы лично для меня (я ученик, не входящий в исключение). */
+  const movesBlockedForMe = !isOwner && studentMovesLocked && allowedMoverUserId !== meId;
   /** Серверный флаг: следующий ход — первый в текущем «свежем» отрезке.
    *  Если режим «оба» (sideLock===null) — этот ход можно сделать любой стороной. */
   const freshSegment = state?.freshSegment ?? history.length === 0;
@@ -250,7 +267,7 @@ export function RoomClient({
     }
   }
 
-  const canMove = !isEditing && connected && !isViewingPast;
+  const canMove = !isEditing && connected && !isViewingPast && !movesBlockedForMe;
   const displayFen = isEditing
     ? canEditNow && draftFen
       ? draftFen
@@ -275,9 +292,11 @@ export function RoomClient({
   // Уровень соперника при РУЧНОЙ игре в комнате (учитель выбирает в панели).
   // Для доски ученика уровень берётся из задачи (state.engineLevel) — см. engineSkill.
   const [vsCompSkill, setVsCompSkill] = useState(15);
-  // Итоговая сила играющего движка: в режиме задачи — из задачи (что задал учитель,
-  // 20 = максимум без поддавков); иначе — из селектора панели.
-  const engineSkill = studentTaskMode ? (state?.engineLevel ?? 20) : vsCompSkill;
+  // Итоговая сила играющего движка: на доске ученика (student-board) — ВСЕГДА из
+  // задачи (state.engineLevel, 20 = максимум без поддавков), независимо от того,
+  // ученик это или зашедший учитель. Иначе (своя доска учителя) — из селектора панели.
+  const engineSkill =
+    studentTaskMode || roomKind === 'student-board' ? (state?.engineLevel ?? 20) : vsCompSkill;
   // Время на ход растёт с уровнем: на максимуме движку нужно больше посчитать,
   // чтобы не «шаффлить» в технике (например, мат слоном и конём).
   const compMoveTimeMs = 600 + Math.round(engineSkill * 30);
@@ -390,7 +409,7 @@ export function RoomClient({
     if (sideToMove === vsComp.humanColor) return;
     sendMove({ from: m.slice(0, 2), to: m.slice(2, 4), promotion: m[4] ?? 'q' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compEngine.evaluation.bestmove]);
+  }, [compEngine.bestmoveSeq]);
 
   // Обёртка над sendMove: в vsComp с humanColor=null первый ход человека
   // (учителя) синхронно определяет его сторону, чтобы движок мог отреагировать
@@ -720,6 +739,23 @@ export function RoomClient({
             onToggleMic={() => audio.setMic(!audio.micEnabled)}
             onForceMute={audio.forceMute}
             onForceMuteAll={audio.forceMuteAll}
+            spotlightUserId={allowedMoverUserId}
+            onSelectParticipant={
+              isOwner
+                ? (p) => {
+                    // Клик по строке ученика — toggle: даём слово+ход, повторный
+                    // клик по тому же ученику забирает обе возможности обратно.
+                    const isActive = allowedMoverUserId === p.userId;
+                    if (isActive) {
+                      audio.forceMute(p.socketId, true); // снова замьютить
+                      setMoveAllow(null); // забрать право хода
+                    } else {
+                      audio.forceMute(p.socketId, false); // размьютить только его
+                      setMoveAllow(p.userId); // разрешить ход только ему
+                    }
+                  }
+                : undefined
+            }
           />
         </section>
 
@@ -730,7 +766,10 @@ export function RoomClient({
         <section
           className={cn(
             'order-3 flex w-full flex-col gap-2 lg:order-none',
-            'lg:col-start-1 lg:row-start-1 lg:row-end-3 lg:min-h-0 lg:overflow-y-auto',
+            'lg:col-start-1 lg:row-start-1 lg:row-end-3 lg:min-h-0',
+            // Ученику тут живёт чат (слева от доски) — он должен растягиваться и
+            // скроллиться внутри себя. Учителю — обычная колонка с прокруткой.
+            isOwner ? 'lg:overflow-y-auto' : 'lg:overflow-hidden',
           )}
         >
           {/* Плашка «Ссылка» — только владельцу комнаты (учителю/автору комнаты).
@@ -768,6 +807,7 @@ export function RoomClient({
               vsComputerActive={engineEnabledByServer}
               vsComputerThinking={false}
               onTogglePlayVsComputer={() => toggleEngine(!engineEnabledByServer)}
+              lockedSkill={state?.engineLevel ?? 20}
             />
           ) : (
             isOwner && (
@@ -781,6 +821,48 @@ export function RoomClient({
                 onSkillChange={setVsCompSkill}
               />
             )
+          )}
+
+          {/* Блокировка ходов учеников (трансляция/урок): учитель запрещает всем
+              ходить; затем клик по никнейму в аудио-панели разрешает одному. */}
+          {isOwner && (roomKind === 'class-demo' || roomKind === 'lesson') && (
+            <div className="w-full rounded-xl border border-stone-200/80 bg-white/90 p-2.5 shadow-sm dark:border-stone-700/70 dark:bg-stone-900/65">
+              <button
+                type="button"
+                onClick={() => setMovesLock(!studentMovesLocked)}
+                className={cn(
+                  'flex w-full items-center justify-between gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-semibold transition-colors',
+                  studentMovesLocked
+                    ? 'border-amber-500/70 bg-amber-500/15 text-amber-800 hover:bg-amber-500/25 dark:text-amber-200'
+                    : 'border-stone-300/70 bg-stone-100 text-stone-700 hover:bg-stone-200 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700',
+                )}
+                title="Запретить ученикам делать ходы на этой доске"
+              >
+                <span>{studentMovesLocked ? '🔒 Ходы ученикам запрещены' : '🔓 Ученики могут ходить'}</span>
+                <span
+                  className={cn(
+                    'rounded px-1.5 py-0.5 text-[9px] font-bold uppercase text-white',
+                    studentMovesLocked ? 'bg-amber-600/80' : 'bg-brand-500',
+                  )}
+                >
+                  {studentMovesLocked ? 'Разрешить' : 'Запретить'}
+                </span>
+              </button>
+              {studentMovesLocked && (
+                <div className="mt-1 text-[10px] leading-snug text-stone-500 dark:text-stone-400">
+                  {allowedMoverUserId
+                    ? 'Ходить может выбранный ученик (подсвечен в аудио). Клик по другому никнейму — передать ход ему.'
+                    : 'Никто из учеников не может ходить. Нажмите на никнейм ученика в аудио-панели, чтобы разрешить ходить только ему.'}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Чат ученика — слева от доски (для не-владельца). */}
+          {!isOwner && (
+            <div className="flex min-h-[12rem] flex-col overflow-hidden lg:min-h-0 lg:flex-1">
+              <ChatPanel variant="compact" messages={messages} meId={meId} onSend={sendChat} />
+            </div>
           )}
         </section>
 
@@ -797,12 +879,21 @@ export function RoomClient({
             history={history}
             viewIdx={viewIdx}
             onSelect={selectHistoryIdx}
-            className="min-h-[6rem] max-h-[12rem] shrink-0"
+            className="min-h-[4rem] max-h-[6rem] shrink-0"
           />
-          {/* Чат: на мобильном — естественной высоты, на десктопе — расширяется до низа. */}
-          <div className="flex min-h-[12rem] flex-col overflow-hidden lg:min-h-0 lg:flex-1">
-            <ChatPanel variant="compact" messages={messages} meId={meId} onSend={sendChat} />
-          </div>
+          {/* Чат: для учителя — здесь, справа (с кнопкой «очистить»). У ученика
+              чат вынесен в левую колонку (слева от доски), поэтому тут его нет. */}
+          {isOwner && (
+            <div className="flex min-h-[12rem] flex-col overflow-hidden lg:min-h-0 lg:flex-1">
+              <ChatPanel
+                variant="compact"
+                messages={messages}
+                meId={meId}
+                onSend={sendChat}
+                onClear={clearChat}
+              />
+            </div>
+          )}
         </section>
       </div>
 

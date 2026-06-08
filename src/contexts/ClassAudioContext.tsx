@@ -26,6 +26,8 @@ export interface ClassAudioContextValue {
   participants: Participant[];
   messages: ChatMessageDto[];
   sendChat: (text: string) => void;
+  /** Учитель: очистить чат лобби-комнаты. */
+  clearChat: () => void;
 }
 
 const ClassAudioCtx = createContext<ClassAudioContextValue | null>(null);
@@ -46,6 +48,7 @@ export function ClassAudioProvider({
         participants: room.participants,
         messages: room.messages,
         sendChat: room.sendChat,
+        clearChat: room.clearChat,
       }}
     >
       {children}

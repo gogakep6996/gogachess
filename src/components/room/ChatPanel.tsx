@@ -9,9 +9,11 @@ interface Props {
   messages: ChatMessageDto[];
   meId: string;
   onSend: (text: string) => void;
+  /** Если задан — показываем кнопку «очистить чат» (учителю). */
+  onClear?: () => void;
 }
 
-export function ChatPanel({ variant = 'default', messages, meId, onSend }: Props) {
+export function ChatPanel({ variant = 'default', messages, meId, onSend, onClear }: Props) {
   const [text, setText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const compact = variant === 'compact';
@@ -27,7 +29,26 @@ export function ChatPanel({ variant = 'default', messages, meId, onSend }: Props
         compact ? 'h-full flex-1 p-2' : 'card flex h-full max-h-[28rem]',
       )}
     >
-      <h3 className={cn('font-semibold', compact ? 'mb-1.5 shrink-0 text-[11px]' : 'mb-3')}>Чат</h3>
+      <div className={cn('flex shrink-0 items-center justify-between', compact ? 'mb-1.5' : 'mb-3')}>
+        <h3 className={cn('font-semibold', compact ? 'text-[11px]' : '')}>Чат</h3>
+        {onClear && (
+          <button
+            type="button"
+            onClick={() => {
+              if (messages.length === 0) return;
+              if (typeof window !== 'undefined' && !window.confirm('Очистить весь чат?')) return;
+              onClear();
+            }}
+            className={cn(
+              'btn-ghost whitespace-nowrap text-stone-500 hover:text-red-600',
+              compact ? '!px-1.5 !py-0 text-[10px]' : 'text-xs',
+            )}
+            title="Очистить чат"
+          >
+            🗑 очистить
+          </button>
+        )}
+      </div>
       <div
         ref={scrollRef}
         className={cn(

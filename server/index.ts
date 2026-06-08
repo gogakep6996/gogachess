@@ -34,6 +34,7 @@ import {
   setSideToMove,
   sideToMove as fenSideToMove,
   getPiece,
+  deriveCastlingRights,
   type Square,
 } from '../src/lib/fen';
 import { applyPseudoLegalMove } from '../src/lib/pseudo-legal';
@@ -94,6 +95,10 @@ interface RoomRuntime {
   /** Сила движка (Stockfish Skill Level 0..20). Для student-board берётся из
    *  задачи (Task.engineLevel). 20 = полная сила. */
   engineLevel: number;
+  /** Учитель запретил ученикам ходить на этой доске (трансляция/урок). */
+  studentMovesLocked: boolean;
+  /** Единственный ученик (userId), которому разрешено ходить при блокировке. */
+  allowedMoverUserId: string | null;
 }
 
 const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
@@ -189,6 +194,8 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     result: room.result,
     engineEnabled: room.engineEnabled,
     engineLevel: room.engineLevel,
+    studentMovesLocked: room.studentMovesLocked,
+    allowedMoverUserId: room.allowedMoverUserId,
   };
 }
 
@@ -276,6 +283,8 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     result: null,
     engineEnabled: true,
     engineLevel,
+    studentMovesLocked: false,
+    allowedMoverUserId: null,
   };
   rooms.set(code, runtime);
   return runtime;
@@ -724,6 +733,10 @@ app.prepare().then(() => {
         clock: makeClock(t.timeControl),
         drawOffer: null,
         result: null,
+        engineEnabled: false,
+        engineLevel: 20,
+        studentMovesLocked: false,
+        allowedMoverUserId: null,
       });
     }
     await broadcastTournament(tournamentId);
@@ -952,6 +965,16 @@ app.prepare().then(() => {
       }
 
       // ---------- Учебная комната: учитываем режимы ----------
+      // Блокировка ходов учеников (например, на трансляции): ходить может
+      // только владелец-учитель и явно разрешённый ученик (allowedMoverUserId).
+      if (
+        runtime.studentMovesLocked &&
+        runtime.ownerId !== userId &&
+        runtime.allowedMoverUserId !== userId
+      ) {
+        socket.emit(SocketEvents.RoomError, 'Учитель временно запретил ходы');
+        return;
+      }
       const { allowIllegal, sideLock } = runtime.mode;
       try {
         const from = move.from as Square;
@@ -1097,7 +1120,10 @@ app.prepare().then(() => {
       // Без валидации chess.js: позиция может быть без королей или с подобными
       // «учебными» отклонениями. Корректность хода при дальнейшей игре
       // обеспечивается режимом комнаты (legal/illegal).
-      runtime.fen = fen;
+      // Пересчитываем права на рокировку из расстановки: после редактора
+      // 3-е поле FEN могло остаться `-`, из-за чего рокировка была невозможна,
+      // хотя король и ладьи стоят на местах.
+      runtime.fen = deriveCastlingRights(fen);
       // Если включён sideLock — синхронизируем сторону в FEN, иначе игрок не сможет
       // пойти за заблокированный цвет (сервер откажет «сейчас не ваш ход»).
       if (runtime.mode.sideLock) {
@@ -1291,6 +1317,41 @@ app.prepare().then(() => {
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
     });
 
+    // Учитель запрещает/разрешает ученикам делать ходы на этой доске.
+    socket.on(SocketEvents.MovesLock, (payload?: { locked?: boolean }) => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.ownerId !== userId) return;
+      if (
+        runtime.kind !== 'lesson' &&
+        runtime.kind !== 'class-demo' &&
+        runtime.kind !== 'student-board'
+      )
+        return;
+      const locked = typeof payload?.locked === 'boolean' ? payload.locked : !runtime.studentMovesLocked;
+      runtime.studentMovesLocked = locked;
+      // При повторной блокировке снова «никому» — учитель заново выберет ученика.
+      if (locked) runtime.allowedMoverUserId = null;
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+    });
+
+    // Учитель разрешает ходить только одному ученику (по userId).
+    socket.on(SocketEvents.MoveAllow, (payload?: { userId?: string | null }) => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.ownerId !== userId) return;
+      const next = typeof payload?.userId === 'string' ? payload.userId : null;
+      runtime.allowedMoverUserId = next;
+      // Разрешая конкретному ученику, автоматически включаем саму блокировку,
+      // иначе «разрешение одному» не имело бы смысла (ходить могли бы все).
+      if (next) runtime.studentMovesLocked = true;
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+    });
+
     socket.on(SocketEvents.ArrowsUpdate, (payload: { arrows?: unknown; marks?: unknown }) => {
       const code = socket.data.roomCode as string | undefined;
       if (!code) return;
@@ -1327,6 +1388,19 @@ app.prepare().then(() => {
         createdAt: saved.createdAt.toISOString(),
       };
       io.to(code).emit(SocketEvents.ChatNew, dto);
+    });
+
+    // Учитель очищает чат комнаты: удаляем историю сообщений и рассылаем пустую.
+    socket.on(SocketEvents.ChatClear, async () => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.ownerId !== userId) return; // только владелец-учитель
+      const room = await prisma.room.findUnique({ where: { code } });
+      if (!room) return;
+      await prisma.message.deleteMany({ where: { roomId: room.id } });
+      io.to(code).emit(SocketEvents.ChatHistory, [] as ChatMessageDto[]);
     });
 
     // ---------- WebRTC сигналинг ----------
@@ -1430,17 +1504,20 @@ app.prepare().then(() => {
       io.to(code).emit(SocketEvents.ParticipantsUpdate, Array.from(runtime.participants.values()));
     });
 
-    socket.on(SocketEvents.AudioForceMuteAll, () => {
+    socket.on(SocketEvents.AudioForceMuteAll, (payload?: { mute?: boolean }) => {
       const code = socket.data.roomCode as string | undefined;
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
       if (runtime.ownerId !== userId) return;
+      const mute = typeof payload?.mute === 'boolean' ? payload.mute : true;
       runtime.participants.forEach((p) => {
         if (p.userId === userId) return;
-        p.forcedMute = true;
-        p.micEnabled = false;
-        io.to(p.socketId).emit(SocketEvents.AudioForceMute, true);
+        p.forcedMute = mute;
+        if (mute) p.micEnabled = false;
+        // На размьют клиент сам включит дорожку (AudioForceMute false → mic on)
+        // и пришлёт AudioMicState — тогда micEnabled обновится.
+        io.to(p.socketId).emit(SocketEvents.AudioForceMute, mute);
       });
       io.to(code).emit(SocketEvents.ParticipantsUpdate, Array.from(runtime.participants.values()));
     });
@@ -1500,6 +1577,10 @@ app.prepare().then(() => {
           clock: makeClock(timeControl),
           drawOffer: null,
           result: null,
+          engineEnabled: false,
+          engineLevel: 20,
+          studentMovesLocked: false,
+          allowedMoverUserId: null,
         });
         const payloadA: MatchFoundPayload = {
           code,
