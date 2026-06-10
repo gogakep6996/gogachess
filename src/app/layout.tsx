@@ -4,6 +4,8 @@ import { ThemeProvider } from '@/components/ui/ThemeProvider';
 import { YandexMetrika } from '@/components/analytics/YandexMetrika';
 import { GoogleAnalytics } from '@/components/analytics/GoogleAnalytics';
 import { VersionWatcher } from '@/components/system/VersionWatcher';
+import { buildBoardThemeCss, BOARD_THEME_KEY, PIECE_THEME_KEY } from '@/lib/board-theme';
+import { PieceSetHydrator } from '@/components/ui/PieceSetHydrator';
 
 const SITE_URL = (process.env.SITE_URL || 'https://gogachess.ru').replace(/\/$/, '');
 const SITE_TITLE = 'gogachess — шахматы для обучения';
@@ -80,17 +82,27 @@ const themeBootstrap = `
   var s = localStorage.getItem('chessclass-theme');
   if(!s){ s = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
   if(s === 'dark') document.documentElement.classList.add('dark');
+  var b = localStorage.getItem('${BOARD_THEME_KEY}');
+  if(b) document.documentElement.setAttribute('data-board-theme', b);
+  var p = localStorage.getItem('${PIECE_THEME_KEY}');
+  if(p) document.documentElement.setAttribute('data-piece-theme', p);
 }catch(e){}})();
 `.trim();
+
+// CSS-переменные всех тем доски — генерируются на сервере один раз.
+const boardThemeCss = buildBoardThemeCss();
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ru" suppressHydrationWarning>
       <head>
+        <style dangerouslySetInnerHTML={{ __html: boardThemeCss }} />
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
       <body>
         <ThemeProvider>{children}</ThemeProvider>
+        {/* Применяет сохранённый набор фигур (форму) после монтирования. */}
+        <PieceSetHydrator />
         {/* Наблюдает за версией сервера. При новой сборке показывает баннер */}
         {/* "Доступно обновление" — пользователю не нужно жать Ctrl+Shift+R. */}
         <VersionWatcher />

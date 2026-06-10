@@ -5,11 +5,13 @@ import { usePathname } from 'next/navigation';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useEffect, useState } from 'react';
 import { EmailVerifyBanner } from '@/components/auth/EmailVerifyBanner';
+import { AccountMenu } from '@/components/layout/AccountMenu';
 
 interface MeUser {
   id: string;
   displayName: string;
   email: string | null;
+  phone?: string | null;
   emailVerifiedAt: string | null;
 }
 
@@ -82,14 +84,7 @@ export function Header() {
           </Link>
           <ThemeToggle />
           {user ? (
-            <div className="flex items-center gap-2">
-              <span className="hidden text-sm text-stone-600 dark:text-stone-300 sm:inline">
-                {user.displayName}
-              </span>
-              <button onClick={logout} className="btn-ghost text-xs">
-                Выйти
-              </button>
-            </div>
+            <AccountMenu user={user} onUserChange={setUser} onLogout={logout} />
           ) : (
             <Link href="/login" className="btn-primary text-xs">
               Войти

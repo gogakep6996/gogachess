@@ -30,6 +30,22 @@ model User {
   ownedClass          Class?                 @relation("ClassOwner")
   taskSessions        TaskSession[]
   authTokens          AuthToken[]
+  notifications       Notification[]
+}
+
+/// Уведомление пользователя — показывается в выпадающем меню аккаунта.
+/// Создаётся системой (регистрация, подтверждение почты, рассылки).
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String?
+  /// null = непрочитано.
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }
 
 /// Одноразовые токены для email-flow (подтверждение почты, сброс пароля).

@@ -51,10 +51,10 @@ export default async function HomePage() {
           <Tile
             href="/learn"
             title="Обучение"
-            text="Уроки, тактика и упражнения. Скоро."
+            text="Тактические задачи: маты, эндшпили, вилки и связки."
             icon={<IconBook />}
             tone="sky"
-            badge="Скоро"
+            badge="Новое"
           />
         </section>
 

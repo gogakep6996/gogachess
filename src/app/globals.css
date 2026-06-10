@@ -117,12 +117,16 @@ html.dark body::before {
   }
 }
 
-/* Шахматная доска */
-.chess-square-light { background-color: theme('colors.board.light'); }
-.chess-square-dark  { background-color: theme('colors.board.dark'); }
-.chess-square-hl    { background-color: theme('colors.board.highlight'); }
-.chess-square-mv    { background-color: theme('colors.board.move'); }
-.chess-square-sel   { background-color: theme('colors.board.selected'); }
+/* Шахматная доска. Цвета клеток управляются темой доски (см. lib/board-theme.ts):
+   CSS-переменные ставятся на <html> через data-board-theme. *-bg может содержать
+   градиент (текстурные темы: дерево, стекло, мрамор). */
+.chess-square-light { background: var(--board-light-bg, var(--board-light, theme('colors.board.light'))); }
+.chess-square-dark  { background: var(--board-dark-bg, var(--board-dark, theme('colors.board.dark'))); }
+/* background (не background-color) — чтобы подсветка перекрывала градиенты
+   текстурных тем доски. */
+.chess-square-hl    { background: theme('colors.board.highlight'); }
+.chess-square-mv    { background: theme('colors.board.move'); }
+.chess-square-sel   { background: theme('colors.board.selected'); }
 
 /* Подсветка последнего хода (от/куда) — тонкий зелёный слой как у Lichess */
 .cell-last { background-color: rgba(155, 199, 0, 0.45); }

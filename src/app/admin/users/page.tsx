@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { Header } from '@/components/layout/Header';
 import { getCurrentUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { ResendVerificationsButton } from '@/components/admin/ResendVerificationsButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +69,8 @@ export default async function AdminUsersPage() {
   });
 
   const verifiedCount = users.filter((u) => u.emailVerifiedAt).length;
+  // Кандидаты на рассылку: почта есть, подтверждения нет.
+  const pendingCount = users.filter((u) => u.email && !u.emailVerifiedAt).length;
 
   return (
     <div className="flex min-h-dvh flex-col bg-surface dark:bg-surface-dark">
@@ -81,6 +84,10 @@ export default async function AdminUsersPage() {
             Всего: <span className="font-medium">{users.length}</span> · с
             подтверждённым email: <span className="font-medium">{verifiedCount}</span>
           </p>
+        </div>
+
+        <div className="mb-4 flex justify-end">
+          <ResendVerificationsButton pendingCount={pendingCount} />
         </div>
 
         <div className="overflow-x-auto rounded-xl border border-stone-200/80 bg-white/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50">

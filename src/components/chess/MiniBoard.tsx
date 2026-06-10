@@ -31,7 +31,11 @@ export function MiniBoard({ fen = STARTING_FEN, size = 140, flipped = false }: P
             <div
               key={`${ri}-${ci}`}
               className="relative flex items-center justify-center"
-              style={{ backgroundColor: light ? '#f0d9b5' : '#b58863' }}
+              style={{
+                background: light
+                  ? 'var(--board-light-bg, #f0d9b5)'
+                  : 'var(--board-dark-bg, #b58863)',
+              }}
             >
               {cell && <PieceSvg code={cell} className="h-[88%] w-[88%]" />}
             </div>

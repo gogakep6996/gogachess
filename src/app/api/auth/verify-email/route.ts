@@ -47,6 +47,19 @@ export async function POST(request: Request) {
     data: { emailVerifiedAt: new Date() },
   });
 
+  // Уведомление в меню аккаунта. Некритично — ошибки глотаем.
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: hit.userId,
+        title: 'Почта подтверждена ✓',
+        body: 'Теперь вам доступны все функции сайта: создание класса, турниры.',
+      },
+    });
+  } catch (err) {
+    console.error('[auth/verify-email] notification failed:', err);
+  }
+
   // Если по этой ссылке кликнул другой пользователь (или сессия другая) —
   // токен всё равно сработал для нужного userId. Просто сообщаем UI.
   const auth = await getCurrentUser();

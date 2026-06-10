@@ -91,6 +91,19 @@ export async function POST(request: Request) {
     console.error('[auth/register] sendVerifyEmail failed:', err);
   }
 
+  // Приветственное уведомление (видно в меню аккаунта). Некритично.
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: user.id,
+        title: 'Добро пожаловать в gogachess!',
+        body: 'Подтвердите почту по ссылке из письма — после этого откроются все функции: классы, турниры.',
+      },
+    });
+  } catch (err) {
+    console.error('[auth/register] notification failed:', err);
+  }
+
   return NextResponse.json({
     user: {
       id: user.id,
