@@ -8,7 +8,7 @@ import { SocketEvents } from '@/lib/socket-events';
 // значит, JS свежий. Если не видно — кеш/SW отдают старый бандл.
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
-  console.log('[audio] hook module loaded build=2026-05-13T16:00 (own coturn + dynamic creds + ICE restart)');
+  console.log('[audio] hook module loaded build=2026-06-09T13:30 (noise gate + Opus 24k/mono/DTX/FEC + replaceTrack mute)');
 }
 
 // Fallback-список ICE-серверов на случай, если сервер не отвечает на
@@ -58,6 +58,63 @@ function requestIceServers(socket: Socket): Promise<RTCIceServer[]> {
       resolve(FALLBACK_ICE_SERVERS);
     }
   });
+}
+
+// Параметры Opus, которые мы навязываем в SDP. fmtp в ОТПРАВЛЯЕМОМ нами SDP
+// описывает, как мы хотим ПРИНИМАТЬ; раз все клиенты на одном коде — каждый
+// будет слать другим DTX + капнутый битрейт + моно + FEC.
+//   • maxaveragebitrate=24000 — голосу хватает 24 кбит/с (вместо ~32–40).
+//   • usedtx=1 — в тишине почти не шлём пакеты.
+//   • useinbandfec=1 — восстановление потерь без роста задержки.
+//   • stereo=0 — моно.
+const OPUS_FMTP_PARAMS: Record<string, string> = {
+  minptime: '10',
+  useinbandfec: '1',
+  usedtx: '1',
+  stereo: '0',
+  'sprop-stereo': '0',
+  maxaveragebitrate: '24000',
+};
+
+/** Дописывает/мёржит нужные Opus-параметры в fmtp-строку SDP. */
+function preferOpusTuning(sdp?: string): string {
+  if (!sdp) return sdp ?? '';
+  const rtpmap = sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
+  if (!rtpmap) return sdp;
+  const pt = rtpmap[1];
+  const fmtpRe = new RegExp(`a=fmtp:${pt} ([^\\r\\n]*)`);
+  const existing = sdp.match(fmtpRe);
+  const params: Record<string, string> = {};
+  if (existing) {
+    existing[1].split(';').forEach((kv) => {
+      const [k, v] = kv.split('=');
+      if (k && v !== undefined) params[k.trim()] = v.trim();
+    });
+  }
+  Object.assign(params, OPUS_FMTP_PARAMS);
+  const merged = Object.entries(params)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(';');
+  if (existing) {
+    return sdp.replace(fmtpRe, `a=fmtp:${pt} ${merged}`);
+  }
+  // fmtp-строки не было — добавляем сразу после rtpmap.
+  return sdp.replace(rtpmap[0], `${rtpmap[0]}\r\na=fmtp:${pt} ${merged}`);
+}
+
+/** Жёсткий потолок исходящего битрейта на самом отправителе (подстраховка к SDP). */
+function capSenderBitrate(sender: RTCRtpSender, maxBitrate = 24000): void {
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || params.encodings.length === 0) {
+      params.encodings = [{}];
+    }
+    params.encodings[0].maxBitrate = maxBitrate;
+    sender.setParameters(params).catch(() => undefined);
+  } catch {
+    // Часть браузеров не даёт setParameters до согласования — не критично,
+    // исходящий битрейт всё равно ограничит maxaveragebitrate в SDP пира.
+  }
 }
 
 export interface UseAudioRoomResult {
@@ -111,6 +168,19 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   // так что для долгого пребывания в комнате стоит периодически их обновлять.
   const iceServersRef = useRef<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
 
+  // --- Подавление помех (noise gate) ---
+  // Сырой поток с микрофона (до обработки). Нужен, чтобы корректно остановить
+  // устройство при выходе. В пиры уходит уже ОБРАБОТАННЫЙ поток (через gain-гейт).
+  const rawStreamRef = useRef<MediaStream | null>(null);
+  // GainNode-«ворота»: 1 = пропускаем голос, 0 = глушим фон/паузы.
+  const micGainRef = useRef<GainNode | null>(null);
+  // Анализатор уровня СВОЕГО микрофона — для детекции голоса (VAD).
+  const localVadAnalyserRef = useRef<AnalyserNode | null>(null);
+  const vadRafRef = useRef<number | null>(null);
+  // Актуальное состояние «микрофон включён» для чтения внутри createPeer
+  // (там стейт был бы устаревшим из-за замыкания useCallback).
+  const micEnabledRef = useRef(false);
+
   // ---------- Установка соединения с пиром ----------
   const createPeer = useCallback(
     (peerId: string, initiator: boolean): RTCPeerConnection => {
@@ -131,7 +201,15 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       if (localStreamRef.current) {
         const tracks = localStreamRef.current.getTracks();
         console.log('[audio] addTrack count=', tracks.length, 'kinds=', tracks.map((t) => t.kind));
-        tracks.forEach((t) => pc.addTrack(t, localStreamRef.current!));
+        tracks.forEach((t) => {
+          const sender = pc.addTrack(t, localStreamRef.current!);
+          if (t.kind === 'audio') {
+            capSenderBitrate(sender);
+            // Если сейчас в муте — НЕ отправляем дорожку вообще (replaceTrack(null)),
+            // а не просто enabled=false. В эфир не уходит ни одного RTP-пакета.
+            if (!micEnabledRef.current) sender.replaceTrack(null).catch(() => undefined);
+          }
+        });
       } else {
         // Микрофон ещё не получен — это значит, что мы получили offer ДО join().
         // Принимать звук всё равно можем: добавляем recvonly-транссивер.
@@ -169,7 +247,10 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
         ) {
           console.log('[audio] attempting ICE restart for peer=', peerId);
           pc.createOffer({ iceRestart: true })
-            .then((offer) => pc.setLocalDescription(offer).then(() => offer))
+            .then((offer) => {
+              offer.sdp = preferOpusTuning(offer.sdp);
+              return pc.setLocalDescription(offer).then(() => offer);
+            })
             .then((offer) => socket.emit(SocketEvents.AudioOffer, { to: peerId, sdp: offer }))
             .catch((err) => console.warn('[audio] ICE restart failed', err));
         }
@@ -223,7 +304,10 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
 
       if (initiator && socket) {
         pc.createOffer()
-          .then((offer) => pc.setLocalDescription(offer).then(() => offer))
+          .then((offer) => {
+            offer.sdp = preferOpusTuning(offer.sdp);
+            return pc.setLocalDescription(offer).then(() => offer);
+          })
           .then((offer) => {
             console.log('[audio] → emit offer to', peerId);
             socket.emit(SocketEvents.AudioOffer, { to: peerId, sdp: offer });
@@ -280,6 +364,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       try {
         await pc.setRemoteDescription(sdp);
         const answer = await pc.createAnswer();
+        answer.sdp = preferOpusTuning(answer.sdp);
         await pc.setLocalDescription(answer);
         console.log('[audio] → emit answer to', from);
         socket.emit(SocketEvents.AudioAnswer, { to: from, sdp: answer });
@@ -383,13 +468,112 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   }, []);
 
   function toggleMicTrack(on: boolean) {
+    micEnabledRef.current = on;
     const stream = localStreamRef.current;
-    if (!stream) return;
-    const tracks = stream.getAudioTracks();
-    tracks.forEach((t) => (t.enabled = on));
-    console.log('[audio] toggleMic →', on, 'tracks=', tracks.length, 'first.enabled=', tracks[0]?.enabled);
+    const track = stream?.getAudioTracks()[0] ?? null;
+    // enabled держим в синхроне как дешёвую подстраховку…
+    if (track) track.enabled = on;
+    // …но ГЛАВНОЕ: на мьюте полностью снимаем дорожку со всех отправителей
+    // (replaceTrack(null)) — RTP-поток прекращается, в эфир не уходит ничего.
+    // На размьюте возвращаем дорожку. У нас в пирах только аудио-сендеры.
+    peersRef.current.forEach((pc) => {
+      pc.getSenders().forEach((sender) => {
+        sender.replaceTrack(on ? track : null).catch(() => undefined);
+      });
+    });
+    console.log('[audio] toggleMic →', on, 'replaceTrack on', peersRef.current.size, 'peers');
     setMicEnabled(on);
     socket?.emit(SocketEvents.AudioMicState, on);
+  }
+
+  /**
+   * Строим аудио-граф для подавления помех:
+   *   raw mic → [analyser (VAD)] → gain (ворота) → MediaStreamDestination → пиры
+   * В пиры уходит обработанный поток. Если Web Audio недоступен (старый браузер,
+   * iOS-причуды) — возвращаем сырой поток, звук работает как раньше, без гейта.
+   */
+  function buildMicGraph(raw: MediaStream): MediaStream {
+    try {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return raw;
+      const source = ctx.createMediaStreamSource(raw);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      const gain = ctx.createGain();
+      gain.gain.value = 1;
+      const dest = ctx.createMediaStreamDestination();
+      source.connect(analyser);
+      source.connect(gain);
+      gain.connect(dest);
+      micGainRef.current = gain;
+      localVadAnalyserRef.current = analyser;
+      console.log('[audio] noise gate graph ready');
+      return dest.stream;
+    } catch (err) {
+      console.warn('[audio] noise gate setup failed → raw stream', err);
+      micGainRef.current = null;
+      localVadAnalyserRef.current = null;
+      return raw;
+    }
+  }
+
+  /**
+   * Noise gate с гистерезисом и «удержанием»:
+   *   • громкость выше порога открытия → ворота открыты (голос проходит);
+   *   • после спада громкости держим открытыми ещё holdMs (чтобы не рубить
+   *     слова), затем плавно закрываем — фон/стук в паузах не передаётся.
+   * Быстрая атака (10 мс) и мягкое закрытие (120 мс), чтобы не было щелчков.
+   */
+  function startNoiseGate() {
+    if (vadRafRef.current) cancelAnimationFrame(vadRafRef.current);
+    const OPEN = 0.045; // порог уверенного голоса (RMS, нормирован). Ниже = чувствительнее.
+    const HOLD_MS = 280; // держим открытым после последнего голоса
+    let openUntil = 0;
+    let last = 0;
+
+    function tick(ts: number) {
+      // ~30 раз/сек достаточно для гейта и бережёт CPU.
+      if (ts - last >= 33) {
+        last = ts;
+        const an = localVadAnalyserRef.current;
+        const gain = micGainRef.current;
+        const ctx = audioCtxRef.current;
+        if (an && gain && ctx) {
+          const data = new Uint8Array(an.frequencyBinCount);
+          an.getByteTimeDomainData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128;
+            sum += v * v;
+          }
+          const rms = Math.sqrt(sum / data.length);
+          const now = performance.now();
+          if (rms > OPEN) openUntil = now + HOLD_MS;
+          const open = now < openUntil;
+          const target = open ? 1 : 0;
+          // setTargetAtTime: плавный переход без щелчков. Быстрее открываемся.
+          gain.gain.setTargetAtTime(target, ctx.currentTime, open ? 0.01 : 0.12);
+        }
+      }
+      vadRafRef.current = requestAnimationFrame(tick);
+    }
+    vadRafRef.current = requestAnimationFrame(tick);
+  }
+
+  function stopNoiseGate() {
+    if (vadRafRef.current) {
+      cancelAnimationFrame(vadRafRef.current);
+      vadRafRef.current = null;
+    }
+    try {
+      micGainRef.current?.disconnect();
+    } catch {
+      // ignore
+    }
+    micGainRef.current = null;
+    localVadAnalyserRef.current = null;
+    rawStreamRef.current?.getTracks().forEach((t) => t.stop());
+    rawStreamRef.current = null;
   }
 
   const join = useCallback(async () => {
@@ -435,11 +619,29 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       }
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      // Усиленные фильтры захвата. Стандартные echoCancellation/noiseSuppression/
+      // autoGainControl + Chrome-специфичные goog-* (включая детектор стука по
+      // клавиатуре). Неизвестные ключи браузеры просто игнорируют. channelCount:1
+      // — моно: голосу хватает, трафика меньше.
+      const audioConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        googEchoCancellation: true,
+        googNoiseSuppression: true,
+        googNoiseSuppression2: true,
+        googHighpassFilter: true,
+        googTypingNoiseDetection: true,
+        googAutoGainControl: true,
+      } as unknown as MediaTrackConstraints;
+      const rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      rawStreamRef.current = rawStream;
+      // Пропускаем микрофон через noise gate; в пиры пойдёт обработанный поток.
+      const stream = buildMicGraph(rawStream);
       localStreamRef.current = stream;
       stream.getAudioTracks().forEach((t) => (t.enabled = false));
+      startNoiseGate();
       // Повторно резюмим — после долгого попапа разрешений контекст мог опять «уснуть».
       if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
         audioCtxRef.current.resume().catch(() => undefined);
@@ -467,6 +669,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     });
     audiosRef.current.clear();
     analysersRef.current.clear();
+    stopNoiseGate();
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     setJoined(false);

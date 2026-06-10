@@ -59,6 +59,13 @@ services:
       # НЕ уходят клиентам (только в лог). Значения задавайте в .env на сервере.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      # SMTP — приоритетный путь отправки писем (Яндекс 360 / Unisender / Mail.ru
+      # и т.п.). Если SMTP_HOST задан, используется он; иначе — Resend; иначе лог.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
       # Email'ы администраторов (через запятую) — кому доступна страница /admin/users
       # со списком зарегистрированных аккаунтов. Пусто = страница недоступна никому (404).
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
