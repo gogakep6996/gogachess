@@ -143,7 +143,7 @@ export function TasksLibrary({
             return (
               <li
                 key={t.id}
-                className={`group flex flex-col gap-1.5 rounded-xl border border-stone-200 bg-white p-2 shadow-sm transition-shadow hover:shadow-md dark:border-stone-700 dark:bg-stone-900 ${
+                className={`group flex flex-col gap-1.5 rounded-xl border border-stone-200 bg-paper p-2 shadow-sm transition-shadow hover:shadow-md dark:border-stone-700 dark:bg-stone-900 ${
                   t.isPublished ? '' : 'ring-1 ring-amber-200/60 dark:ring-amber-800/40'
                 }`}
               >

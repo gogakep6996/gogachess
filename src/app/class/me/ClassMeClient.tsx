@@ -8,6 +8,7 @@ import { ClassLobbyPanel } from '@/components/class/ClassLobbyPanel';
 import { RoomClient } from '@/app/room/[code]/RoomClient';
 import { ClassAudioProvider } from '@/contexts/ClassAudioContext';
 import type { ClassDto } from './ClassSettings';
+import { ClassAccessCode } from './ClassAccessCode';
 
 interface Props {
   meId: string;
@@ -108,7 +109,7 @@ export function ClassMeClient({ meId, meName, initialClass, initialTasks }: Prop
               {broadcasting ? (
                 <button
                   onClick={() => toggleBroadcast(false)}
-                  className="rounded border border-stone-300 bg-white px-1.5 py-px text-[10px] font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
+                  className="rounded border border-stone-300 bg-paper px-1.5 py-px text-[10px] font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
                 >
                   ⏸ Остановить трансляцию
                 </button>
@@ -151,24 +152,29 @@ export function ClassMeClient({ meId, meName, initialClass, initialTasks }: Prop
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_240px]">
         <main className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="rounded-xl border border-stone-200 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-900">
-              <div className="font-display text-base font-semibold leading-tight">
-                {cls.name || `Класс — ${cls.ownerName}`}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="rounded-xl border border-stone-200 bg-paper px-3 py-2 dark:border-stone-700 dark:bg-stone-900">
+                <div className="font-display text-base font-semibold leading-tight">
+                  {cls.name || `Класс — ${cls.ownerName}`}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      navigator.clipboard
+                        .writeText(`${window.location.origin}/class/${cls.slug}`)
+                        .catch(() => undefined);
+                    }
+                  }}
+                  title="Скопировать ссылку"
+                  className="mt-1 block max-w-full truncate rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-left font-mono text-xs text-brand-600 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-800 dark:text-brand-300 dark:hover:bg-stone-700"
+                >
+                  /class/{cls.slug}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (typeof window !== 'undefined') {
-                    navigator.clipboard
-                      .writeText(`${window.location.origin}/class/${cls.slug}`)
-                      .catch(() => undefined);
-                  }
-                }}
-                title="Скопировать ссылку"
-                className="mt-1 block max-w-full truncate rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-left font-mono text-xs text-brand-600 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-800 dark:text-brand-300 dark:hover:bg-stone-700"
-              >
-                /class/{cls.slug}
-              </button>
+
+              {/* Код доступа — компактно рядом с названием. Клик генерирует код. */}
+              <ClassAccessCode initialCode={cls.accessCode} />
             </div>
 
             <div className="flex items-center gap-1">
@@ -243,7 +249,7 @@ function TabButton({
       className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
         active
           ? 'border-brand-500 bg-brand-500 text-white shadow-sm'
-          : 'border-stone-300 bg-white text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800'
+          : 'border-stone-300 bg-paper text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800'
       }`}
     >
       {children}

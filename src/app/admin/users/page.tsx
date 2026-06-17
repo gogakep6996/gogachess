@@ -90,7 +90,7 @@ export default async function AdminUsersPage() {
           <ResendVerificationsButton pendingCount={pendingCount} />
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-stone-200/80 bg-white/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50">
+        <div className="overflow-x-auto rounded-xl border border-stone-200/80 bg-paper/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-stone-200 bg-stone-100/70 text-stone-500 dark:border-stone-800 dark:bg-stone-900/60 dark:text-stone-400">

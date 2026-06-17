@@ -7,20 +7,12 @@ export async function GET() {
   const auth = await getCurrentUser();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // Свои комнаты + публичные чужие
-  const [own, publicRooms] = await Promise.all([
-    prisma.room.findMany({
-      where: { ownerId: auth.sub },
-      include: { owner: { select: { displayName: true } } },
-      orderBy: { createdAt: 'desc' },
-    }),
-    prisma.room.findMany({
-      where: { isPublic: true, ownerId: { not: auth.sub } },
-      include: { owner: { select: { displayName: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 30,
-    }),
-  ]);
+  // Публичных комнат больше нет — отдаём только собственные.
+  const own = await prisma.room.findMany({
+    where: { ownerId: auth.sub },
+    include: { owner: { select: { displayName: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
 
   const map = (r: (typeof own)[number]) => ({
     id: r.id,
@@ -32,7 +24,7 @@ export async function GET() {
     createdAt: r.createdAt.toISOString(),
   });
 
-  return NextResponse.json({ own: own.map(map), publicRooms: publicRooms.map(map) });
+  return NextResponse.json({ own: own.map(map), publicRooms: [] });
 }
 
 interface CreateBody {
@@ -59,8 +51,9 @@ export async function POST(request: Request) {
   const kind = ALLOWED_KINDS.has(body.kind ?? '') ? (body.kind as string) : 'lesson';
   const defaultName = kind === 'casual' ? 'Партия с другом' : 'Урок шахмат';
   const name = (body.name || '').trim().slice(0, 80) || defaultName;
-  // Приглашение друга — всегда приватная комната, чтобы её не было в публичном списке.
-  const isPublic = kind === 'casual' ? false : Boolean(body.isPublic);
+  // Публичные комнаты отключены: все создаваемые комнаты закрытые,
+  // доступны только по прямой ссылке.
+  const isPublic = false;
   const timeControl =
     typeof body.timeControl === 'string' && body.timeControl.trim()
       ? body.timeControl.trim().slice(0, 32)

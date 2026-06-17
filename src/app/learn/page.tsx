@@ -33,8 +33,7 @@ export default function LearnPage() {
         <LearnGrid categories={cats} />
 
         <p className="mt-10 text-center text-xs text-stone-400 dark:text-stone-500">
-          Задачи — из открытой базы lichess.org (лицензия CC0). Прогресс
-          сохраняется в этом браузере.
+          Прогресс сохраняется в этом браузере.
         </p>
       </main>
     </>

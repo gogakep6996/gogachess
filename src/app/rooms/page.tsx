@@ -9,19 +9,11 @@ export default async function RoomsPage() {
   const auth = await getCurrentUser();
   if (!auth) redirect('/login');
 
-  const [own, publicRooms] = await Promise.all([
-    prisma.room.findMany({
-      where: { ownerId: auth.sub, kind: 'lesson' },
-      include: { owner: { select: { displayName: true } } },
-      orderBy: { createdAt: 'desc' },
-    }),
-    prisma.room.findMany({
-      where: { isPublic: true, ownerId: { not: auth.sub }, kind: 'lesson' },
-      include: { owner: { select: { displayName: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 30,
-    }),
-  ]);
+  const own = await prisma.room.findMany({
+    where: { ownerId: auth.sub, kind: 'lesson' },
+    include: { owner: { select: { displayName: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
 
   return (
     <>
@@ -31,7 +23,7 @@ export default async function RoomsPage() {
           <div>
             <h1 className="font-display text-3xl font-semibold">Создать комнату</h1>
             <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-              Откройте свою комнату для урока или присоединитесь к публичной.
+              Откройте свою комнату для урока и пригласите учеников по ссылке.
             </p>
           </div>
         </header>
@@ -41,21 +33,15 @@ export default async function RoomsPage() {
             <div className="card">
               <h3 className="font-semibold">Подсказка</h3>
               <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-                После создания комнаты скопируйте ссылку на странице комнаты и отправьте ученикам.
-                В <span className="font-medium text-brand-600">закрытую</span> попадут только по
-                прямой ссылке, а <span className="font-medium text-brand-600">публичная</span>{' '}
-                появится в общем списке.
+                Комнаты закрытые — попасть в них можно только по прямой ссылке.
+                После создания скопируйте ссылку на странице комнаты и отправьте
+                ученикам.
               </p>
             </div>
           </section>
 
           <section className="space-y-8">
             <RoomList title="Мои комнаты" rooms={own.map(map)} empty="Вы ещё не создали ни одной комнаты" />
-            <RoomList
-              title="Публичные комнаты"
-              rooms={publicRooms.map(map)}
-              empty="Пока нет открытых комнат от других учителей"
-            />
           </section>
         </div>
       </main>
@@ -63,12 +49,11 @@ export default async function RoomsPage() {
   );
 }
 
-function map(r: { id: string; code: string; name: string; isPublic: boolean; ownerId: string; createdAt: Date; owner: { displayName: string } }) {
+function map(r: { id: string; code: string; name: string; ownerId: string; createdAt: Date; owner: { displayName: string } }) {
   return {
     id: r.id,
     code: r.code,
     name: r.name,
-    isPublic: r.isPublic,
     ownerName: r.owner.displayName,
     createdAt: r.createdAt.toISOString(),
   };
@@ -78,7 +63,6 @@ interface RoomItem {
   id: string;
   code: string;
   name: string;
-  isPublic: boolean;
   ownerName: string;
   createdAt: string;
 }
@@ -99,15 +83,6 @@ function RoomList({ title, rooms, empty }: { title: string; rooms: RoomItem[]; e
               >
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-semibold">{r.name}</h3>
-                  <span
-                    className={
-                      r.isPublic
-                        ? 'badge bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                        : 'badge bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300'
-                    }
-                  >
-                    {r.isPublic ? 'публичная' : 'закрытая'}
-                  </span>
                 </div>
                 <p className="mt-1 text-xs text-stone-500">
                   Учитель: {r.ownerName} · код {r.code}

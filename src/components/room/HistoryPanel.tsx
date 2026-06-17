@@ -46,7 +46,7 @@ export function HistoryPanel({ history, viewIdx, onSelect, className }: Props) {
   return (
     <div
       className={cn(
-        'flex min-h-0 flex-col rounded-xl border border-stone-200/80 bg-white/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
+        'flex min-h-0 flex-col rounded-xl border border-stone-200/80 bg-paper/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
         className,
       )}
     >

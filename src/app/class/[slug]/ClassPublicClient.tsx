@@ -114,6 +114,13 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
   const lobbyParticipants = state?.lobbyParticipants ?? [];
   const inLesson = !!(state?.lessonActive && state.lobbyRoomCode && meId);
 
+  // ЖЁСТКИЙ ГЕЙТ: класс с кодом доступа закрыт целиком, пока код не введён.
+  // Не показываем ни доску урока, ни лобби, ни список задач, ни аудио —
+  // только экран ввода кода. Иначе ученик мог зайти на урок без подтверждения.
+  if (codeNeeded) {
+    return renderCodeGate();
+  }
+
   // Старая раскладка: либо full-screen RoomClient (за доской), либо витрина задач + правый aside.
   // Лобби-аудио живёт в провайдере уровнем выше — WebRTC mesh не пересобирается
   // при переключении вида.
@@ -126,6 +133,55 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
   ) : (
     view
   );
+
+  function renderCodeGate(): ReactNode {
+    return (
+      <main className="flex min-h-0 flex-1 items-center justify-center px-4 py-10">
+        <div className="card w-full max-w-md">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+            🔒 Закрытый класс
+          </div>
+          <h1 className="font-display text-xl font-semibold leading-tight">
+            {cls.name || `Класс — ${cls.ownerName}`}
+          </h1>
+          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+            Учитель: {cls.ownerName}
+          </p>
+          <p className="mt-3 text-sm text-stone-600 dark:text-stone-300">
+            Чтобы войти в класс, введите код доступа, который дал учитель.
+          </p>
+          {!meId && (
+            <p className="mt-2 text-xs text-stone-500">
+              <Link href={`/login?next=/class/${cls.slug}`} className="underline">
+                Войдите в аккаунт
+              </Link>{' '}
+              — иначе вы не сможете участвовать в уроке.
+            </p>
+          )}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              tryCode(code, true);
+            }}
+            className="mt-4 flex gap-2"
+          >
+            <input
+              type="text"
+              autoFocus
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="например 1234"
+              className="flex-1 rounded-lg border border-stone-300 bg-paper px-3 py-2 font-mono text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-stone-700 dark:bg-stone-900"
+            />
+            <button type="submit" disabled={!code.trim()} className="btn-primary text-sm">
+              Войти
+            </button>
+          </form>
+          {codeError && <div className="mt-2 text-sm text-red-600">{codeError}</div>}
+        </div>
+      </main>
+    );
+  }
 
   function renderView(): ReactNode {
     if (activeBoard && meId) {
@@ -181,7 +237,7 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_240px]">
         <main className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="rounded-xl border border-stone-200 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-900">
+            <div className="rounded-xl border border-stone-200 bg-paper px-3 py-2 dark:border-stone-700 dark:bg-stone-900">
               <div className="font-display text-base font-semibold leading-tight">
                 {cls.name || `Класс — ${cls.ownerName}`}
               </div>
@@ -210,74 +266,50 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
             </div>
           )}
 
-          {codeNeeded ? (
-            <div className="card max-w-md">
-              <h2 className="text-base font-semibold">Введите код доступа</h2>
-              <p className="mt-1 text-xs text-stone-500">
-                Учитель выдал вам код для входа в этот класс.
-              </p>
-              <div className="mt-3 flex gap-2">
-                <input
-                  type="text"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="например 1234"
-                  className="flex-1 rounded border border-stone-300 bg-white px-3 py-1.5 font-mono dark:border-stone-700 dark:bg-stone-900"
-                />
-                <button onClick={() => tryCode(code, true)} className="btn-primary text-sm">
-                  Войти
-                </button>
-              </div>
-              {codeError && <div className="mt-2 text-xs text-red-600">{codeError}</div>}
+          <h2 className="mt-1 text-base font-semibold">
+            Задачи учителя · {tasks.length}
+          </h2>
+          {tasks.length === 0 ? (
+            <div className="card text-sm text-stone-500">
+              В этом классе пока нет задач. Возвращайтесь позже!
             </div>
           ) : (
-            <>
-              <h2 className="mt-1 text-base font-semibold">
-                Задачи учителя · {tasks.length}
-              </h2>
-              {tasks.length === 0 ? (
-                <div className="card text-sm text-stone-500">
-                  В этом классе пока нет задач. Возвращайтесь позже!
-                </div>
-              ) : (
-                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {tasks.map((t) => (
-                    <li
-                      key={t.id}
-                      className="card flex flex-col items-center gap-2 !p-3 text-left"
-                    >
-                      <MiniBoard
-                        fen={t.fen || STARTING_FEN}
-                        size={170}
-                        flipped={t.sideToPlay === 'b'}
-                      />
-                      <div className="w-full">
-                        <div className="truncate text-sm font-semibold">{t.title}</div>
-                        <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] uppercase">
-                          <span
-                            className={`rounded px-1.5 py-0.5 font-semibold ${
-                              DIFFICULTY_TONE[t.difficulty] ?? DIFFICULTY_TONE.medium
-                            }`}
-                          >
-                            {DIFFICULTY_LABEL[t.difficulty] ?? t.difficulty}
-                          </span>
-                          {t.category && (
-                            <span className="rounded bg-brand-100 px-1.5 py-0.5 font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
-                              {t.category}
-                            </span>
-                          )}
-                        </div>
-                        {t.description && (
-                          <div className="mt-1 line-clamp-2 text-[11px] text-stone-500">
-                            {t.description}
-                          </div>
-                        )}
+            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {tasks.map((t) => (
+                <li
+                  key={t.id}
+                  className="card flex flex-col items-center gap-2 !p-3 text-left"
+                >
+                  <MiniBoard
+                    fen={t.fen || STARTING_FEN}
+                    size={170}
+                    flipped={t.sideToPlay === 'b'}
+                  />
+                  <div className="w-full">
+                    <div className="truncate text-sm font-semibold">{t.title}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] uppercase">
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-semibold ${
+                          DIFFICULTY_TONE[t.difficulty] ?? DIFFICULTY_TONE.medium
+                        }`}
+                      >
+                        {DIFFICULTY_LABEL[t.difficulty] ?? t.difficulty}
+                      </span>
+                      {t.category && (
+                        <span className="rounded bg-brand-100 px-1.5 py-0.5 font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                          {t.category}
+                        </span>
+                      )}
+                    </div>
+                    {t.description && (
+                      <div className="mt-1 line-clamp-2 text-[11px] text-stone-500">
+                        {t.description}
                       </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </main>
 

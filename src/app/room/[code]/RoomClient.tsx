@@ -388,6 +388,11 @@ export function RoomClient({
     if (!vsComp || isEditing || isViewingPast) return;
     // Сторона человека ещё не определена — ждём первый ход в комнате, движок молчит.
     if (vsComp.humanColor === null) return;
+    // КРИТИЧНО: пока реальное состояние комнаты не пришло, fen = STARTING_FEN
+    // (ход белых). Если задача за чёрных (humanColor='b'), движок успевал
+    // сходить за белых на стартовой позиции — отсюда «холостой» первый ход.
+    // Запускаем движок только на настоящей позиции с сервера.
+    if (!state) return;
     if (!compEngine.ready || compEngine.thinking) return;
     const sideToMove = (fen.split(' ')[1] ?? 'w') as 'w' | 'b';
     if (sideToMove === vsComp.humanColor) return;
@@ -395,7 +400,7 @@ export function RoomClient({
     compFenRef.current = fen;
     compEngine.analyse(fen, { movetime: compMoveTimeMs });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fen, vsComp, isEditing, isViewingPast, compEngine.ready, compEngine.thinking, compMoveTimeMs]);
+  }, [fen, vsComp, isEditing, isViewingPast, state, compEngine.ready, compEngine.thinking, compMoveTimeMs]);
 
   useEffect(() => {
     if (!vsComp) return;
@@ -567,7 +572,7 @@ export function RoomClient({
                 независимо от остальных. На мобильном — кнопка дублируется ниже. */}
             {!isOwner && studentTaskMode && (
               <aside className="absolute bottom-0 right-full top-0 mr-2 hidden w-[120px] flex-col justify-start gap-2 lg:flex">
-                <div className="rounded-lg border border-stone-200/70 bg-white/80 p-2 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/50">
+                <div className="rounded-lg border border-stone-200/70 bg-paper/80 p-2 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/50">
                   <button
                     type="button"
                     onClick={resetToInitial}
@@ -613,7 +618,7 @@ export function RoomClient({
                 от доски, высота = высота доски (top:0, bottom:0). */}
             <aside className="absolute bottom-0 left-full top-0 ml-2 hidden w-[110px] flex-col justify-between lg:flex">
               {/* Top: блок с action-кнопками (✎ Редактор / ↺) */}
-              <div className="rounded-lg border border-stone-200/70 bg-white/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
+              <div className="rounded-lg border border-stone-200/70 bg-paper/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
                 <div className="flex flex-wrap items-center justify-center gap-1.5">
                   <ActionButtons
                     isOwner={isOwner}
@@ -632,12 +637,12 @@ export function RoomClient({
                 <button
                   type="button"
                   onClick={() => setFlipped((f) => !f)}
-                  className="w-full rounded-lg border border-stone-200/70 bg-white/70 px-1.5 py-1.5 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 dark:border-stone-700/60 dark:bg-stone-900/40 dark:text-stone-100 dark:hover:bg-stone-800"
+                  className="w-full rounded-lg border border-stone-200/70 bg-paper/70 px-1.5 py-1.5 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 dark:border-stone-700/60 dark:bg-stone-900/40 dark:text-stone-100 dark:hover:bg-stone-800"
                   title="Перевернуть доску"
                 >
                   ⇅ Перевернуть
                 </button>
-                <div className="rounded-lg border border-stone-200/70 bg-white/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
+                <div className="rounded-lg border border-stone-200/70 bg-paper/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
                   <div className="flex items-center justify-between gap-0.5">
                     <NavButton onClick={goStart} disabled={viewIdx === -1} title="К началу" small>
                       «
@@ -664,7 +669,7 @@ export function RoomClient({
                       type="button"
                       onClick={undoMove}
                       disabled={history.length === 0 || isEditing}
-                      className="mt-1.5 w-full rounded-md border border-stone-300/80 bg-white/90 px-1.5 py-1 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+                      className="mt-1.5 w-full rounded-md border border-stone-300/80 bg-paper/90 px-1.5 py-1 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
                       title="Отменить последний ход"
                     >
                       ↩ Отменить
@@ -690,7 +695,7 @@ export function RoomClient({
             <button
               type="button"
               onClick={() => setFlipped((f) => !f)}
-              className="rounded-md border border-stone-300/80 bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+              className="rounded-md border border-stone-300/80 bg-paper/90 px-2.5 py-1 text-[11px] font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
               title="Перевернуть доску"
             >
               ⇅ Перевернуть
@@ -739,6 +744,20 @@ export function RoomClient({
             onToggleMic={() => audio.setMic(!audio.micEnabled)}
             onForceMute={audio.forceMute}
             onForceMuteAll={audio.forceMuteAll}
+            inputDevices={audio.inputDevices}
+            outputDevices={audio.outputDevices}
+            currentInputId={audio.currentInputId}
+            currentOutputId={audio.currentOutputId}
+            outputSupported={audio.outputSupported}
+            onRefreshDevices={(req) => {
+              audio.refreshDevices(req).catch(() => undefined);
+            }}
+            onSelectInput={(id) => {
+              audio.setInputDevice(id).catch(() => undefined);
+            }}
+            onSelectOutput={(id) => {
+              audio.setOutputDevice(id).catch(() => undefined);
+            }}
             spotlightUserId={allowedMoverUserId}
             onSelectParticipant={
               isOwner
@@ -787,7 +806,7 @@ export function RoomClient({
               type="button"
               onClick={resetToInitial}
               disabled={isEditing}
-              className="w-full rounded-xl border border-stone-200/80 bg-white/90 px-3 py-2 text-xs font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700/70 dark:bg-stone-900/65 dark:text-stone-200 dark:hover:bg-stone-800/80"
+              className="w-full rounded-xl border border-stone-200/80 bg-paper/90 px-3 py-2 text-xs font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700/70 dark:bg-stone-900/65 dark:text-stone-200 dark:hover:bg-stone-800/80"
               title="Вернуть позицию к началу сегмента (как было сразу после редактора)"
             >
               ⟲ Вернуть мою позицию
@@ -826,7 +845,7 @@ export function RoomClient({
           {/* Блокировка ходов учеников (трансляция/урок): учитель запрещает всем
               ходить; затем клик по никнейму в аудио-панели разрешает одному. */}
           {isOwner && (roomKind === 'class-demo' || roomKind === 'lesson') && (
-            <div className="w-full rounded-xl border border-stone-200/80 bg-white/90 p-2.5 shadow-sm dark:border-stone-700/70 dark:bg-stone-900/65">
+            <div className="w-full rounded-xl border border-stone-200/80 bg-paper/90 p-2.5 shadow-sm dark:border-stone-700/70 dark:bg-stone-900/65">
               <button
                 type="button"
                 onClick={() => setMovesLock(!studentMovesLocked)}
@@ -936,7 +955,7 @@ function LinkBadge({
       type="button"
       onClick={onCopy}
       title="Скопировать ссылку на комнату"
-      className="group flex w-full flex-col items-stretch gap-1 rounded-xl border border-stone-200/80 bg-white/90 px-2.5 py-1.5 text-left shadow-sm transition-colors hover:border-brand-300 hover:bg-brand-50/60 dark:border-stone-700/70 dark:bg-stone-900/65 dark:hover:border-brand-700 dark:hover:bg-brand-900/20"
+      className="group flex w-full flex-col items-stretch gap-1 rounded-xl border border-stone-200/80 bg-paper/90 px-2.5 py-1.5 text-left shadow-sm transition-colors hover:border-brand-300 hover:bg-brand-50/60 dark:border-stone-700/70 dark:bg-stone-900/65 dark:hover:border-brand-700 dark:hover:bg-brand-900/20"
     >
       <span className="flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
         <span>Ссылка</span>
@@ -1085,7 +1104,7 @@ function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: bool
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="shrink-0 rounded-lg border border-stone-300/80 bg-white/90 px-3.5 py-2 text-sm font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 sm:ml-auto dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
+      className="shrink-0 rounded-lg border border-stone-300/80 bg-paper/90 px-3.5 py-2 text-sm font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 sm:ml-auto dark:border-stone-600/70 dark:bg-stone-800/80 dark:text-stone-100 dark:hover:bg-stone-700"
       title="Отменить последний ход"
     >
       ↩ Отменить ход

@@ -147,7 +147,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             value={fen}
             onChange={(e) => handleEditFen(e.target.value)}
             rows={2}
-            className="w-full resize-none rounded border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] dark:border-stone-700 dark:bg-stone-900"
+            className="w-full resize-none rounded border border-stone-300 bg-paper px-2 py-1 font-mono text-[11px] dark:border-stone-700 dark:bg-stone-900"
           />
         )}
       </div>
@@ -162,7 +162,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             onChange={(e) => setTitle(e.target.value)}
             maxLength={120}
             placeholder="Например: Мат слоном и конём"
-            className="w-full rounded border border-stone-300 bg-white px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
+            className="w-full rounded border border-stone-300 bg-paper px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
           />
         </div>
 
@@ -176,7 +176,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             maxLength={1000}
             rows={2}
             placeholder="Что должен сделать ученик и за что обращать внимание?"
-            className="w-full resize-none rounded border border-stone-300 bg-white px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
+            className="w-full resize-none rounded border border-stone-300 bg-paper px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
           />
         </div>
 
@@ -185,7 +185,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             <select
               value={sideToPlay}
               onChange={(e) => changeSide(e.target.value as 'w' | 'b')}
-              className="w-full rounded border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
+              className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
             >
               <option value="w">Белых</option>
               <option value="b">Чёрных</option>
@@ -195,7 +195,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             <select
               value={difficulty}
               onChange={(e) => setDifficulty(e.target.value)}
-              className="w-full rounded border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
+              className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
             >
               <option value="easy">Легко</option>
               <option value="medium">Средне</option>
@@ -206,7 +206,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             <select
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
-              className="w-full rounded border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
+              className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
             >
               <option value="mate">Поставить мат</option>
               <option value="win-material">Выиграть материал</option>
@@ -220,7 +220,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
               max={20}
               value={engineLevel}
               onChange={(e) => setEngineLevel(Number(e.target.value))}
-              className="w-full rounded border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
+              className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
             />
           </Field>
         </div>
@@ -235,7 +235,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             onChange={(e) => setCategory(e.target.value)}
             maxLength={40}
             placeholder="эндшпиль, тактика, мат в 2…"
-            className="w-full rounded border border-stone-300 bg-white px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
+            className="w-full rounded border border-stone-300 bg-paper px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
           />
         </div>
 
@@ -248,7 +248,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
               className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                 !isPublished
                   ? 'bg-amber-500 text-white'
-                  : 'bg-white text-stone-600 ring-1 ring-stone-300 hover:bg-stone-50 dark:bg-stone-900 dark:text-stone-300 dark:ring-stone-700'
+                  : 'bg-paper text-stone-600 ring-1 ring-stone-300 hover:bg-stone-50 dark:bg-stone-900 dark:text-stone-300 dark:ring-stone-700'
               }`}
             >
               📝 В библиотеку (черновик)
@@ -259,7 +259,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
               className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                 isPublished
                   ? 'bg-emerald-500 text-white'
-                  : 'bg-white text-stone-600 ring-1 ring-stone-300 hover:bg-stone-50 dark:bg-stone-900 dark:text-stone-300 dark:ring-stone-700'
+                  : 'bg-paper text-stone-600 ring-1 ring-stone-300 hover:bg-stone-50 dark:bg-stone-900 dark:text-stone-300 dark:ring-stone-700'
               }`}
             >
               🟢 Опубликовать ученикам

@@ -15,7 +15,7 @@ export function ModePanel({ mode, canEdit, onChange, className }: Props) {
   return (
     <div
       className={cn(
-        'rounded-xl border border-stone-200/80 bg-white/70 p-2 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
+        'rounded-xl border border-stone-200/80 bg-paper/70 p-2 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
         className,
       )}
     >

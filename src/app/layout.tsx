@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
-import { YandexMetrika } from '@/components/analytics/YandexMetrika';
-import { GoogleAnalytics } from '@/components/analytics/GoogleAnalytics';
+import { AnalyticsGate } from '@/components/analytics/AnalyticsGate';
+import { CookieConsent } from '@/components/legal/CookieConsent';
 import { VersionWatcher } from '@/components/system/VersionWatcher';
 import { buildBoardThemeCss, BOARD_THEME_KEY, PIECE_THEME_KEY } from '@/lib/board-theme';
 import { PieceSetHydrator } from '@/components/ui/PieceSetHydrator';
@@ -74,7 +74,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#f3ead9',
+  themeColor: '#c9c5b1',
 };
 
 const themeBootstrap = `
@@ -106,10 +106,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Наблюдает за версией сервера. При новой сборке показывает баннер */}
         {/* "Доступно обновление" — пользователю не нужно жать Ctrl+Shift+R. */}
         <VersionWatcher />
-        {/* Аналитика подключается один раз для всего сайта — присутствует на любой странице, */}
-        {/* включая создаваемые в будущем, без необходимости править каждую страницу отдельно. */}
-        <YandexMetrika />
-        <GoogleAnalytics />
+        {/* Баннер согласия на cookie (152-ФЗ). Пока пользователь не согласился — */}
+        {/* аналитика не грузится. */}
+        <CookieConsent />
+        {/* Аналитика (Яндекс.Метрика + GA) подключается на всём сайте, но ТОЛЬКО */}
+        {/* после согласия на cookie. */}
+        <AnalyticsGate />
       </body>
     </html>
   );

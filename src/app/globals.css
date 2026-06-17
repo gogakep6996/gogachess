@@ -25,10 +25,8 @@ body::before {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background:
-    radial-gradient(ellipse 80% 60% at 20% 0%, rgba(220, 148, 56, 0.18), transparent 60%),
-    radial-gradient(ellipse 70% 50% at 80% 100%, rgba(165, 95, 21, 0.18), transparent 60%),
-    linear-gradient(180deg, #fbf6ee 0%, #f3ead9 100%);
+  /* Спокойный серо-бежевый фон, почти ровный (едва заметный градиент). */
+  background: linear-gradient(180deg, #d4d0bd 0%, #c9c5b1 100%);
 }
 
 html.dark body::before {
@@ -46,39 +44,26 @@ html.dark body::before {
   /* Большой 3d-кубик-раздел на главной */
   .tile {
     @apply relative block overflow-hidden rounded-3xl p-6 text-left transition-all duration-300 ease-out
-           border border-stone-200/80 bg-white/80 shadow-soft backdrop-blur
-           dark:border-stone-800/80 dark:bg-stone-900/60;
-    background-image:
-      linear-gradient(180deg, rgba(255,255,255,0.85), rgba(255,255,255,0.6) 35%, rgba(0,0,0,0.04));
-    box-shadow:
-      0 10px 24px -14px rgba(40, 22, 8, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.6),
-      inset 0 -2px 0 rgba(0, 0, 0, 0.04);
+           border border-stone-200/80 bg-paper shadow-soft
+           dark:border-stone-800/80 dark:bg-stone-900/70;
+    /* Ровный фон без градиента — чистый кремовый блок. */
+    box-shadow: 0 10px 24px -14px rgba(40, 22, 8, 0.22);
     transform: translateY(0);
     will-change: transform, box-shadow;
   }
   html.dark .tile {
-    background-image:
-      linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 35%, rgba(0,0,0,0.18));
-    box-shadow:
-      0 14px 28px -16px rgba(0, 0, 0, 0.55),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06),
-      inset 0 -2px 0 rgba(0, 0, 0, 0.4);
+    box-shadow: 0 14px 28px -16px rgba(0, 0, 0, 0.55);
   }
   .tile:hover {
     transform: translateY(-4px) scale(1.012);
     box-shadow:
-      0 22px 44px -18px rgba(201, 122, 29, 0.45),
-      0 0 0 1px rgba(201, 122, 29, 0.4),
-      inset 0 1px 0 rgba(255, 255, 255, 0.7),
-      inset 0 -2px 0 rgba(0, 0, 0, 0.04);
+      0 22px 44px -18px rgba(201, 122, 29, 0.4),
+      0 0 0 1px rgba(201, 122, 29, 0.35);
   }
   html.dark .tile:hover {
     box-shadow:
       0 26px 50px -18px rgba(220, 148, 56, 0.45),
-      0 0 0 1px rgba(220, 148, 56, 0.45),
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      inset 0 -2px 0 rgba(0, 0, 0, 0.4);
+      0 0 0 1px rgba(220, 148, 56, 0.45);
   }
   .tile::after {
     content: '';
@@ -104,12 +89,12 @@ html.dark body::before {
            dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-800;
   }
   .input {
-    @apply w-full rounded-xl border border-stone-300/70 bg-white/80 px-4 py-2.5 text-sm
+    @apply w-full rounded-xl border border-stone-300/70 bg-paper/85 px-4 py-2.5 text-sm
            text-stone-900 shadow-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-300/40
            dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100 dark:focus:border-brand-500;
   }
   .card {
-    @apply rounded-2xl border border-stone-200/80 bg-white/70 p-6 shadow-soft backdrop-blur
+    @apply rounded-2xl border border-stone-200/80 bg-paper/80 p-6 shadow-soft backdrop-blur
            dark:border-stone-800/80 dark:bg-stone-900/50;
   }
   .badge {

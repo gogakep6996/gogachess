@@ -69,6 +69,20 @@ export function ClassLobbyPanel({
           onToggleMic={() => audio.setMic(!audio.micEnabled)}
           onForceMute={(sid, mute) => audio.forceMute(sid, mute)}
           onForceMuteAll={audio.forceMuteAll}
+          inputDevices={audio.inputDevices}
+          outputDevices={audio.outputDevices}
+          currentInputId={audio.currentInputId}
+          currentOutputId={audio.currentOutputId}
+          outputSupported={audio.outputSupported}
+          onRefreshDevices={(req) => {
+            audio.refreshDevices(req).catch(() => undefined);
+          }}
+          onSelectInput={(id) => {
+            audio.setInputDevice(id).catch(() => undefined);
+          }}
+          onSelectOutput={(id) => {
+            audio.setOutputDevice(id).catch(() => undefined);
+          }}
           onSelectParticipant={
             isTeacher ? (p) => audio.forceMute(p.socketId, !p.forcedMute) : undefined
           }

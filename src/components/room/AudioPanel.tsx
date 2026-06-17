@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type { Participant } from '@/lib/socket-events';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +24,16 @@ interface Props {
   onSelectParticipant?: (p: Participant) => void;
   /** userId участника, которого нужно подсветить (разрешён говорить/ходить). */
   spotlightUserId?: string | null;
+
+  // --- Выбор устройств (микрофон / динамик-наушники) ---
+  inputDevices?: MediaDeviceInfo[];
+  outputDevices?: MediaDeviceInfo[];
+  currentInputId?: string | null;
+  currentOutputId?: string | null;
+  outputSupported?: boolean;
+  onRefreshDevices?: (requestPermission?: boolean) => void;
+  onSelectInput?: (deviceId: string) => void;
+  onSelectOutput?: (deviceId: string) => void;
 }
 
 export function AudioPanel({
@@ -41,8 +52,28 @@ export function AudioPanel({
   onForceMuteAll,
   onSelectParticipant,
   spotlightUserId = null,
+  inputDevices = [],
+  outputDevices = [],
+  currentInputId = null,
+  currentOutputId = null,
+  outputSupported = false,
+  onRefreshDevices,
+  onSelectInput,
+  onSelectOutput,
 }: Props) {
   const c = variant === 'compact';
+  const [showDevices, setShowDevices] = useState(false);
+  // Выбор устройств доступен, только если родитель передал обработчики.
+  const devicesAvailable = !!onSelectInput;
+
+  function toggleDevices() {
+    setShowDevices((prev) => {
+      const next = !prev;
+      // При открытии — обновляем список и просим доступ ради названий устройств.
+      if (next) onRefreshDevices?.(true);
+      return next;
+    });
+  }
 
   // Другие участники (не я) и сводка по их принудительному mute.
   const others = participants.filter((p) => p.userId !== meId);
@@ -52,23 +83,78 @@ export function AudioPanel({
   return (
     <div
       className={cn(
-        'rounded-xl border border-stone-200/80 bg-white/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
+        'rounded-xl border border-stone-200/80 bg-paper/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
         c ? 'flex max-h-[100%] flex-col p-2' : 'card',
       )}
     >
       <div className={cn('flex items-center justify-between', c ? '' : 'mb-3')}>
         <h3 className={cn('font-semibold', c ? 'text-[11px]' : '')}>Аудио</h3>
-        {isOwner && joined && (
-          <button
-            type="button"
-            onClick={() => onForceMuteAll(!allMuted)}
-            className={cn('btn-ghost', c ? '!px-1.5 !py-0 text-[10px]' : 'text-xs')}
-            title={allMuted ? 'Вернуть звук всем' : 'Замьютить всех'}
-          >
-            {allMuted ? '🔊 вернуть' : '🔇 всем'}
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {isOwner && joined && (
+            <button
+              type="button"
+              onClick={() => onForceMuteAll(!allMuted)}
+              className={cn('btn-ghost', c ? '!px-1.5 !py-0 text-[10px]' : 'text-xs')}
+              title={allMuted ? 'Вернуть звук всем' : 'Замьютить всех'}
+            >
+              {allMuted ? '🔊 вернуть' : '🔇 всем'}
+            </button>
+          )}
+          {devicesAvailable && (
+            <button
+              type="button"
+              onClick={toggleDevices}
+              aria-pressed={showDevices}
+              className={cn(
+                'btn-ghost',
+                c ? '!px-1.5 !py-0 text-[11px]' : 'text-xs',
+                showDevices && 'text-brand-600 dark:text-brand-400',
+              )}
+              title="Выбрать микрофон и динамик"
+            >
+              ⚙
+            </button>
+          )}
+        </div>
       </div>
+
+      {devicesAvailable && showDevices && (
+        <div
+          className={cn(
+            'mb-2 space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-2 dark:border-stone-700 dark:bg-stone-800/60',
+            c ? 'mt-1 text-[11px]' : 'mt-2 text-xs',
+          )}
+        >
+          <DeviceSelect
+            label="🎙 Микрофон"
+            value={currentInputId ?? ''}
+            devices={inputDevices}
+            fallbackLabel="Микрофон"
+            emptyLabel="По умолчанию"
+            onChange={(id) => onSelectInput?.(id)}
+          />
+          {outputSupported ? (
+            <DeviceSelect
+              label="🔊 Звук (наушники/динамик)"
+              value={currentOutputId ?? ''}
+              devices={outputDevices}
+              fallbackLabel="Устройство вывода"
+              emptyLabel="По умолчанию"
+              onChange={(id) => onSelectOutput?.(id)}
+            />
+          ) : (
+            <p className="text-[10px] leading-snug text-stone-400">
+              Выбор колонок/наушников недоступен в этом браузере — переключите
+              устройство вывода в системе.
+            </p>
+          )}
+          {inputDevices.length === 0 && (
+            <p className="text-[10px] leading-snug text-stone-400">
+              Список пуст — разрешите доступ к микрофону, чтобы увидеть устройства.
+            </p>
+          )}
+        </div>
+      )}
 
       {!joined ? (
         <button type="button" onClick={onJoin} className={cn('btn-primary w-full', c && '!py-1.5 text-[11px]')}>
@@ -190,6 +276,40 @@ export function AudioPanel({
         })}
       </ul>
     </div>
+  );
+}
+
+function DeviceSelect({
+  label,
+  value,
+  devices,
+  fallbackLabel,
+  emptyLabel,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  devices: MediaDeviceInfo[];
+  fallbackLabel: string;
+  emptyLabel: string;
+  onChange: (deviceId: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-0.5 block font-medium text-stone-600 dark:text-stone-300">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border border-stone-300 bg-paper px-1.5 py-1 text-stone-700 outline-none focus:border-brand-400 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-200"
+      >
+        {devices.length === 0 && <option value="">{emptyLabel}</option>}
+        {devices.map((d, i) => (
+          <option key={d.deviceId || i} value={d.deviceId}>
+            {d.label || `${fallbackLabel} ${i + 1}`}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

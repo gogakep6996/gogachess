@@ -59,7 +59,7 @@ export function VersionWatcher() {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-4 right-4 z-[100] flex max-w-[90vw] items-center gap-3 rounded-xl border border-brand-300 bg-white px-4 py-2.5 shadow-xl dark:border-brand-700 dark:bg-stone-900"
+      className="fixed bottom-4 right-4 z-[100] flex max-w-[90vw] items-center gap-3 rounded-xl border border-brand-300 bg-paper px-4 py-2.5 shadow-xl dark:border-brand-700 dark:bg-stone-900"
     >
       <span className="text-sm text-stone-700 dark:text-stone-200">
         Доступно обновление сайта

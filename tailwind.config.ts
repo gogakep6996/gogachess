@@ -29,10 +29,16 @@ const config: Config = {
           900: '#3e240e',
         },
         surface: {
-          light: '#fbf6ee',
-          DEFAULT: '#f3ead9',
+          light: '#d4d0bd',
+          DEFAULT: '#c9c5b1',
           dark: '#161310',
           deeper: '#0c0a08',
+        },
+        // «Бумага» — тёплый кремовый фон карточек/панелей. Заметно светлее фона,
+        // но не голый белый — блоки мягко «всплывают» над песочным фоном.
+        paper: {
+          DEFAULT: '#f6edda',
+          dark: '#1d1813',
         },
       },
       fontFamily: {

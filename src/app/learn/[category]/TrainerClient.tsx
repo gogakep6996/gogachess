@@ -71,23 +71,40 @@ export function TrainerClient({ category, title }: { category: string; title: st
       if (epochRef.current !== epoch) return;
 
       const game = new Chess(data.puzzle.fen);
+      // Игрок ходит ПОСЛЕ хода соперника, поэтому его цвет — противоположный
+      // тому, чья очередь в исходном FEN.
+      const color = game.turn() === 'w' ? 'b' : 'w';
+
+      // Показываем ИСХОДНУЮ позицию (до хода соперника), затем с паузой
+      // анимированно делаем ход соперника — чтобы ученик видел, что именно
+      // сходил соперник. Никакого «холостого» хода своего цвета.
       gameRef.current = game;
       setPuzzle(data.puzzle);
       setTotalCount(data.total);
       setFen(data.puzzle.fen);
-      // Игрок ходит ПОСЛЕ первого хода соперника из решения.
-      setPlayerColor(game.turn() === 'w' ? 'b' : 'w');
+      setPlayerColor(color);
+      setLastMove(null);
       setStepIdx(1);
       setPhase('intro');
 
-      const firstMove = data.puzzle.moves.split(' ')[0];
+      // Ход соперника проигрывается чуть позже — после ремоунта доски на новой
+      // задаче (key={puzzle.id}), чтобы смена fen дала анимацию хода, а не «слайд».
       setTimeout(() => {
         if (epochRef.current !== epoch) return;
-        applyUci(game, firstMove);
+        const g = gameRef.current;
+        if (!g) return;
+        const firstUci = data.puzzle.moves.split(' ')[0];
+        const firstMove = g.move({
+          from: firstUci.slice(0, 2),
+          to: firstUci.slice(2, 4),
+          promotion: firstUci[4] ?? 'q',
+        });
+        setFen(g.fen());
+        setLastMove(firstMove ? { from: firstMove.from, to: firstMove.to } : null);
         setPhase('solving');
-      }, 700);
+      }, 550);
     },
-    [category, applyUci],
+    [category],
   );
 
   useEffect(() => {
@@ -193,6 +210,9 @@ export function TrainerClient({ category, title }: { category: string; title: st
         <div className={boardSizeCls}>
           {fen ? (
             <ChessBoard
+              // key по задаче — чистый ремоунт без анимации «слайда» при
+              // переходе к следующей задаче (новая позиция, не продолжение).
+              key={puzzle?.id ?? 'none'}
               fen={fen}
               canMove={phase === 'solving'}
               isEditing={false}

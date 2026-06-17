@@ -194,7 +194,7 @@ export function PlayClient({ meName: _meName }: { meName: string }) {
                               'rounded-lg border px-3 py-1.5 text-xs font-medium transition',
                               active
                                 ? 'border-brand-500 bg-brand-500 text-white shadow-sm'
-                                : 'border-stone-300/70 bg-white text-stone-700 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-900/50 dark:text-stone-200 dark:hover:bg-stone-800',
+                                : 'border-stone-300/70 bg-paper text-stone-700 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-900/50 dark:text-stone-200 dark:hover:bg-stone-800',
                               invite.mode === 'creating' && 'opacity-60',
                             )}
                           >

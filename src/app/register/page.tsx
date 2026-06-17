@@ -15,6 +15,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string>('');
   const [success, setSuccess] = useState<string | null>(null);
+  const [agreed, setAgreed] = useState(false);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -91,6 +92,23 @@ export default function RegisterPage() {
 
             <CaptchaWidget onToken={setCaptchaToken} />
 
+            <label className="flex items-start gap-2 text-xs leading-snug text-stone-600 dark:text-stone-400">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600"
+                required
+              />
+              <span>
+                Я даю согласие на обработку персональных данных и принимаю{' '}
+                <Link href="/privacy" target="_blank" className="text-brand-600 hover:underline">
+                  Политику конфиденциальности
+                </Link>
+                .
+              </span>
+            </label>
+
             {error && (
               <p className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">
                 {error}
@@ -104,7 +122,7 @@ export default function RegisterPage() {
 
             <button
               type="submit"
-              disabled={loading || Boolean(success)}
+              disabled={loading || Boolean(success) || !agreed}
               className="btn-primary w-full"
             >
               {loading ? 'Создаём…' : 'Создать аккаунт'}

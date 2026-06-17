@@ -25,7 +25,7 @@ export function ChatPanel({ variant = 'default', messages, meId, onSend, onClear
   return (
     <div
       className={cn(
-        'flex min-h-0 flex-col overflow-hidden rounded-xl border border-stone-200/80 bg-white/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
+        'flex min-h-0 flex-col overflow-hidden rounded-xl border border-stone-200/80 bg-paper/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
         compact ? 'h-full flex-1 p-2' : 'card flex h-full max-h-[28rem]',
       )}
     >

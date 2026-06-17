@@ -15,9 +15,7 @@ export default async function HomePage() {
           </span>
           <h1 className="font-display text-4xl font-semibold leading-tight text-stone-800 dark:text-stone-200 md:text-5xl">
             <span className="text-brand-600 dark:text-brand-400">Шахматы</span>{' '}
-            <span className="text-white [text-shadow:0_1px_3px_rgb(41_37_36/0.75),0_0_24px_rgb(41_37_36/0.2)] dark:[text-shadow:none]">
-              gogachess
-            </span>
+            <span>gogachess</span>
             {' — это удобство'}
           </h1>
           <p className="mx-auto max-w-2xl text-stone-600 dark:text-stone-300">
@@ -90,6 +88,12 @@ export default async function HomePage() {
             icon="🛡"
           />
         </section>
+
+        <footer className="mt-16 border-t border-stone-300/60 pt-6 text-center text-sm text-stone-500 dark:border-stone-700/60 dark:text-stone-400">
+          <Link href="/privacy" className="hover:text-brand-600 hover:underline dark:hover:text-brand-400">
+            Политика конфиденциальности
+          </Link>
+        </footer>
       </main>
     </>
   );

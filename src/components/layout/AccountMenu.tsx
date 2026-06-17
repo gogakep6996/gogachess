@@ -265,7 +265,7 @@ export function AccountMenu({
 
       {/* Выпадающая панель */}
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 flex max-h-[min(80vh,32rem)] w-[19.5rem] flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-white/95 shadow-xl backdrop-blur-md dark:border-stone-700/80 dark:bg-stone-900/95">
+        <div className="absolute right-0 top-full z-50 mt-2 flex max-h-[min(80vh,32rem)] w-[19.5rem] flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-paper/95 shadow-xl backdrop-blur-md dark:border-stone-700/80 dark:bg-stone-900/95">
           {/* Шапка: кто я (всегда видна) */}
           <div className="flex shrink-0 items-center gap-3 border-b border-stone-200/70 px-4 py-3 dark:border-stone-800/70">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-500 text-base font-semibold text-white">

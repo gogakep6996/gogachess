@@ -92,7 +92,7 @@ export function EnginePanel({
 
   if (room) {
     return (
-      <div className="w-full rounded-xl border border-stone-200/80 bg-white/90 p-2.5 shadow-sm dark:border-stone-700/70 dark:bg-stone-900/65">
+      <div className="w-full rounded-xl border border-stone-200/80 bg-paper/90 p-2.5 shadow-sm dark:border-stone-700/70 dark:bg-stone-900/65">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
             <span className="grid h-5 w-5 place-items-center rounded-md bg-brand-500 text-[10px] font-bold text-white shadow-sm">
@@ -122,7 +122,7 @@ export function EnginePanel({
             </div>
           ) : (
             <select
-              className="mb-2 w-full rounded-md border border-stone-300/70 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-600 dark:bg-stone-950 dark:text-stone-100"
+              className="mb-2 w-full rounded-md border border-stone-300/70 bg-paper px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-600 dark:bg-stone-950 dark:text-stone-100"
               value={skill}
               onChange={(e) => setSkillState(Number(e.target.value))}
             >

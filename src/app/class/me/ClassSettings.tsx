@@ -23,6 +23,24 @@ export function ClassSettings({
   const [accessCode, setAccessCode] = useState(cls.accessCode ?? '');
   const [isPublic, setIsPublic] = useState(cls.isPublic);
   const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Генерируем простой 5-значный код — легко продиктовать ученикам.
+  function generateCode() {
+    const next = String(Math.floor(10000 + Math.random() * 90000));
+    setAccessCode(next);
+  }
+
+  function copyCode() {
+    if (!cls.accessCode) return;
+    navigator.clipboard?.writeText(cls.accessCode).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      },
+      () => undefined,
+    );
+  }
 
   async function save() {
     setSaving(true);
@@ -52,9 +70,21 @@ export function ClassSettings({
         <div className="flex flex-wrap items-center gap-3 text-stone-600 dark:text-stone-300">
           <span>{cls.isPublic ? '🔓 Класс публичный' : '🔒 Только по ссылке'}</span>
           {cls.accessCode ? (
-            <span>· код доступа: <span className="font-mono">{cls.accessCode}</span></span>
+            <span className="flex items-center gap-1.5">
+              · код доступа:{' '}
+              <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                {cls.accessCode}
+              </span>
+              <button
+                onClick={copyCode}
+                className="text-xs text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
+                title="Скопировать код"
+              >
+                {copied ? 'скопировано' : 'копировать'}
+              </button>
+            </span>
           ) : (
-            <span>· без кода доступа</span>
+            <span>· без кода доступа — войти может любой</span>
           )}
         </div>
         <button onClick={() => setOpen(true)} className="btn-ghost text-xs">
@@ -76,21 +106,39 @@ export function ClassSettings({
           onChange={(e) => setName(e.target.value)}
           maxLength={80}
           placeholder={`Класс — ${cls.ownerName}`}
-          className="w-full rounded border border-stone-300 bg-white px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
+          className="w-full rounded border border-stone-300 bg-paper px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
         />
       </div>
       <div>
         <label className="mb-1 block text-xs font-semibold text-stone-500">
-          Код доступа (4–6 цифр / символов; пусто = без кода)
+          Код доступа (пусто = вход без кода)
         </label>
-        <input
-          type="text"
-          value={accessCode}
-          onChange={(e) => setAccessCode(e.target.value)}
-          maxLength={32}
-          placeholder="например 1234"
-          className="w-44 rounded border border-stone-300 bg-white px-3 py-1.5 font-mono dark:border-stone-700 dark:bg-stone-900"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={accessCode}
+            onChange={(e) => setAccessCode(e.target.value)}
+            maxLength={32}
+            placeholder="например 1234"
+            className="w-44 rounded border border-stone-300 bg-paper px-3 py-1.5 font-mono dark:border-stone-700 dark:bg-stone-900"
+          />
+          <button type="button" onClick={generateCode} className="btn-ghost text-xs">
+            🎲 Сгенерировать
+          </button>
+          {accessCode && (
+            <button
+              type="button"
+              onClick={() => setAccessCode('')}
+              className="text-xs text-stone-500 underline-offset-2 hover:underline"
+            >
+              убрать код
+            </button>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-stone-500">
+          Когда код задан, ученики вводят его при входе в класс (на странице класса
+          или в разделе «Класс» → «Войти по коду»). Сохраните и отправьте код ученикам.
+        </p>
       </div>
       <label className="flex items-center gap-2">
         <input

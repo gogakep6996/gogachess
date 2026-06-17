@@ -107,7 +107,7 @@ function ActionBar({
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={onStart}
-          className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
+          className="rounded-lg border border-stone-300 bg-paper px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
         >
           ▶ Начать урок
         </button>
@@ -120,7 +120,7 @@ function ActionBar({
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={onStop}
-          className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
+          className="rounded-lg border border-stone-300 bg-paper px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
         >
           ■ Завершить урок
         </button>
@@ -131,7 +131,7 @@ function ActionBar({
           className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
             distributeOpen
               ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/30 dark:text-brand-300'
-              : 'border-stone-300 bg-white text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800'
+              : 'border-stone-300 bg-paper text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:text-stone-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800'
           }`}
         >
           Раздать задачу классу {distributeOpen ? '▲' : '▼'}
@@ -139,14 +139,14 @@ function ActionBar({
 
         <button
           onClick={onBroadcast}
-          className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
+          className="rounded-lg border border-stone-300 bg-paper px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
         >
           Транслировать ученикам мою доску
         </button>
 
         <button
           onClick={onOpenMyBoard}
-          className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
+          className="rounded-lg border border-stone-300 bg-paper px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
         >
           Моя доска
         </button>
@@ -167,7 +167,7 @@ function ActionBar({
                     className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${
                       t.id === currentTaskId
                         ? 'bg-brand-500 text-white'
-                        : 'bg-white hover:bg-brand-50 dark:bg-stone-900 dark:hover:bg-stone-800'
+                        : 'bg-paper hover:bg-brand-50 dark:bg-stone-900 dark:hover:bg-stone-800'
                     }`}
                   >
                     <MiniBoard fen={t.fen} size={48} flipped={t.sideToPlay === 'b'} />

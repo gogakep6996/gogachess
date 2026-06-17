@@ -42,7 +42,7 @@ export function ClassSearch({ initialClasses }: { initialClasses: ClassDto[] }) 
           placeholder="Найти учителя по имени или адресу класса…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          className="w-full rounded-lg border border-stone-300 bg-white px-4 py-2.5 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-stone-700 dark:bg-stone-900"
+          className="w-full rounded-lg border border-stone-300 bg-paper px-4 py-2.5 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-stone-700 dark:bg-stone-900"
         />
       </div>
 

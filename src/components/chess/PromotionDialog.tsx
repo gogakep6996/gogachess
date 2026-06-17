@@ -29,7 +29,7 @@ export function PromotionDialog({ color, onChoose, onCancel }: Props) {
       <div
         role="dialog"
         aria-label="Выберите фигуру для превращения"
-        className="w-full max-w-sm rounded-2xl border border-stone-200/80 bg-white p-4 shadow-glow dark:border-stone-700/60 dark:bg-stone-900"
+        className="w-full max-w-sm rounded-2xl border border-stone-200/80 bg-paper p-4 shadow-glow dark:border-stone-700/60 dark:bg-stone-900"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-3 text-center text-base font-semibold">

@@ -2,8 +2,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// PostgreSQL — и локально с Docker Postgres, и в проде (Compose / Neon / Supabase и т.д.).
-// DATABASE_URL задавайте в `.env`; для локалки см. DEPLOY.md / docker-compose.
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")

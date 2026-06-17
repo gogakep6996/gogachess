@@ -117,6 +117,36 @@ function capSenderBitrate(sender: RTCRtpSender, maxBitrate = 24000): void {
   }
 }
 
+// Ключи в localStorage для запоминания выбранных устройств.
+const INPUT_DEVICE_KEY = 'gogachess-audio-input';
+const OUTPUT_DEVICE_KEY = 'gogachess-audio-output';
+
+/** Базовые фильтры захвата микрофона + опционально конкретное устройство.
+ *  Усиленные фильтры: echo/noise/AGC + Chrome-специфичные goog-* (включая
+ *  детектор стука по клавиатуре). channelCount:1 — моно (голосу хватает). */
+function buildAudioConstraints(deviceId?: string | null): MediaTrackConstraints {
+  const base = {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+    googEchoCancellation: true,
+    googNoiseSuppression: true,
+    googNoiseSuppression2: true,
+    googHighpassFilter: true,
+    googTypingNoiseDetection: true,
+    googAutoGainControl: true,
+  } as Record<string, unknown>;
+  if (deviceId) base.deviceId = { exact: deviceId };
+  return base as unknown as MediaTrackConstraints;
+}
+
+/** Поддерживает ли браузер выбор устройства вывода звука (setSinkId). */
+const OUTPUT_SELECTION_SUPPORTED =
+  typeof window !== 'undefined' &&
+  typeof HTMLMediaElement !== 'undefined' &&
+  'setSinkId' in HTMLMediaElement.prototype;
+
 export interface UseAudioRoomResult {
   joined: boolean;
   micEnabled: boolean;
@@ -128,6 +158,21 @@ export interface UseAudioRoomResult {
   setMic: (on: boolean) => void;
   forceMute: (targetSocketId: string, mute: boolean) => void;
   forceMuteAll: (mute: boolean) => void;
+  // --- Выбор устройств (микрофон / динамик-наушники) ---
+  /** Доступные микрофоны. Метки появляются после выдачи доступа. */
+  inputDevices: MediaDeviceInfo[];
+  /** Доступные устройства вывода (динамики/наушники). */
+  outputDevices: MediaDeviceInfo[];
+  currentInputId: string | null;
+  currentOutputId: string | null;
+  /** Поддерживается ли выбор устройства вывода в этом браузере. */
+  outputSupported: boolean;
+  /** Обновить список устройств. requestPermission=true — спросить доступ ради меток. */
+  refreshDevices: (requestPermission?: boolean) => Promise<void>;
+  /** Переключить микрофон (живо, если уже подключены). */
+  setInputDevice: (deviceId: string) => Promise<void>;
+  /** Переключить устройство вывода звука. */
+  setOutputDevice: (deviceId: string) => Promise<void>;
 }
 
 function micErrorMessage(err: unknown): string {
@@ -157,6 +202,15 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
   const [micEnabled, setMicEnabled] = useState(false);
   const [forcedMute, setForcedMute] = useState(false);
   const [levels, setLevels] = useState<Record<string, number>>({});
+
+  // --- Устройства ввода/вывода ---
+  const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [currentInputId, setCurrentInputId] = useState<string | null>(null);
+  const [currentOutputId, setCurrentOutputId] = useState<string | null>(null);
+  // Refs — чтобы читать актуальный выбор внутри замыканий (join/ontrack).
+  const selectedInputRef = useRef<string | null>(null);
+  const selectedOutputRef = useRef<string | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -273,6 +327,8 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
           audiosRef.current.set(peerId, audio);
         }
         audio.srcObject = stream;
+        // Применяем выбранное устройство вывода (наушники/динамик) к новому элементу.
+        applySinkId(audio);
         const playPromise = audio.play();
         if (playPromise && typeof playPromise.catch === 'function') {
           playPromise
@@ -467,6 +523,14 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     };
   }, []);
 
+  /** Назначает аудио-элементу выбранное устройство вывода (если поддерживается). */
+  function applySinkId(el: HTMLAudioElement) {
+    const id = selectedOutputRef.current;
+    if (!id || !OUTPUT_SELECTION_SUPPORTED) return;
+    const withSink = el as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
+    withSink.setSinkId?.(id).catch(() => undefined);
+  }
+
   function toggleMicTrack(on: boolean) {
     micEnabledRef.current = on;
     const stream = localStreamRef.current;
@@ -576,6 +640,103 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
     rawStreamRef.current = null;
   }
 
+  const refreshDevices = useCallback(async (requestPermission = false) => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      let devices = await navigator.mediaDevices.enumerateDevices();
+      // До выдачи доступа метки пустые. Если просят — спросим доступ ради названий.
+      const noLabels = devices.every((d) => !d.label);
+      if (noLabels && requestPermission) {
+        try {
+          const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
+          tmp.getTracks().forEach((t) => t.stop());
+          devices = await navigator.mediaDevices.enumerateDevices();
+        } catch {
+          // доступ не дали — покажем что есть
+        }
+      }
+      setInputDevices(devices.filter((d) => d.kind === 'audioinput'));
+      setOutputDevices(devices.filter((d) => d.kind === 'audiooutput'));
+    } catch (err) {
+      console.warn('[audio] enumerateDevices failed', err);
+    }
+  }, []);
+
+  const setInputDevice = useCallback(
+    async (deviceId: string) => {
+      selectedInputRef.current = deviceId;
+      setCurrentInputId(deviceId);
+      try {
+        localStorage.setItem(INPUT_DEVICE_KEY, deviceId);
+      } catch {
+        // приватный режим — выбор не сохранится, но применится
+      }
+      // Не подключены — выбор применится при следующем join().
+      if (!localStreamRef.current) return;
+      try {
+        const raw = await navigator.mediaDevices.getUserMedia({
+          audio: buildAudioConstraints(deviceId),
+        });
+        // Останавливаем старый микрофон и его noise-gate.
+        stopNoiseGate();
+        localStreamRef.current?.getTracks().forEach((t) => t.stop());
+        rawStreamRef.current = raw;
+        const stream = buildMicGraph(raw);
+        localStreamRef.current = stream;
+        const track = stream.getAudioTracks()[0] ?? null;
+        if (track) track.enabled = micEnabledRef.current;
+        startNoiseGate();
+        // Подменяем дорожку у всех пиров (с учётом текущего mute).
+        peersRef.current.forEach((pc) => {
+          pc.getSenders().forEach((sender) => {
+            sender
+              .replaceTrack(micEnabledRef.current ? track : null)
+              .catch(() => undefined);
+          });
+        });
+        console.log('[audio] mic switched to', deviceId);
+      } catch (err) {
+        console.warn('[audio] setInputDevice failed', err);
+        window.alert(micErrorMessage(err));
+      }
+    },
+    [],
+  );
+
+  const setOutputDevice = useCallback(async (deviceId: string) => {
+    selectedOutputRef.current = deviceId;
+    setCurrentOutputId(deviceId);
+    try {
+      localStorage.setItem(OUTPUT_DEVICE_KEY, deviceId);
+    } catch {
+      // ignore
+    }
+    audiosRef.current.forEach((el) => applySinkId(el));
+  }, []);
+
+  // Инициализация: восстановить выбор из localStorage + следить за подключением устройств.
+  useEffect(() => {
+    try {
+      const i = localStorage.getItem(INPUT_DEVICE_KEY);
+      const o = localStorage.getItem(OUTPUT_DEVICE_KEY);
+      if (i) {
+        selectedInputRef.current = i;
+        setCurrentInputId(i);
+      }
+      if (o) {
+        selectedOutputRef.current = o;
+        setCurrentOutputId(o);
+      }
+    } catch {
+      // ignore
+    }
+    void refreshDevices(false);
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices) return;
+    const handler = () => void refreshDevices(false);
+    navigator.mediaDevices.addEventListener?.('devicechange', handler);
+    return () => navigator.mediaDevices.removeEventListener?.('devicechange', handler);
+  }, [refreshDevices]);
+
   const join = useCallback(async () => {
     if (joined) return;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
@@ -619,23 +780,23 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       }
     }
     try {
-      // Усиленные фильтры захвата. Стандартные echoCancellation/noiseSuppression/
-      // autoGainControl + Chrome-специфичные goog-* (включая детектор стука по
-      // клавиатуре). Неизвестные ключи браузеры просто игнорируют. channelCount:1
-      // — моно: голосу хватает, трафика меньше.
-      const audioConstraints = {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-        googEchoCancellation: true,
-        googNoiseSuppression: true,
-        googNoiseSuppression2: true,
-        googHighpassFilter: true,
-        googTypingNoiseDetection: true,
-        googAutoGainControl: true,
-      } as unknown as MediaTrackConstraints;
-      const rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      // Берём ранее выбранный микрофон (если есть). Если устройство недоступно
+      // (например, наушники отключили) — повторяем без жёсткой привязки.
+      let rawStream: MediaStream;
+      try {
+        rawStream = await navigator.mediaDevices.getUserMedia({
+          audio: buildAudioConstraints(selectedInputRef.current),
+        });
+      } catch (errExact) {
+        if (selectedInputRef.current) {
+          console.warn('[audio] выбранный микрофон недоступен → дефолтный', errExact);
+          rawStream = await navigator.mediaDevices.getUserMedia({
+            audio: buildAudioConstraints(null),
+          });
+        } else {
+          throw errExact;
+        }
+      }
       rawStreamRef.current = rawStream;
       // Пропускаем микрофон через noise gate; в пиры пойдёт обработанный поток.
       const stream = buildMicGraph(rawStream);
@@ -646,6 +807,14 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
         audioCtxRef.current.resume().catch(() => undefined);
       }
+      // Запомним фактически выбранный микрофон (метки теперь доступны).
+      const usedTrack = rawStream.getAudioTracks()[0];
+      const usedId = usedTrack?.getSettings().deviceId;
+      if (usedId) {
+        selectedInputRef.current = usedId;
+        setCurrentInputId(usedId);
+      }
+      void refreshDevices(false);
       setMicEnabled(false);
       setJoined(true);
       console.log('[audio] join() OK; socket connected =', socket?.connected, '→ emit audio:ready');
@@ -657,7 +826,7 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
       }
       window.alert(micErrorMessage(err));
     }
-  }, [joined, socket]);
+  }, [joined, socket, refreshDevices]);
 
   const leave = useCallback(() => {
     peersRef.current.forEach((pc) => pc.close());
@@ -700,5 +869,23 @@ export function useAudioRoom(socket: Socket | null): UseAudioRoomResult {
 
   useEffect(() => () => leave(), [leave]);
 
-  return { joined, micEnabled, forcedMute, levels, join, leave, setMic, forceMute, forceMuteAll };
+  return {
+    joined,
+    micEnabled,
+    forcedMute,
+    levels,
+    join,
+    leave,
+    setMic,
+    forceMute,
+    forceMuteAll,
+    inputDevices,
+    outputDevices,
+    currentInputId,
+    currentOutputId,
+    outputSupported: OUTPUT_SELECTION_SUPPORTED,
+    refreshDevices,
+    setInputDevice,
+    setOutputDevice,
+  };
 }

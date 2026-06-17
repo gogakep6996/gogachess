@@ -779,7 +779,7 @@ export function ChessBoard({
             <>
               <div
                 className={cn(
-                  'grid gap-1 rounded-xl bg-white/60 dark:bg-stone-900/40',
+                  'grid gap-1 rounded-xl bg-paper/60 dark:bg-stone-900/40',
                   paletteAside ? 'grid-cols-2 p-1.5' : cn('grid-cols-12', compact ? 'p-1.5' : 'p-2'),
                 )}
               >
