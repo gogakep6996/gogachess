@@ -10,16 +10,26 @@ interface Props {
   standings: TournamentStandingDto[];
   meId: string | null;
   className?: string;
+  /** Если задано — таблица показывает столько строк по высоте, остальное скроллится. */
+  scrollRows?: number;
 }
 
-export function StandingsTable({ standings, meId, className }: Props) {
+export function StandingsTable({ standings, meId, className, scrollRows }: Props) {
+  // Высота одной строки ≈ 2.35rem (py-1.5 + текст). Фиксируем высоту под scrollRows.
+  const listStyle =
+    scrollRows && standings.length > scrollRows
+      ? { maxHeight: `${scrollRows * 2.35}rem` }
+      : undefined;
   return (
     <div className={`card !p-3 ${className ?? ''}`}>
       <h3 className="mb-2 text-sm font-semibold">Турнирная таблица</h3>
       {standings.length === 0 ? (
         <p className="text-xs text-stone-500">Пока нет участников.</p>
       ) : (
-        <ol className="text-sm">
+        <ol
+          className="overflow-y-auto overscroll-contain pr-1 text-sm"
+          style={listStyle}
+        >
           {standings.map((p) => (
             <li
               key={p.userId}

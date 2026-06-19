@@ -20,16 +20,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRoomSocket } from '@/hooks/useRoomSocket';
 import { ChessBoard } from '@/components/chess/ChessBoard';
+import { ChatPanel } from '@/components/room/ChatPanel';
 import { ClockDisplay } from './ClockDisplay';
 import { MaterialBar } from './MaterialBar';
 import { DrawOfferToast } from './DrawOfferToast';
 import { MoveNav } from './MoveNav';
-import { StandingsTable } from './StandingsTable';
 import { TournamentCountdown } from './TournamentCountdown';
 import {
   STARTING_FEN,
+  type ChatMessageDto,
   type TournamentLivePayload,
-  type TournamentStandingDto,
 } from '@/lib/socket-events';
 
 interface Props {
@@ -40,8 +40,12 @@ interface Props {
   whiteRank?: number;
   blackRank?: number;
   onReturnToTournament: () => void;
+  /** «Приостановить» — выйти в лобби, не возвращаясь в подбор партий. */
+  onPause: () => void;
   tournament: TournamentLivePayload | null;
-  standings: TournamentStandingDto[];
+  /** Общий чат участников турнира. */
+  chatMessages: ChatMessageDto[];
+  onChatSend: (text: string) => void;
 }
 
 // Доска того же размера, что в просмотре чужих партий.
@@ -55,8 +59,10 @@ export function TournamentGameView({
   whiteRank,
   blackRank,
   onReturnToTournament,
+  onPause,
   tournament,
-  standings,
+  chatMessages,
+  onChatSend,
 }: Props) {
   const room = useRoomSocket(roomCode);
   const state = room.state;
@@ -126,19 +132,29 @@ export function TournamentGameView({
   };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_260px]">
-      {/* Левая колонка: countdown + таблица */}
-      <aside className="order-2 flex flex-col gap-3 lg:order-1">
+    <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_260px]">
+      {/* Левая колонка: таймер окончания турнира + общий чат участников.
+          На десктопе высота фиксирована по высоте доски (480px) — чат НЕ растягивает
+          строку, сообщения скроллятся внутри. */}
+      <aside className="order-2 flex min-h-0 flex-col gap-3 lg:order-1 lg:h-[480px] lg:self-start">
         {tournament && (
           <TournamentCountdown status={tournament.status} endsAt={tournament.endsAt} />
         )}
-        <StandingsTable standings={standings} meId={meId} />
+        <div className="min-h-[16rem] flex-1">
+          <ChatPanel variant="compact" messages={chatMessages} meId={meId} onSend={onChatSend} />
+        </div>
       </aside>
 
       {/* Центр: только доска, без полосок сверху/снизу — чтобы её верх лёг
           ровно по верху строки (на уровень блока «До окончания турнира»). */}
       <section className="order-1 flex flex-col items-center lg:order-2">
-        <div className="mx-auto" style={{ width: BOARD_SIDE, height: BOARD_SIDE }}>
+        <div className="relative mx-auto" style={{ width: BOARD_SIDE, height: BOARD_SIDE }}>
+          {gameLive && state.firstMoveDeadlineAt && (
+            <FirstMoveTimer
+              deadline={state.firstMoveDeadlineAt}
+              yourTurn={iAmPlayer && sideToMove === myColor}
+            />
+          )}
           <ChessBoard
             fen={viewedFen}
             canMove={canMove}
@@ -154,9 +170,9 @@ export function TournamentGameView({
         </div>
       </section>
 
-      {/* Правая колонка: Lichess-style, центрирована по высоте доски,
-          MaterialBar перенесён в ряды с никами. */}
-      <aside className="order-3 flex flex-col justify-center gap-2 self-stretch">
+      {/* Правая колонка: Lichess-style. Высота фиксирована по доске (480px) и
+          независима от чата — при переполнении скроллится внутри себя. */}
+      <aside className="order-3 flex flex-col gap-2 lg:h-[480px] lg:self-start lg:overflow-y-auto">
         {state.clock && <ClockDisplay clock={state.clock} side={topColor} />}
 
         <PlayerRow
@@ -227,6 +243,7 @@ export function TournamentGameView({
             whiteName={whiteName}
             blackName={blackName}
             onReturn={onReturnToTournament}
+            onPause={onPause}
           />
         )}
 
@@ -236,6 +253,35 @@ export function TournamentGameView({
           </div>
         )}
       </aside>
+    </div>
+  );
+}
+
+/** Видимый отсчёт 20 секунд на первый/ответный ход (как «First move» на Lichess). */
+function FirstMoveTimer({ deadline, yourTurn }: { deadline: number; yourTurn: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 200);
+    return () => window.clearInterval(t);
+  }, []);
+  const secs = Math.max(0, Math.ceil((deadline - now) / 1000));
+  return (
+    <div
+      className={`pointer-events-none absolute left-1/2 top-2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold shadow-lg ${
+        yourTurn
+          ? secs <= 5
+            ? 'animate-pulse bg-red-600 text-white'
+            : 'bg-red-500 text-white'
+          : 'bg-stone-800/90 text-stone-100'
+      }`}
+    >
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="13" r="8" />
+        <path d="M12 9v4l2 2M9 2h6" strokeLinecap="round" />
+      </svg>
+      <span>
+        {yourTurn ? 'Ваш ход' : 'Ход соперника'} · 0:{String(secs).padStart(2, '0')}
+      </span>
     </div>
   );
 }
@@ -327,12 +373,14 @@ function GameResultPanel({
   whiteName,
   blackName,
   onReturn,
+  onPause,
 }: {
   result: NonNullable<ReturnType<typeof useRoomSocket>['state']>['result'];
   myColor: 'w' | 'b' | null;
   whiteName: string;
   blackName: string;
   onReturn: () => void;
+  onPause: () => void;
 }) {
   if (!result) return null;
   const myOutcome: 'win' | 'loss' | 'draw' =
@@ -383,9 +431,14 @@ function GameResultPanel({
       {reasonLabel && (
         <div className="mb-2 text-xs uppercase tracking-wide text-stone-500">{reasonLabel}</div>
       )}
-      <button onClick={onReturn} className="btn-primary w-full">
-        Вернуться в турнир
-      </button>
+      <div className="flex flex-col gap-2">
+        <button onClick={onReturn} className="btn-primary w-full">
+          Следующая партия
+        </button>
+        <button onClick={onPause} className="btn-ghost w-full">
+          Приостановить
+        </button>
+      </div>
     </div>
   );
 }

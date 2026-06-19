@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { io, type Socket } from 'socket.io-client';
 import {
   SocketEvents,
+  type ChatMessageDto,
   type MatchFoundPayload,
   type RoomStatePayload,
   type TournamentLivePayload,
@@ -12,6 +13,7 @@ import {
 } from '@/lib/socket-events';
 import { ChessBoard } from '@/components/chess/ChessBoard';
 import { MiniBoard } from '@/components/chess/MiniBoard';
+import { ChatPanel } from '@/components/room/ChatPanel';
 import { TournamentGameView } from '@/components/tournament/TournamentGameView';
 import { StandingsTable } from '@/components/tournament/StandingsTable';
 import { TournamentCountdown } from '@/components/tournament/TournamentCountdown';
@@ -32,6 +34,25 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
   const [spectateCode, setSpectateCode] = useState<string | null>(null);
   // Код МОЕЙ активной партии (живой или только что завершённой, пока не нажат «Вернуться в турнир»).
   const [activeMatchCode, setActiveMatchCode] = useState<string | null>(null);
+
+  // При монтировании восстанавливаем код партии из sessionStorage — чтобы при
+  // обновлении страницы остаться за партией, не дожидаясь прихода live-данных
+  // (иначе на миг показывается лобби и «выбрасывает» из партии).
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem(`tournament:${id}:active`);
+    if (saved) setActiveMatchCode((cur) => cur ?? saved);
+  }, [id]);
+
+  // Сохраняем/чистим код активной партии в sessionStorage (живёт до закрытия вкладки).
+  useEffect(() => {
+    if (activeMatchCode) {
+      window.sessionStorage.setItem(`tournament:${id}:active`, activeMatchCode);
+    } else {
+      window.sessionStorage.removeItem(`tournament:${id}:active`);
+    }
+  }, [activeMatchCode, id]);
+  // Общий чат участников турнира (live, in-memory на сервере).
+  const [chat, setChat] = useState<ChatMessageDto[]>([]);
   const socketRef = useRef<Socket | null>(null);
 
   // Лёгкий socket для лайв-обновлений турнира + получения MatchFound (автопереход на свою партию).
@@ -46,11 +67,19 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
       setActiveMatchCode(p.code);
       setSpectateCode(null);
     });
+    s.on(SocketEvents.TournamentChatHistory, (msgs: ChatMessageDto[]) => setChat(msgs));
+    s.on(SocketEvents.TournamentChatNew, (m: ChatMessageDto) =>
+      setChat((prev) => [...prev, m]),
+    );
     return () => {
       s.disconnect();
       socketRef.current = null;
     };
   }, [id]);
+
+  const sendChat = useCallback((text: string) => {
+    socketRef.current?.emit(SocketEvents.TournamentChatSend, text);
+  }, []);
 
   // Fallback REST раз в 4с (на случай если сервер ещё не успел разослать live)
   useEffect(() => {
@@ -103,6 +132,15 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
     }
   }, [data?.status, id]);
 
+  // «Приостановить»: выходим из партии в лобби, НЕ возвращаясь в подбор —
+  // игрок остаётся в турнире, но новых партий ему не подбирают, пока он сам
+  // не нажмёт «Участвовать». Можно спокойно уйти на главную.
+  const handlePauseFromGame = useCallback(async () => {
+    setActiveMatchCode(null);
+    setJoined(false);
+    await fetch(`/api/tournaments/${id}/leave`, { method: 'POST' });
+  }, [id]);
+
   const liveMatches = useMemo(
     () => (data?.matches ?? []).filter((m) => m.status === 'live' && m.roomCode),
     [data],
@@ -142,20 +180,19 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
         whiteRank={ranks.get(activeMatch.whiteId)}
         blackRank={ranks.get(activeMatch.blackId)}
         onReturnToTournament={handleReturnFromGame}
+        onPause={handlePauseFromGame}
         tournament={data}
-        standings={data?.standings ?? []}
+        chatMessages={chat}
+        onChatSend={sendChat}
       />
     );
   }
 
   // Я НЕ в активной партии: показываем заголовок турнира и классический лэйаут.
   return (
-    <>
-      <header className="mb-4">
-        <h1 className="font-display text-2xl font-semibold">{name}</h1>
-      </header>
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+    <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
       <section>
+        <h1 className="mb-3 font-display text-2xl font-semibold">{name}</h1>
         {spectateMatch ? (
           <SelectedBoard
             roomCode={spectateMatch.roomCode!}
@@ -212,7 +249,7 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
         )}
       </section>
 
-      <aside className="space-y-4">
+      <aside className="flex flex-col gap-3 lg:sticky lg:top-3 lg:h-[calc(100vh-5rem)]">
         {data && <TournamentCountdown status={data.status} endsAt={data.endsAt} />}
 
         {meId && data?.status !== 'finished' && (
@@ -229,10 +266,14 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
           </Link>
         )}
 
-        <StandingsTable standings={data?.standings ?? []} meId={meId} />
+        <StandingsTable standings={data?.standings ?? []} meId={meId} scrollRows={4} />
+
+        {/* Общий чат участников турнира — занимает всё оставшееся место до низа. */}
+        <div className="min-h-[16rem] flex-1">
+          <ChatPanel variant="compact" messages={chat} meId={meId ?? ''} onSend={sendChat} />
+        </div>
       </aside>
-      </div>
-    </>
+    </div>
   );
 }
 

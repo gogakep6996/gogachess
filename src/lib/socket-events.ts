@@ -70,6 +70,10 @@ export const SocketEvents = {
   // Турниры (live-обновления)
   TournamentLive: 'tournament:live',   // подписка на конкретный турнир
   TournamentState: 'tournament:state', // апдейты с матчами/таблицей
+  /** Общий чат участников турнира (in-memory, живёт пока идёт турнир). */
+  TournamentChatSend: 'tournament:chat-send',
+  TournamentChatNew: 'tournament:chat-new',
+  TournamentChatHistory: 'tournament:chat-history',
 
   // Класс учителя (live-обновления для дашборда учителя и страницы ученика)
   /** Подписка на состояние класса (учитель / ученик). Сразу шлём текущий ClassState. */
@@ -243,6 +247,9 @@ export interface RoomStatePayload {
   /** Единственный ученик (userId), которому разрешено ходить при включённой
    *  блокировке studentMovesLocked. null = никому, кроме учителя. */
   allowedMoverUserId: string | null;
+  /** Турнир: дедлайн (ms epoch) на один из первых двух полуходов. Кто не сходит
+   *  до него — проигрывает. null = правило не действует. Для отрисовки таймера. */
+  firstMoveDeadlineAt: number | null;
 }
 
 export interface ChatMessageDto {

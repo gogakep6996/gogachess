@@ -75,6 +75,12 @@ export async function requireVerifiedUser(): Promise<RequireVerifiedResult> {
     select: { id: true, emailVerifiedAt: true },
   });
   if (!user) return { ok: false, status: 401, error: 'Сессия устарела, войдите заново' };
+  // В режиме разработки (локальный хост) не требуем подтверждения email —
+  // чтобы можно было тестировать классы/турниры без почтового сервера.
+  // На проде (NODE_ENV=production) проверка работает как обычно.
+  if (process.env.NODE_ENV !== 'production' && !user.emailVerifiedAt) {
+    return { ok: true, userId: user.id };
+  }
   if (!user.emailVerifiedAt) {
     return {
       ok: false,

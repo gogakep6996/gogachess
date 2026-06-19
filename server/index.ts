@@ -99,6 +99,21 @@ interface RoomRuntime {
   studentMovesLocked: boolean;
   /** Единственный ученик (userId), которому разрешено ходить при блокировке. */
   allowedMoverUserId: string | null;
+  /** Турнир: дедлайн (ms epoch) на один из первых двух полуходов. Кто к этому
+   *  моменту не сходил — проигрывает. null = правило не действует (сыграно ≥2 хода
+   *  или это не турнирная партия). */
+  firstMoveDeadlineAt: number | null;
+}
+
+/** Сколько даётся на каждый из первых двух полуходов турнирной партии. */
+const FIRST_MOVE_MS = 20_000;
+
+/** Число сделанных полуходов, вычисленное из FEN (надёжно после рестарта сервера). */
+function pliesFromFen(fen: string): number {
+  const parts = fen.split(' ');
+  const stm = parts[1] === 'b' ? 'b' : 'w';
+  const fullmove = Number(parts[5]) || 1;
+  return (fullmove - 1) * 2 + (stm === 'b' ? 1 : 0);
 }
 
 const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
@@ -150,6 +165,10 @@ const rooms = new Map<string, RoomRuntime>();
 /** socketId -> { userId, timeControl } */
 const matchQueue = new Map<string, { userId: string; userName: string; timeControl: string }>();
 
+/** Общий чат турнира (in-memory): tournamentId -> последние сообщения. */
+const tournamentChats = new Map<string, ChatMessageDto[]>();
+const TOURNAMENT_CHAT_LIMIT = 200;
+
 function parseAuthCookie(cookieHeader: string | undefined): { sub: string; name: string } | null {
   if (!cookieHeader) return null;
   const cookies = Object.fromEntries(
@@ -196,6 +215,7 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     engineLevel: room.engineLevel,
     studentMovesLocked: room.studentMovesLocked,
     allowedMoverUserId: room.allowedMoverUserId,
+    firstMoveDeadlineAt: room.firstMoveDeadlineAt,
   };
 }
 
@@ -285,6 +305,12 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     engineLevel,
     studentMovesLocked: false,
     allowedMoverUserId: null,
+    // Турнирная партия, в которой ещё не сыграно 2 полухода → запускаем 20-сек дедлайн
+    // на первый/второй ход (на случай реконструкции runtime после рестарта сервера).
+    firstMoveDeadlineAt:
+      dbRoom.kind === 'tournament' && pliesFromFen(initialFen) < 2
+        ? Date.now() + FIRST_MOVE_MS
+        : null,
   };
   rooms.set(code, runtime);
   return runtime;
@@ -737,6 +763,8 @@ app.prepare().then(() => {
         engineLevel: 20,
         studentMovesLocked: false,
         allowedMoverUserId: null,
+        // У белых есть 20 секунд на первый ход с момента создания партии.
+        firstMoveDeadlineAt: Date.now() + FIRST_MOVE_MS,
       });
     }
     await broadcastTournament(tournamentId);
@@ -817,6 +845,18 @@ app.prepare().then(() => {
       if (runtime.drawOffer && now > runtime.drawOffer.expiresAt) {
         runtime.drawOffer = null;
         io.to(runtime.code).emit(SocketEvents.RoomState, buildState(runtime));
+      }
+      // Правило первых двух полуходов (турнир): кто не сходил за 20 секунд — проигрывает.
+      if (runtime.firstMoveDeadlineAt !== null) {
+        if (pliesFromFen(runtime.fen) >= 2) {
+          runtime.firstMoveDeadlineAt = null;
+        } else if (now >= runtime.firstMoveDeadlineAt) {
+          const stm: 'w' | 'b' = (runtime.fen.split(' ')[1] ?? 'w') === 'b' ? 'b' : 'w';
+          const winner: 'white' | 'black' = stm === 'w' ? 'black' : 'white';
+          runtime.firstMoveDeadlineAt = null;
+          endGame(runtime, winner, 'timeout');
+          continue;
+        }
       }
       // Тикаем часы.
       const c = runtime.clock;
@@ -933,6 +973,12 @@ app.prepare().then(() => {
           runtime.historyViewIdx = null;
           // Часы: списываем время мовера, +инкремент, передаём ход сопернику.
           applyClockOnMove(runtime, turn);
+          // Правило первых двух полуходов (турнир): пока сыграно <2 полуходов —
+          // у соперника снова 20 секунд на ответный ход; после 2-го хода правило снимается.
+          if (runtime.kind === 'tournament') {
+            runtime.firstMoveDeadlineAt =
+              pliesFromFen(runtime.fen) < 2 ? Date.now() + FIRST_MOVE_MS : null;
+          }
           // Любой ход отменяет действующее предложение ничьей.
           runtime.drawOffer = null;
           io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
@@ -1581,6 +1627,8 @@ app.prepare().then(() => {
           engineLevel: 20,
           studentMovesLocked: false,
           allowedMoverUserId: null,
+          // Правило 20 секунд — только для турнирных партий, casual без него.
+          firstMoveDeadlineAt: null,
         });
         const payloadA: MatchFoundPayload = {
           code,
@@ -1673,7 +1721,28 @@ app.prepare().then(() => {
     socket.on(SocketEvents.TournamentLive, async (id: string) => {
       if (typeof id !== 'string') return;
       socket.join(`tournament:${id}`);
+      socket.data.tournamentId = id;
+      socket.emit(SocketEvents.TournamentChatHistory, tournamentChats.get(id) ?? []);
       await broadcastTournament(id);
+    });
+
+    // Общий чат турнира: сообщение видят все подписанные на tournament:<id>.
+    socket.on(SocketEvents.TournamentChatSend, (content: string) => {
+      const id = socket.data.tournamentId as string | undefined;
+      if (!id || typeof content !== 'string' || !content.trim()) return;
+      const trimmed = content.trim().slice(0, 1000);
+      const dto: ChatMessageDto = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        userId,
+        userName,
+        content: trimmed,
+        createdAt: new Date().toISOString(),
+      };
+      const list = tournamentChats.get(id) ?? [];
+      list.push(dto);
+      if (list.length > TOURNAMENT_CHAT_LIMIT) list.splice(0, list.length - TOURNAMENT_CHAT_LIMIT);
+      tournamentChats.set(id, list);
+      io.to(`tournament:${id}`).emit(SocketEvents.TournamentChatNew, dto);
     });
 
     // ---------- КЛАСС: подписка / lifecycle урока / демо / раздача ----------

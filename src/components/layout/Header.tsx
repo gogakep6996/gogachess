@@ -49,7 +49,12 @@ export function Header() {
         /^\/class\/[^/]+$/.test(pathname)),
   );
   const showVerifyBanner = Boolean(
-    user && user.email && !user.emailVerifiedAt && !hideBannerOnBoardPage,
+    // На локалке (dev) баннер не показываем — подтверждение email там не требуется.
+    process.env.NODE_ENV === 'production' &&
+      user &&
+      user.email &&
+      !user.emailVerifiedAt &&
+      !hideBannerOnBoardPage,
   );
 
   return (
