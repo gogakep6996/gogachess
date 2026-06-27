@@ -2,9 +2,12 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Прод на PostgreSQL. Для локальной разработки временно меняйте на
-// provider = "sqlite" (DATABASE_URL="file:./dev.db"), но ПЕРЕД КОММИТОМ/ДЕПЛОЕМ
-// возвращайте обратно postgresql!
+// ПРОД работает в Docker на PostgreSQL (DATABASE_URL задаётся в docker-compose.yml
+// как postgresql://...@db:5432/...). Поэтому для коммита/деплоя провайдер ДОЛЖЕН
+// быть "postgresql".
+// Для локальной разработки можно временно поставить provider = "sqlite"
+// (DATABASE_URL="file:./dev.db"), но ОБЯЗАТЕЛЬНО вернуть "postgresql" перед
+// коммитом и пушем — иначе Docker-сборка/старт упадёт с P1012.
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
