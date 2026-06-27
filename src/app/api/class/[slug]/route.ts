@@ -36,7 +36,7 @@ export async function GET(
   const tasks =
     codeAccepted
       ? await prisma.task.findMany({
-          where: { classId: cls.id, isPublished: true },
+          where: { classId: cls.id, isHomework: true },
           orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
         })
       : [];

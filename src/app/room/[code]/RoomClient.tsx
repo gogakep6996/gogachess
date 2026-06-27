@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChessBoard } from '@/components/chess/ChessBoard';
 import { PromotionDialog } from '@/components/chess/PromotionDialog';
 import { ChatPanel } from '@/components/room/ChatPanel';
 import { AudioPanel } from '@/components/room/AudioPanel';
 import { EnginePanel } from '@/components/room/EnginePanel';
 import { HistoryPanel } from '@/components/room/HistoryPanel';
+import { LibraryPanel } from '@/components/room/LibraryPanel';
 import { ModePanel } from '@/components/room/ModePanel';
 import { useRoomSocket } from '@/hooks/useRoomSocket';
 import { useAudioRoom } from '@/hooks/useAudioRoom';
@@ -34,6 +35,9 @@ interface Props {
    *  фиксирует цвет ученика, скрывает плашку «Ссылка» и панель «Режим». Сам
    *  движок и редактор позиции уже спрятаны для не-владельцев (isOwner=false). */
   studentTaskMode?: { humanColor: 'w' | 'b' };
+  /** Контент, который рендерится в самом верху левой колонки (над чатом ученика).
+   *  Используется страницей класса, чтобы разместить кнопку «На главную». */
+  leftTopSlot?: ReactNode;
 }
 
 export function RoomClient({
@@ -41,6 +45,7 @@ export function RoomClient({
   room,
   embedded = false,
   studentTaskMode,
+  leftTopSlot,
 }: Props) {
   const isOwner = meId === room.ownerId;
 
@@ -506,16 +511,40 @@ export function RoomClient({
   // КРИТИЧНО: ширина задаётся явным calc/min — НЕ `w-full`. С `w-full` обёртка
   // `<div className="relative">` без собственной ширины схлопывается в ноль
   // внутри flex-секции с items-center (доска исчезала).
-  const boardClassName = embedded
-    ? 'relative z-10 mx-auto aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,calc(100dvh-6.5rem),calc(100vw-48rem),760px)]'
-    : 'relative z-10 mx-auto aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,calc(100dvh-5rem),calc(100vw-48rem),760px)]';
+  // Резерв ширины под боковые колонки + боковую полоску доски:
+  //   • ученик с задачей — слева ЕЩЁ одна полоска («Начать заново»), поэтому
+  //     резервируем больше (48rem), иначе доска налезает на колонки;
+  //   • во всех остальных случаях (учитель/трансляция) слева полоски нет —
+  //     резерв 40rem, чтобы на узких экранах (iPad Pro портрет, 1024px) доска
+  //     не сжималась до ~256px, а занимала ~384px и оставалась читаемой.
+  // Есть ли СЛЕВА от доски доп. полоска (кнопка «Начать заново» для ученика).
+  const hasLeftStrip = !isOwner && !!studentTaskMode;
+  // В режиме редактора на телефоне/портрете доска перестаёт быть жёстко квадратной
+  // на уровне контейнера: ChessBoard сам держит квадрат, а сверху/снизу появляются
+  // полосы палитры фигур. Поэтому aspect-square оставляем только для ландшафта.
+  const aspectCls = isEditing ? 'lg:landscape:aspect-square' : 'aspect-square';
+  // На телефонах (≤480px) доска тянется во всю ширину экрана (full-bleed):
+  // w-full заполняет родителя-обёртку, которой ниже задаётся w-screen.
+  const boardBase = `relative z-10 mx-auto ${aspectCls} w-[min(96vw,480px)] max-[480px]:w-full`;
+  // Портрет планшета (lg + portrait): боковые полоски кнопок уезжают ПОД доску,
+  // поэтому доска занимает всю центральную колонку (до правого блока аудио).
+  const portraitW = 'lg:portrait:w-[min(94vw,calc(100vw-29.5rem),760px)]';
+  const boardClassName = hasLeftStrip
+    ? embedded
+      ? `${boardBase} lg:landscape:w-[min(94vw,calc(100dvh-6.5rem),calc(100vw-48rem),760px)] ${portraitW}`
+      : `${boardBase} lg:landscape:w-[min(94vw,calc(100dvh-5rem),calc(100vw-48rem),760px)] ${portraitW}`
+    : embedded
+      ? `${boardBase} lg:landscape:w-[min(94vw,calc(100dvh-6.5rem),calc(100vw-40rem),760px)] ${portraitW}`
+      : `${boardBase} lg:landscape:w-[min(94vw,calc(100dvh-5rem),calc(100vw-40rem),760px)] ${portraitW}`;
 
   return (
     <main
       className={cn(
         'relative mx-auto flex w-full max-w-[1800px] flex-col px-2 pb-2 pt-0 sm:px-3',
-        // На lg+ — фиксированный экран без скролла страницы; на мобильном — естественный flow.
-        'lg:min-h-0 lg:flex-1 lg:overflow-hidden',
+        // Фиксированный экран без скролла — только в ландшафте (ноуты, планшеты лёжа).
+        // В портрете (например, iPad Pro 1024px стоя) — естественный flow, иначе
+        // очень высокий экран растягивает чат вниз и сжимает доску.
+        'lg:landscape:min-h-0 lg:landscape:flex-1 lg:landscape:overflow-hidden',
       )}
     >
       {error && (
@@ -534,9 +563,12 @@ export function RoomClient({
       <div
         className={cn(
           'flex flex-1 flex-col gap-2',
-          'lg:grid lg:min-h-0 lg:gap-3 lg:overflow-hidden',
-          'lg:grid-cols-[13.5rem_1fr_13.75rem] xl:grid-cols-[13.5rem_1fr_15rem]',
+          'lg:grid lg:gap-3',
+          'lg:grid-cols-[13.5rem_1fr_12.5rem] xl:grid-cols-[13.5rem_1fr_15rem]',
           'lg:grid-rows-[auto_1fr]',
+          // Высоту фиксируем (и прячем переполнение/скроллим внутри колонок) только
+          // в ландшафте; в портрете сетка естественной высоты — чат не тянется вниз.
+          'lg:landscape:min-h-0 lg:landscape:overflow-hidden',
         )}
       >
         {/* ───────── ДОСКА + БОКОВАЯ ПОЛОСКА КНОПОК ─────────
@@ -551,6 +583,11 @@ export function RoomClient({
             // overflow-visible нужен, чтобы абсолютно позиционированный aside
             // справа от доски не обрезался границей колонки грида.
             'lg:col-start-2 lg:row-start-1 lg:row-end-3 lg:min-h-0 lg:overflow-visible',
+            // В ЛАНДШАФТЕ доска центрируется, а правая полоска кнопок висит
+            // абсолютно у её правого края — резервируем справа место под полоску,
+            // чтобы она не вылезала в колонку аудио/чата. В портрете полоска
+            // уезжает под доску, поэтому резерв там не нужен.
+            !hasLeftStrip && 'lg:landscape:pr-[7.5rem]',
           )}
         >
           {/* ── Мобильная верхняя action-строка (lg:hidden) ── */}
@@ -565,13 +602,24 @@ export function RoomClient({
             />
           </div>
 
-          {/* ── Доска (квадрат) + абсолютно позиционированный aside ── */}
-          <div className="relative">
+          {/* ── Библиотека (мобильная + портрет планшета): в ландшафте на lg+
+                живёт в правой боковой полоске. ── */}
+          {isOwner && isEditing && (
+            <div className="mb-1 w-full max-w-[min(94vw,760px)] lg:landscape:hidden">
+              <LibraryPanel onPick={(f) => handleEditChange(f)} />
+            </div>
+          )}
+
+          {/* ── Доска (квадрат) + абсолютно позиционированный aside ──
+              На телефоне (≤480px) обёртка занимает всю ширину экрана: будучи
+              flex-элементом секции с items-center, она симметрично «вылезает»
+              в боковые отступы страницы, и доска внутри идёт впритык к краям. */}
+          <div className="relative max-[480px]:w-screen">
             {/* Левая боковая панель — только для ученика, решающего задачу учителя.
                 Содержит «Начать заново», чтобы ученик мог переиграть задачу
                 независимо от остальных. На мобильном — кнопка дублируется ниже. */}
             {!isOwner && studentTaskMode && (
-              <aside className="absolute bottom-0 right-full top-0 mr-2 hidden w-[120px] flex-col justify-start gap-2 lg:flex">
+              <aside className="absolute bottom-0 right-full top-0 mr-2 hidden w-[120px] flex-col justify-start gap-2 lg:landscape:flex">
                 <div className="rounded-lg border border-stone-200/70 bg-paper/80 p-2 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/50">
                   <button
                     type="button"
@@ -616,7 +664,7 @@ export function RoomClient({
 
             {/* Десктопная боковая полоска (hidden < lg). Абсолютно справа
                 от доски, высота = высота доски (top:0, bottom:0). */}
-            <aside className="absolute bottom-0 left-full top-0 ml-2 hidden w-[110px] flex-col justify-between lg:flex">
+            <aside className="absolute bottom-0 left-full top-0 ml-2 hidden w-[110px] flex-col gap-1.5 lg:landscape:flex">
               {/* Top: блок с action-кнопками (✎ Редактор / ↺) */}
               <div className="rounded-lg border border-stone-200/70 bg-paper/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
                 <div className="flex flex-wrap items-center justify-center gap-1.5">
@@ -632,8 +680,15 @@ export function RoomClient({
                 </div>
               </div>
 
-              {/* Bottom: перевернуть + nav + Отменить */}
-              <div className="flex flex-col gap-1.5">
+              {/* Библиотека позиций — только учителю и только в режиме редактора.
+                  Занимает свободное место между кнопками и навигацией; клик по
+                  позиции загружает её FEN на доску (комната и доска класса). */}
+              {isOwner && isEditing && (
+                <LibraryPanel compact onPick={(f) => handleEditChange(f)} />
+              )}
+
+              {/* Bottom: перевернуть + nav + Отменить (прижато к низу). */}
+              <div className="mt-auto flex flex-col gap-1.5">
                 <button
                   type="button"
                   onClick={() => setFlipped((f) => !f)}
@@ -678,6 +733,57 @@ export function RoomClient({
                 </div>
               </div>
             </aside>
+          </div>
+
+          {/* ── Панель управления ПОД доской: планшет в ПОРТРЕТЕ (lg + portrait).
+                В портрете правая боковая полоска уезжает сюда, а доска занимает
+                всю центральную колонку. В ландшафте этот блок скрыт (полоска справа). ── */}
+          <div className="mt-2 hidden w-full max-w-[min(94vw,760px)] flex-wrap items-center justify-center gap-2 lg:portrait:flex">
+            <div className="flex items-center gap-1.5 rounded-lg border border-stone-200/70 bg-paper/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
+              <ActionButtons
+                isOwner={isOwner}
+                isEditing={isEditing}
+                onEditStart={handleEditStart}
+                onEditEnd={handleEditEnd}
+                onReset={resetPosition}
+                showStudentEditing={!isOwner && isEditing && mode.studentsCanEdit}
+                size="lg"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setFlipped((f) => !f)}
+              className="rounded-lg border border-stone-200/70 bg-paper/70 px-3 py-2 text-xs font-semibold text-stone-700 shadow-sm transition-colors hover:bg-stone-50 dark:border-stone-700/60 dark:bg-stone-900/40 dark:text-stone-100 dark:hover:bg-stone-800"
+              title="Перевернуть доску"
+            >
+              ⇅ Перевернуть
+            </button>
+            <div className="flex items-center rounded-lg border border-stone-200/70 bg-paper/70 px-2 py-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
+              <NavRow
+                goStart={goStart}
+                goPrev={goPrev}
+                goNext={goNext}
+                goEnd={goEnd}
+                isViewingPast={isViewingPast}
+                viewIdx={viewIdx}
+                historyLength={history.length}
+                lastIdx={lastIdx}
+              />
+            </div>
+            {isLessonLike && !isStudentInBroadcast && (
+              <UndoButton onClick={undoMove} disabled={history.length === 0 || isEditing} />
+            )}
+            {!isOwner && studentTaskMode && (
+              <button
+                type="button"
+                onClick={resetToInitial}
+                disabled={isEditing}
+                className="rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700 shadow-sm transition-colors hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-brand-700 dark:bg-brand-900/40 dark:text-brand-200 dark:hover:bg-brand-900/60"
+                title="Сбросить задачу к стартовой позиции"
+              >
+                ⟲ Начать заново
+              </button>
+            )}
           </div>
 
           {/* ── Мобильная нижняя nav-строка (lg:hidden) ── */}
@@ -791,6 +897,8 @@ export function RoomClient({
             isOwner ? 'lg:overflow-y-auto' : 'lg:overflow-hidden',
           )}
         >
+          {leftTopSlot && <div className="shrink-0">{leftTopSlot}</div>}
+
           {/* Плашка «Ссылка» — только владельцу комнаты (учителю/автору комнаты).
               Ученикам, решающим задачу, ссылка на их личную доску не нужна. */}
           {isOwner && (

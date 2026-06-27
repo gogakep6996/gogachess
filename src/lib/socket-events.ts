@@ -289,6 +289,8 @@ export interface TournamentStandingDto {
 export interface TournamentLivePayload {
   id: string;
   status: string;
+  /** ISO-время старта турнира (для отсчёта «до начала»). */
+  startsAt: string | null;
   endsAt: string | null;
   matches: TournamentMatchDto[];
   standings: TournamentStandingDto[];

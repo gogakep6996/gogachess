@@ -200,8 +200,10 @@ export function TrainerClient({ category, title }: { category: string; title: st
   // минимумом из высоты окна (без шапки) и ширины (минус правая колонка),
   // с hard-cap 760px. Явный width обязателен — без него обёртка с
   // aspect-square схлопывается внутри flex-контейнера.
+  // На телефонах (≤480px) доска во всю ширину экрана (full-bleed): w-screen +
+  // секция с justify-center дают симметричный выход за боковые отступы страницы.
   const boardSizeCls =
-    'relative aspect-square w-[min(96vw,480px)] lg:w-[min(94vw,calc(100dvh-5.5rem),calc(100vw-27rem),760px)]';
+    'relative aspect-square w-[min(96vw,480px)] max-[480px]:w-screen lg:w-[min(94vw,calc(100dvh-5.5rem),calc(100vw-27rem),760px)]';
 
   return (
     <div className="flex flex-1 flex-col gap-3 lg:min-h-0 lg:flex-row lg:items-stretch lg:overflow-hidden">

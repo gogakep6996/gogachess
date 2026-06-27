@@ -27,6 +27,7 @@ export default async function TournamentPage(
           id={t.id}
           name={t.name}
           meId={auth?.sub ?? null}
+          isOwner={!!auth && auth.sub === t.ownerId}
           initiallyJoined={t.players[0]?.isAvailable === true}
         />
       </main>

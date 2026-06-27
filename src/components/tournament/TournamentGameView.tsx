@@ -29,6 +29,7 @@ import { TournamentCountdown } from './TournamentCountdown';
 import {
   STARTING_FEN,
   type ChatMessageDto,
+  type ClockState,
   type TournamentLivePayload,
 } from '@/lib/socket-events';
 
@@ -48,8 +49,10 @@ interface Props {
   onChatSend: (text: string) => void;
 }
 
-// Доска того же размера, что в просмотре чужих партий.
+// Доска того же размера, что в просмотре чужих партий (десктоп).
 const BOARD_SIDE = 'min(94vw, 480px)';
+// На телефонах/планшетах доска тянется до самых краёв экрана (full-bleed).
+const MOBILE_BOARD_SIDE = 'min(100vw, 480px)';
 
 export function TournamentGameView({
   roomCode,
@@ -131,129 +134,212 @@ export function TournamentGameView({
     room.resign();
   };
 
-  return (
-    <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_260px]">
-      {/* Левая колонка: таймер окончания турнира + общий чат участников.
-          На десктопе высота фиксирована по высоте доски (480px) — чат НЕ растягивает
-          строку, сообщения скроллятся внутри. */}
-      <aside className="order-2 flex min-h-0 flex-col gap-3 lg:order-1 lg:h-[480px] lg:self-start">
-        {tournament && (
-          <TournamentCountdown status={tournament.status} endsAt={tournament.endsAt} />
-        )}
-        <div className="min-h-[16rem] flex-1">
-          <ChatPanel variant="compact" messages={chatMessages} meId={meId} onSend={onChatSend} />
-        </div>
-      </aside>
+  // ── Общие элементы (используются в обеих раскладках) ──
+  const renderBoard = (side: string) => (
+    <div className="relative mx-auto" style={{ width: side, height: side }}>
+      {gameLive && state.firstMoveDeadlineAt && (
+        <FirstMoveTimer
+          deadline={state.firstMoveDeadlineAt}
+          yourTurn={iAmPlayer && sideToMove === myColor}
+        />
+      )}
+      <ChessBoard
+        fen={viewedFen}
+        canMove={canMove}
+        isEditing={false}
+        canEdit={false}
+        flipped={flipped}
+        sideLock={iAmPlayer ? myColor : null}
+        highlights={highlights}
+        onMove={room.sendMove}
+        compact
+        fillContainer
+      />
+    </div>
+  );
 
-      {/* Центр: только доска, без полосок сверху/снизу — чтобы её верх лёг
-          ровно по верху строки (на уровень блока «До окончания турнира»). */}
-      <section className="order-1 flex flex-col items-center lg:order-2">
-        <div className="relative mx-auto" style={{ width: BOARD_SIDE, height: BOARD_SIDE }}>
-          {gameLive && state.firstMoveDeadlineAt && (
-            <FirstMoveTimer
-              deadline={state.firstMoveDeadlineAt}
-              yourTurn={iAmPlayer && sideToMove === myColor}
+  const actionRow = iAmPlayer && gameLive && (
+    <div className="flex items-center justify-center gap-8 rounded-lg bg-stone-100/70 px-2 py-1.5 dark:bg-stone-800/40">
+      <IconButton
+        title="Предложить ничью"
+        onClick={() => room.offerDraw()}
+        disabled={!!state.drawOffer && state.drawOffer.fromUserId === meId}
+      >
+        ½
+      </IconButton>
+      <IconButton
+        title={confirmResign ? 'Точно сдаюсь — нажмите ещё раз' : 'Сдаться'}
+        onClick={handleResign}
+        variant={confirmResign ? 'danger' : 'default'}
+      >
+        {/* Белый флаг — сдача */}
+        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M4 3v18M4 4h12l-2 4 2 4H4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </IconButton>
+    </div>
+  );
+
+  const drawToast = state.drawOffer && gameLive && (
+    <DrawOfferToast
+      offer={state.drawOffer}
+      myUserId={meId}
+      onAccept={() => room.acceptDraw()}
+      onDecline={() => room.declineDraw()}
+    />
+  );
+
+  const resultPanel = result && (
+    <GameResultPanel
+      result={result}
+      myColor={myColor}
+      onReturn={onReturnToTournament}
+      onPause={onPause}
+    />
+  );
+
+  const errorBox = room.error && (
+    <div className="rounded-lg border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-200">
+      {room.error}
+    </div>
+  );
+
+  return (
+    <>
+      {/* ════════ ШИРОКИЙ ДЕСКТОП (xl+, ≥1280): 3 колонки ════════
+          Порог именно xl, а не lg: на iPad Pro портрет (1024px) три колонки
+          (260 + доска 480 + 274 + отступы) не помещаются и накладываются. */}
+      <div className="hidden gap-4 xl:grid xl:grid-cols-[260px_minmax(0,1fr)_274px]">
+        {/* Левая колонка: таймер окончания турнира + общий чат участников. */}
+        <aside className="flex min-h-0 flex-col gap-3 xl:h-[480px] xl:self-start">
+          {tournament && (
+            <TournamentCountdown
+              status={tournament.status}
+              startsAt={tournament.startsAt}
+              endsAt={tournament.endsAt}
             />
           )}
-          <ChessBoard
-            fen={viewedFen}
-            canMove={canMove}
-            isEditing={false}
-            canEdit={false}
-            flipped={flipped}
-            sideLock={iAmPlayer ? myColor : null}
-            highlights={highlights}
-            onMove={room.sendMove}
-            compact
-            fillContainer
-          />
-        </div>
-      </section>
-
-      {/* Правая колонка: Lichess-style. Высота фиксирована по доске (480px) и
-          независима от чата — при переполнении скроллится внутри себя. */}
-      <aside className="order-3 flex flex-col gap-2 lg:h-[480px] lg:self-start lg:overflow-y-auto">
-        {state.clock && <ClockDisplay clock={state.clock} side={topColor} />}
-
-        <PlayerRow
-          name={topName}
-          rank={topRank}
-          present={topPresent}
-          isMe={iAmPlayer && topColor === myColor}
-          fen={viewedFen}
-          capturedColor={topColor}
-        />
-
-        <div className="card !p-2">
-          <MoveNav history={state.history} viewIdx={viewIdx} onSelect={setViewIdx} />
-        </div>
-
-        {iAmPlayer && gameLive && (
-          <div className="flex items-center justify-around rounded-lg bg-stone-100/70 px-2 py-1.5 dark:bg-stone-800/40">
-            <IconButton
-              title="Предложить ничью"
-              onClick={() => room.offerDraw()}
-              disabled={!!state.drawOffer && state.drawOffer.fromUserId === meId}
-            >
-              ½
-            </IconButton>
-            <IconButton
-              title={confirmResign ? 'Точно сдаюсь — нажмите ещё раз' : 'Сдаться'}
-              onClick={handleResign}
-              variant={confirmResign ? 'danger' : 'default'}
-            >
-              {/* Белый флаг — сдача */}
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M4 3v18M4 4h12l-2 4 2 4H4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </IconButton>
+          <div className="min-h-[16rem] flex-1">
+            <ChatPanel variant="compact" messages={chatMessages} meId={meId} onSend={onChatSend} />
           </div>
-        )}
+        </aside>
 
-        {state.drawOffer && gameLive && (
-          <DrawOfferToast
-            offer={state.drawOffer}
-            myUserId={meId}
-            onAccept={() => room.acceptDraw()}
-            onDecline={() => room.declineDraw()}
+        {/* Центр: доска. */}
+        <section className="flex flex-col items-center">{renderBoard(BOARD_SIDE)}</section>
+
+        {/* Правая колонка: Lichess-style. */}
+        <aside className="flex flex-col gap-2 xl:h-[480px] xl:self-start xl:overflow-y-auto">
+          {state.clock && <ClockDisplay clock={state.clock} side={topColor} />}
+
+          <PlayerRow
+            name={topName}
+            rank={topRank}
+            present={topPresent}
+            isMe={iAmPlayer && topColor === myColor}
+            fen={viewedFen}
+            capturedColor={topColor}
           />
-        )}
 
-        <PlayerRow
-          name={bottomName}
-          rank={bottomRank}
-          present={bottomPresent}
-          isMe={iAmPlayer && bottomColor === myColor}
-          fen={viewedFen}
-          capturedColor={bottomColor}
-        />
+          <div className="card !p-2">
+            <MoveNav history={state.history} viewIdx={viewIdx} onSelect={setViewIdx} />
+          </div>
 
-        {state.clock && (
-          <ClockDisplay
+          {actionRow}
+          {drawToast}
+
+          <PlayerRow
+            name={bottomName}
+            rank={bottomRank}
+            present={bottomPresent}
+            isMe={iAmPlayer && bottomColor === myColor}
+            fen={viewedFen}
+            capturedColor={bottomColor}
+          />
+
+          {state.clock && (
+            <ClockDisplay
+              clock={state.clock}
+              side={bottomColor}
+              isMine={iAmPlayer && bottomColor === myColor}
+            />
+          )}
+
+          {resultPanel}
+          {errorBox}
+        </aside>
+      </div>
+
+      {/* ════════ ТЕЛЕФОН / ПЛАНШЕТ (< xl, вкл. iPad Pro): вертикально, как в мобильном Lichess ════════
+          Сверху доски — ник соперника слева, его часы справа (по краям доски).
+          Снизу доски — то же для меня. Дальше: действия, результат, история, чат.
+          На планшете (md+) история и чат раскладываются в два столбца — чтобы
+          использовать ширину и не оставлять пустоту по бокам. */}
+      <div className="flex flex-col items-center gap-2 xl:hidden">
+        {/* Доска + строки игроков тянутся на всю ширину экрана: отрицательные
+            поля гасят горизонтальные отступы родителя (px-4 / sm:px-6). */}
+        <div className="-mx-4 flex w-[calc(100%+2rem)] flex-col items-center gap-2 sm:-mx-6 sm:w-[calc(100%+3rem)]">
+          {/* Соперник: ник ← → часы (по разным краям доски) */}
+          <MobileSeat
+            name={topName}
+            rank={topRank}
+            present={topPresent}
+            isMe={iAmPlayer && topColor === myColor}
+            fen={viewedFen}
+            capturedColor={topColor}
+            clock={state.clock}
+            side={topColor}
+            clockMine={iAmPlayer && topColor === myColor}
+            width={MOBILE_BOARD_SIDE}
+          />
+
+          {renderBoard(MOBILE_BOARD_SIDE)}
+
+          {/* Я: ник ← → часы */}
+          <MobileSeat
+            name={bottomName}
+            rank={bottomRank}
+            present={bottomPresent}
+            isMe={iAmPlayer && bottomColor === myColor}
+            fen={viewedFen}
+            capturedColor={bottomColor}
             clock={state.clock}
             side={bottomColor}
-            isMine={iAmPlayer && bottomColor === myColor}
+            clockMine={iAmPlayer && bottomColor === myColor}
+            width={MOBILE_BOARD_SIDE}
           />
-        )}
+        </div>
 
-        {result && (
-          <GameResultPanel
-            result={result}
-            myColor={myColor}
-            whiteName={whiteName}
-            blackName={blackName}
-            onReturn={onReturnToTournament}
-            onPause={onPause}
-          />
-        )}
-
-        {room.error && (
-          <div className="rounded-lg border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-200">
-            {room.error}
+        {/* Сразу под доской: результат партии (мат/пат/ничья) ИЛИ действия. */}
+        {(resultPanel || actionRow || drawToast) && (
+          <div className="mx-auto flex w-full flex-col gap-2" style={{ maxWidth: BOARD_SIDE }}>
+            {resultPanel}
+            {actionRow}
+            {drawToast}
           </div>
         )}
-      </aside>
-    </div>
+
+        {/* Низ: таймер турнира + история ходов (слева) и чат (справа).
+            < md — стопкой; md+ (планшет) — два столбца на всю ширину блока. */}
+        <div className="grid w-full max-w-[820px] gap-2 md:grid-cols-2 md:items-start">
+          <div className="flex flex-col gap-2">
+            {tournament && (
+              <TournamentCountdown
+                status={tournament.status}
+                startsAt={tournament.startsAt}
+                endsAt={tournament.endsAt}
+              />
+            )}
+            <div className="card !p-2">
+              <MoveNav history={state.history} viewIdx={viewIdx} onSelect={setViewIdx} />
+            </div>
+            {errorBox}
+          </div>
+          <div className="h-[300px] md:h-[360px]">
+            <ChatPanel variant="compact" messages={chatMessages} meId={meId} onSend={onChatSend} />
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -336,6 +422,67 @@ function PlayerRow({
   );
 }
 
+/** Мобильная «строка игрока»: ник (с краю) и часы (у противоположного края доски). */
+function MobileSeat({
+  name,
+  rank,
+  present,
+  isMe,
+  fen,
+  capturedColor,
+  clock,
+  side,
+  clockMine,
+  width,
+}: {
+  name: string;
+  rank?: number;
+  present: boolean;
+  isMe?: boolean;
+  fen: string;
+  capturedColor: 'w' | 'b';
+  clock: ClockState | null;
+  side: 'w' | 'b';
+  clockMine?: boolean;
+  width: string;
+}) {
+  return (
+    <div
+      className="mx-auto flex w-full items-center justify-between gap-2 px-1"
+      style={{ maxWidth: width }}
+    >
+      <div
+        className={`flex min-w-0 flex-col gap-0.5 rounded-md px-1.5 py-0.5 ${
+          isMe ? 'bg-brand-500/10' : ''
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${
+              present ? 'bg-emerald-500' : 'bg-stone-400 dark:bg-stone-600'
+            }`}
+            title={present ? 'За доской' : 'Вне доски'}
+          />
+          <span
+            className={`truncate text-base font-semibold ${
+              isMe ? 'text-brand-700 dark:text-brand-300' : ''
+            }`}
+          >
+            {name}
+          </span>
+          {rank ? (
+            <span className="flex-shrink-0 rounded bg-brand-500/15 px-1.5 py-0.5 text-xs font-semibold text-brand-700 dark:text-brand-300">
+              #{rank}
+            </span>
+          ) : null}
+        </div>
+        <MaterialBar fen={fen} color={capturedColor} compact />
+      </div>
+      {clock && <ClockDisplay clock={clock} side={side} isMine={clockMine} />}
+    </div>
+  );
+}
+
 function IconButton({
   title,
   onClick,
@@ -370,15 +517,11 @@ function IconButton({
 function GameResultPanel({
   result,
   myColor,
-  whiteName,
-  blackName,
   onReturn,
   onPause,
 }: {
   result: NonNullable<ReturnType<typeof useRoomSocket>['state']>['result'];
   myColor: 'w' | 'b' | null;
-  whiteName: string;
-  blackName: string;
   onReturn: () => void;
   onPause: () => void;
 }) {
@@ -392,34 +535,38 @@ function GameResultPanel({
         : myColor !== null
           ? 'loss'
           : 'draw';
-  const title =
-    result.outcome === 'draw'
-      ? 'Ничья'
-      : result.outcome === 'white'
-        ? `Победа: ${whiteName} (белые)`
-        : `Победа: ${blackName} (чёрные)`;
-  const reasonLabel =
-    result.reason === 'checkmate'
-      ? 'мат'
-      : result.reason === 'resignation'
-        ? 'сдача'
+  // Текст исхода без имён: «Чёрные сдались — победа белых», «Белые просрочили
+  // время — победа чёрных», «Мат — победа белых», «Пат — ничья» и т.п.
+  const winnerGen = result.outcome === 'white' ? 'белых' : 'чёрных';
+  const loserSubj = result.outcome === 'white' ? 'Чёрные' : 'Белые';
+  let headline: string;
+  if (result.outcome === 'draw') {
+    headline =
+      result.reason === 'stalemate'
+        ? 'Пат — ничья'
+        : result.reason === 'threefold'
+          ? 'Троекратное повторение — ничья'
+          : result.reason === 'insufficient-material'
+            ? 'Недостаточно материала — ничья'
+            : result.reason === 'fifty-move'
+              ? 'Правило 50 ходов — ничья'
+              : result.reason === 'draw-agreement'
+                ? 'Ничья по соглашению'
+                : 'Ничья';
+  } else {
+    headline =
+      result.reason === 'resignation'
+        ? `${loserSubj} сдались — победа ${winnerGen}`
         : result.reason === 'timeout'
-          ? 'время'
-          : result.reason === 'draw-agreement'
-            ? 'по соглашению'
-            : result.reason === 'stalemate'
-              ? 'пат'
-              : result.reason === 'insufficient-material'
-                ? 'недостаточно материала'
-                : result.reason === 'threefold'
-                  ? 'троекратное повторение'
-                  : result.reason === 'fifty-move'
-                    ? 'правило 50 ходов'
-                    : '';
+          ? `${loserSubj} просрочили время — победа ${winnerGen}`
+          : result.reason === 'checkmate'
+            ? `Мат — победа ${winnerGen}`
+            : `Победа ${winnerGen}`;
+  }
 
   return (
     <div
-      className={`card !p-3 text-center text-sm ${
+      className={`card !p-2 text-center text-sm ${
         myOutcome === 'win'
           ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-900/30'
           : myOutcome === 'loss'
@@ -427,15 +574,12 @@ function GameResultPanel({
             : ''
       }`}
     >
-      <div className="text-base font-semibold">{title}</div>
-      {reasonLabel && (
-        <div className="mb-2 text-xs uppercase tracking-wide text-stone-500">{reasonLabel}</div>
-      )}
-      <div className="flex flex-col gap-2">
-        <button onClick={onReturn} className="btn-primary w-full">
+      <div className="mb-1.5 text-sm font-semibold leading-snug">{headline}</div>
+      <div className="flex flex-col gap-1.5">
+        <button onClick={onReturn} className="btn-primary w-full !py-1.5">
           Следующая партия
         </button>
-        <button onClick={onPause} className="btn-ghost w-full">
+        <button onClick={onPause} className="btn-ghost w-full !py-1.5">
           Приостановить
         </button>
       </div>

@@ -48,7 +48,7 @@ export default async function ClassMePage() {
     // вложенный RoomClient (когда учитель открывает «Мою доску»/трансляцию)
     // мог занять весь вьюпорт без скролла страницы. Сам ClassMeClient уже
     // включает прокручиваемую область для обычного дашборда.
-    <div className="flex min-h-dvh flex-col overscroll-none bg-surface dark:bg-surface-dark lg:h-dvh lg:overflow-hidden">
+    <div className="flex min-h-dvh flex-col overscroll-none bg-surface dark:bg-surface-dark lg:landscape:h-dvh lg:landscape:overflow-hidden">
       <div className="shrink-0">
         <Header />
       </div>

@@ -31,6 +31,9 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showFenField, setShowFenField] = useState(false);
+  const [showPgnField, setShowPgnField] = useState(false);
+  const [pgnText, setPgnText] = useState('');
+  const [pgnError, setPgnError] = useState<string | null>(null);
 
   const fenValid = useMemo(() => {
     try {
@@ -62,6 +65,27 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
   function resetToStarting() {
     setFen(STARTING_FEN);
     setSideToPlay('w');
+  }
+
+  // Разбираем PGN и выставляем КОНЕЧНУЮ позицию партии в редактор.
+  // Поддерживается обычный PGN (1. e4 e5 …), в т.ч. с заголовком [FEN "…"].
+  function applyPgn() {
+    const text = pgnText.trim();
+    if (!text) {
+      setPgnError('Вставьте PGN');
+      return;
+    }
+    try {
+      const game = new Chess();
+      game.loadPgn(text);
+      const nextFen = game.fen();
+      setFen(nextFen);
+      const s = fenSideToMove(nextFen);
+      if (s === 'w' || s === 'b') setSideToPlay(s);
+      setPgnError(null);
+    } catch {
+      setPgnError('Не удалось разобрать PGN — проверьте формат записи ходов');
+    }
   }
 
   async function save() {
@@ -149,6 +173,34 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             rows={2}
             className="w-full resize-none rounded border border-stone-300 bg-paper px-2 py-1 font-mono text-[11px] dark:border-stone-700 dark:bg-stone-900"
           />
+        )}
+
+        <button
+          type="button"
+          onClick={() => setShowPgnField((v) => !v)}
+          className="self-start text-[11px] text-brand-600 hover:underline"
+        >
+          {showPgnField ? 'Скрыть PGN' : 'Вставить PGN (партию/ходы)'}
+        </button>
+        {showPgnField && (
+          <div className="w-full space-y-1.5">
+            <textarea
+              value={pgnText}
+              onChange={(e) => setPgnText(e.target.value)}
+              rows={3}
+              placeholder={'1. e4 e5 2. Nf3 Nc6 3. Bb5 …\nможно с заголовками [FEN "…"]'}
+              className="w-full resize-none rounded border border-stone-300 bg-paper px-2 py-1 font-mono text-[11px] dark:border-stone-700 dark:bg-stone-900"
+            />
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={applyPgn} className="btn-ghost text-xs">
+                Загрузить позицию из PGN
+              </button>
+              <span className="text-[11px] text-stone-500">
+                Возьмём позицию после последнего хода.
+              </span>
+            </div>
+            {pgnError && <div className="text-[11px] text-red-600">{pgnError}</div>}
+          </div>
         )}
       </div>
 

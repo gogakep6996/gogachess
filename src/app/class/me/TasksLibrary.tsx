@@ -18,6 +18,7 @@ export interface TaskDto {
   goal: string;
   engineLevel: number;
   isPublished: boolean;
+  isHomework: boolean;
   position: number;
   createdAt: string | Date;
   updatedAt: string | Date;
@@ -35,7 +36,7 @@ const GOAL_LABEL: Record<string, string> = {
   custom: 'свободная цель',
 };
 
-type Filter = 'all' | 'published' | 'drafts';
+type Filter = 'all' | 'published' | 'drafts' | 'homework';
 
 export function TasksLibrary({
   tasks,
@@ -51,12 +52,14 @@ export function TasksLibrary({
   const counts = useMemo(() => {
     const published = tasks.filter((t) => t.isPublished).length;
     const drafts = tasks.length - published;
-    return { all: tasks.length, published, drafts };
+    const homework = tasks.filter((t) => t.isHomework).length;
+    return { all: tasks.length, published, drafts, homework };
   }, [tasks]);
 
   const filteredTasks = useMemo(() => {
     if (filter === 'published') return tasks.filter((t) => t.isPublished);
     if (filter === 'drafts') return tasks.filter((t) => !t.isPublished);
+    if (filter === 'homework') return tasks.filter((t) => t.isHomework);
     return tasks;
   }, [tasks, filter]);
 
@@ -87,6 +90,21 @@ export function TasksLibrary({
     if (!res.ok) {
       // Откатываем при ошибке.
       onTasksChange(tasks.map((x) => (x.id === t.id ? { ...x, isPublished: !next } : x)));
+    }
+  }
+
+  // «+» на карточке — добавить задачу в домашние (ученики решают её сами на
+  // главной странице класса). Повторное нажатие убирает из домашек.
+  async function toggleHomework(t: TaskDto) {
+    const next = !t.isHomework;
+    onTasksChange(tasks.map((x) => (x.id === t.id ? { ...x, isHomework: next } : x)));
+    const res = await fetch(`/api/class/me/tasks/${t.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ isHomework: next }),
+    });
+    if (!res.ok) {
+      onTasksChange(tasks.map((x) => (x.id === t.id ? { ...x, isHomework: !next } : x)));
     }
   }
 
@@ -126,15 +144,20 @@ export function TasksLibrary({
         <FilterTab active={filter === 'drafts'} onClick={() => setFilter('drafts')}>
           📝 Черновики · {counts.drafts}
         </FilterTab>
+        <FilterTab active={filter === 'homework'} onClick={() => setFilter('homework')}>
+          📚 Домашние задания · {counts.homework}
+        </FilterTab>
       </div>
 
       {filteredTasks.length === 0 ? (
         <div className="card text-sm text-stone-500">
-          {filter === 'drafts' && counts.published > 0
-            ? 'В черновиках пусто. Снимите задачу с публикации — и она вернётся сюда.'
-            : filter === 'published' && counts.drafts > 0
-              ? 'Ни одна позиция не опубликована. Опубликуйте черновик — и он появится у учеников.'
-              : 'Пока нет ни одной позиции. Создайте первую — она сохранится в библиотеку.'}
+          {filter === 'homework'
+            ? 'Нет домашних заданий. Нажмите «+» на карточке задачи — и она появится у учеников на главной странице класса.'
+            : filter === 'drafts' && counts.published > 0
+              ? 'В черновиках пусто. Снимите задачу с публикации — и она вернётся сюда.'
+              : filter === 'published' && counts.drafts > 0
+                ? 'Ни одна позиция не опубликована. Опубликуйте черновик — и он появится у учеников.'
+                : 'Пока нет ни одной позиции. Создайте первую — она сохранится в библиотеку.'}
         </div>
       ) : (
         <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -144,7 +167,11 @@ export function TasksLibrary({
               <li
                 key={t.id}
                 className={`group flex flex-col gap-1.5 rounded-xl border border-stone-200 bg-paper p-2 shadow-sm transition-shadow hover:shadow-md dark:border-stone-700 dark:bg-stone-900 ${
-                  t.isPublished ? '' : 'ring-1 ring-amber-200/60 dark:ring-amber-800/40'
+                  t.isHomework
+                    ? 'ring-2 ring-brand-400/70 dark:ring-brand-500/60'
+                    : t.isPublished
+                      ? ''
+                      : 'ring-1 ring-amber-200/60 dark:ring-amber-800/40'
                 }`}
               >
                 <div className="flex justify-center">
@@ -154,7 +181,14 @@ export function TasksLibrary({
                     flipped={t.sideToPlay === 'b'}
                   />
                 </div>
-                <div className="truncate text-sm font-semibold leading-tight">{t.title}</div>
+                <div className="flex items-center gap-1">
+                  <span className="truncate text-sm font-semibold leading-tight">{t.title}</span>
+                  {t.isHomework && (
+                    <span className="ml-auto shrink-0 rounded bg-brand-500 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                      ДЗ
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-1 text-[10px] uppercase">
                   <span className={`rounded px-1 py-0.5 font-semibold ${diff.tone}`}>
                     {diff.label}
@@ -166,6 +200,17 @@ export function TasksLibrary({
                   )}
                   <span className="text-stone-400">·</span>
                   <span className="text-stone-500 lowercase">{GOAL_LABEL[t.goal] ?? t.goal}</span>
+                  <button
+                    onClick={() => toggleHomework(t)}
+                    title={t.isHomework ? 'Убрать из домашних заданий' : 'Добавить в домашние задания'}
+                    className={`ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-base leading-none transition-colors ${
+                      t.isHomework
+                        ? 'border-brand-500 bg-brand-500 text-white hover:bg-brand-600'
+                        : 'border-stone-300 text-stone-500 hover:border-brand-400 hover:text-brand-600 dark:border-stone-600 dark:text-stone-300'
+                    }`}
+                  >
+                    {t.isHomework ? '✓' : '+'}
+                  </button>
                 </div>
                 <div className="mt-auto flex items-center gap-1">
                   <button

@@ -27,7 +27,7 @@ export default async function ClassPublicPage({
     hasAccessCode && !isOwner
       ? []
       : await prisma.task.findMany({
-          where: { classId: cls.id, isPublished: true },
+          where: { classId: cls.id, isHomework: true },
           orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
         });
 

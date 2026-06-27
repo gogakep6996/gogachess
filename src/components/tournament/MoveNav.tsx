@@ -101,7 +101,7 @@ export function MoveNav({ history, viewIdx, onSelect }: Props) {
       </div>
       <div
         ref={listRef}
-        className="max-h-[180px] overflow-y-auto rounded-lg border border-stone-200/70 bg-paper/70 p-1 text-sm dark:border-stone-800/70 dark:bg-stone-900/40"
+        className="h-[90px] overflow-y-auto rounded-lg border border-stone-200/70 bg-paper/70 p-1 text-sm dark:border-stone-800/70 dark:bg-stone-900/40"
       >
         {history.length === 0 ? (
           <div className="px-2 py-1 text-xs text-stone-500">Ходов пока нет</div>

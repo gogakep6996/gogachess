@@ -116,6 +116,25 @@ function pliesFromFen(fen: string): number {
   return (fullmove - 1) * 2 + (stm === 'b' ? 1 : 0);
 }
 
+/**
+ * Троекратное повторение. chess.js определяет его по СВОЕЙ истории позиций,
+ * а в обработчике хода мы каждый раз создаём `new Chess(fen)` без истории —
+ * поэтому повторение там не ловится. Здесь переигрываем партию с начала
+ * отрезка по сохранённым ходам, чтобы у движка была полная история позиций.
+ */
+function isThreefoldByHistory(segmentStartFen: string, history: MoveHistoryEntry[]): boolean {
+  try {
+    const g = new Chess(segmentStartFen);
+    for (const h of history) {
+      const mv = g.move({ from: h.from, to: h.to, promotion: h.promotion ?? 'q' });
+      if (!mv) return false;
+    }
+    return g.isThreefoldRepetition();
+  } catch {
+    return false;
+  }
+}
+
 const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
 const SQUARE_RX = /^[a-h][1-8]$/;
 
@@ -668,6 +687,7 @@ app.prepare().then(() => {
     const payload: TournamentLivePayload = {
       id: t.id,
       status: t.status,
+      startsAt: t.startsAt.toISOString(),
       endsAt,
       matches,
       standings,
@@ -996,7 +1016,7 @@ app.prepare().then(() => {
           } else if (game.isInsufficientMaterial()) {
             outcome = 'draw';
             reason = 'insufficient-material';
-          } else if (game.isThreefoldRepetition()) {
+          } else if (isThreefoldByHistory(runtime.segmentStartFen, runtime.history)) {
             outcome = 'draw';
             reason = 'threefold';
           } else if (game.isDraw()) {

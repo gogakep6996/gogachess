@@ -6,6 +6,7 @@ import { prisma } from '@/lib/db';
 import { timeControlLabel } from '@/lib/socket-events';
 import { CreateTournamentForm } from './CreateTournamentForm';
 import { JoinButton } from './JoinButton';
+import { DeleteTournamentButton } from './DeleteTournamentButton';
 
 function statusLabel(s: string): { label: string; tone: string } {
   if (s === 'running') return { label: 'идёт', tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' };
@@ -13,19 +14,40 @@ function statusLabel(s: string): { label: string; tone: string } {
   return { label: 'запланирован', tone: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' };
 }
 
+/** Порядок: текущие (идут) → запланированные (скоро) → завершённые (свежие сначала). */
+function statusRank(s: string): number {
+  if (s === 'running') return 0;
+  if (s === 'scheduled') return 1;
+  return 2;
+}
+
+function compareTournaments(
+  a: { status: string; startsAt: Date },
+  b: { status: string; startsAt: Date },
+): number {
+  const r = statusRank(a.status) - statusRank(b.status);
+  if (r !== 0) return r;
+  // Запланированные — ближайшие сверху; идущие и завершённые — свежие сверху.
+  return a.status === 'scheduled'
+    ? a.startsAt.getTime() - b.startsAt.getTime()
+    : b.startsAt.getTime() - a.startsAt.getTime();
+}
+
 export default async function TournamentsPage() {
   const auth = await getCurrentUser();
   if (!auth) redirect('/login?next=/tournaments');
 
-  const tournaments = await prisma.tournament.findMany({
-    orderBy: [{ status: 'asc' }, { startsAt: 'asc' }],
-    include: {
-      owner: { select: { displayName: true } },
-      _count: { select: { players: true, matches: true } },
-      players: { where: { userId: auth.sub }, select: { id: true } },
-    },
-    take: 50,
-  });
+  const tournaments = (
+    await prisma.tournament.findMany({
+      orderBy: [{ startsAt: 'desc' }],
+      include: {
+        owner: { select: { displayName: true } },
+        _count: { select: { players: true, matches: true } },
+        players: { where: { userId: auth.sub }, select: { id: true } },
+      },
+      take: 50,
+    })
+  ).sort(compareTournaments);
 
   return (
     <>
@@ -53,6 +75,7 @@ export default async function TournamentsPage() {
                 {tournaments.map((t) => {
                   const s = statusLabel(t.status);
                   const joined = t.players.length > 0;
+                  const isTournamentOwner = t.ownerId === auth.sub;
                   return (
                     <li key={t.id} className="card">
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -70,12 +93,15 @@ export default async function TournamentsPage() {
                           </p>
                           <p className="mt-1 text-xs text-stone-500">Организатор: {t.owner.displayName}</p>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex items-center gap-2">
                           <Link href={`/tournaments/${t.id}`} className="btn-outline text-xs">
                             Открыть
                           </Link>
                           {t.status !== 'finished' && (
                             <JoinButton id={t.id} initiallyJoined={joined} />
+                          )}
+                          {isTournamentOwner && (
+                            <DeleteTournamentButton id={t.id} name={t.name} />
                           )}
                         </div>
                       </div>

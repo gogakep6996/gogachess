@@ -9,6 +9,25 @@ export const dynamic = 'force-dynamic';
 const VALID_DIFF = new Set(['easy', 'medium', 'hard']);
 const VALID_GOAL = new Set(['mate', 'win-material', 'custom']);
 
+// Список задач текущего учителя — используется блоком «Библиотека» в редакторе
+// доски (комната/класс), чтобы быстро подгрузить ранее сохранённую позицию.
+// По умолчанию отдаём только опубликованные; ?all=1 вернёт и черновики.
+export async function GET(req: Request) {
+  const auth = await getCurrentUser();
+  if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  const cls = await prisma.class.findUnique({ where: { ownerId: auth.sub } });
+  if (!cls) return NextResponse.json({ tasks: [] });
+
+  const all = new URL(req.url).searchParams.get('all') === '1';
+  const tasks = await prisma.task.findMany({
+    where: { classId: cls.id, ...(all ? {} : { isPublished: true }) },
+    orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  return NextResponse.json({ tasks });
+}
+
 export async function POST(req: Request) {
   const auth = await getCurrentUser();
   if (!auth) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -37,6 +56,7 @@ export async function POST(req: Request) {
     goal?: string;
     engineLevel?: number;
     isPublished?: boolean;
+    isHomework?: boolean;
   };
 
   const title = (body.title ?? '').trim().slice(0, 120);
@@ -56,6 +76,7 @@ export async function POST(req: Request) {
   const category = (body.category ?? '').trim().slice(0, 40) || null;
   const description = (body.description ?? '').trim().slice(0, 1000) || null;
   const isPublished = body.isPublished !== false;
+  const isHomework = body.isHomework === true;
 
   const maxPos = await prisma.task.aggregate({
     where: { classId: cls.id },
@@ -74,6 +95,7 @@ export async function POST(req: Request) {
       goal,
       engineLevel,
       isPublished,
+      isHomework,
       position: (maxPos._max.position ?? 0) + 1,
     },
   });

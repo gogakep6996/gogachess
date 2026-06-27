@@ -77,13 +77,14 @@ export function ClockDisplay({ clock, side, isMine, size = 'lg', className }: Pr
   const sizeCls =
     size === 'sm'
       ? 'rounded-md px-2.5 py-1 text-lg'
-      : 'rounded-xl px-4 py-3 text-3xl';
+      : 'rounded-xl px-3 py-2 text-3xl';
   // Цвета цифр чуть мягче — пользователь жаловался на излишнюю яркость.
+  // w-fit: фон обнимает цифры (не растягивается на всю колонку), размер цифр прежний.
   return (
     <div
       className={[
         sizeCls,
-        'font-semibold tabular-nums shadow-sm transition-colors',
+        'w-fit font-semibold tabular-nums shadow-sm transition-colors',
         running
           ? critical
             ? 'bg-red-500/85 text-white/95'

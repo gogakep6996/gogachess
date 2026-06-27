@@ -3,16 +3,31 @@ import { prisma } from '@/lib/db';
 import { getCurrentUser, requireVerifiedUser } from '@/lib/auth';
 import { TIME_CONTROLS } from '@/lib/socket-events';
 
+/** Порядок: текущие (идут) → запланированные (скоро) → завершённые (свежие сначала). */
+function statusRank(s: string): number {
+  if (s === 'running') return 0;
+  if (s === 'scheduled') return 1;
+  return 2;
+}
+
 export async function GET() {
   const auth = await getCurrentUser();
-  const list = await prisma.tournament.findMany({
-    orderBy: [{ status: 'asc' }, { startsAt: 'asc' }],
-    include: {
-      owner: { select: { displayName: true } },
-      _count: { select: { players: true, matches: true } },
-      players: { where: auth ? { userId: auth.sub } : { userId: '' }, select: { id: true } },
-    },
-    take: 50,
+  const list = (
+    await prisma.tournament.findMany({
+      orderBy: [{ startsAt: 'desc' }],
+      include: {
+        owner: { select: { displayName: true } },
+        _count: { select: { players: true, matches: true } },
+        players: { where: auth ? { userId: auth.sub } : { userId: '' }, select: { id: true } },
+      },
+      take: 50,
+    })
+  ).sort((a, b) => {
+    const r = statusRank(a.status) - statusRank(b.status);
+    if (r !== 0) return r;
+    return a.status === 'scheduled'
+      ? a.startsAt.getTime() - b.startsAt.getTime()
+      : b.startsAt.getTime() - a.startsAt.getTime();
   });
   return NextResponse.json({
     tournaments: list.map((t) => ({

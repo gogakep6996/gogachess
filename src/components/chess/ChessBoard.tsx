@@ -133,6 +133,8 @@ export function ChessBoard({
   const animKeyRef = useRef(0);
   /** Sticky-фигура из палитры: выбранная мышью, остаётся «в курсоре» пока её не сменили. */
   const [paletteCursor, setPaletteCursor] = useState<PieceCode | null>(null);
+  /** Режим «ластик» (мобильная палитра): тап по клетке убирает с неё фигуру. */
+  const [eraseSticky, setEraseSticky] = useState(false);
   /** Активное рисование стрелки правой кнопкой: from-клетка + текущая клетка под курсором. */
   const [arrowDrag, setArrowDrag] = useState<{ from: Sq; to: Sq; color: ArrowColor } | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
@@ -181,7 +183,10 @@ export function ChessBoard({
   // При входе/выходе из режима редактирования сбрасываем подсветку последнего хода.
   useEffect(() => {
     if (isEditing) setLastMove(null);
-    if (!isEditing) setPaletteCursor(null);
+    if (!isEditing) {
+      setPaletteCursor(null);
+      setEraseSticky(false);
+    }
     // Любой переход режима — также чистим «оптимистичный» fen, чтобы не путаться.
     setOptimisticFen(null);
   }, [isEditing]);
@@ -191,6 +196,7 @@ export function ChessBoard({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (paletteCursor) setPaletteCursor(null);
+      if (eraseSticky) setEraseSticky(false);
       if (arrowDrag) setArrowDrag(null);
       if (selected) {
         setSelected(null);
@@ -199,7 +205,7 @@ export function ChessBoard({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paletteCursor, arrowDrag, selected]);
+  }, [paletteCursor, eraseSticky, arrowDrag, selected]);
 
   // Детекция хода: ищем легальный ход из prevFen, который даёт текущий fen.
   // useLayoutEffect, чтобы новая подсветка/анимация попала в тот же кадр и не «мигало».
@@ -427,6 +433,11 @@ export function ChessBoard({
   function onSquareClick(sq: Sq) {
     if (isEditing) {
       if (!canEdit) return;
+      // Ластик (мобильная палитра): тап убирает фигуру с клетки.
+      if (eraseSticky) {
+        onEditFen?.(setPieceFen(effectiveFen, sq, null));
+        return;
+      }
       // Sticky-фигура: один раз кликнул в палитре → этой фигурой расставляем
       // по доске множество клеток подряд. Чтобы снять — кликнуть в палитре
       // на ту же фигуру или нажать Escape.
@@ -742,22 +753,87 @@ export function ChessBoard({
 
   function onPaletteClick(piece: PieceCode) {
     if (!canEdit) return;
+    setEraseSticky(false);
     setPaletteCursor((cur) => (cur === piece ? null : piece));
   }
 
-  /** В комнате палитра слева от доски в потоке не участвует — доска остаётся на месте. */
+  function onEraseClick() {
+    if (!canEdit) return;
+    setPaletteCursor(null);
+    setEraseSticky((v) => !v);
+  }
+
+  /** В комнате палитра слева от доски в потоке не участвует — доска остаётся на месте.
+   *  Но это работает только на широком ландшафте; на телефонах/портрете боковая
+   *  палитра уезжает за край экрана, поэтому там показываем горизонтальные полосы
+   *  фигур сверху и снизу доски (как в мобильном Lichess). */
   const paletteAside = isEditing && compact && fillContainer;
+
+  // Цвета сторон у верхнего/нижнего края доски (с учётом разворота).
+  const topPaletteColor: 'w' | 'b' = flipped ? 'w' : 'b';
+  const bottomPaletteColor: 'w' | 'b' = flipped ? 'b' : 'w';
+
+  /** Горизонтальная полоса фигур одного цвета + ластик — для телефонов/планшетов. */
+  const renderMobilePaletteRow = (color: 'w' | 'b') => (
+    <div className="flex w-full items-stretch gap-1 rounded-lg border border-amber-300/60 bg-amber-50/80 p-1 dark:border-amber-700/40 dark:bg-amber-900/20 lg:landscape:hidden">
+      {(['k', 'q', 'r', 'b', 'n', 'p'] as const).map((t) => {
+        const p = `${color}${t}` as PieceCode;
+        const active = paletteCursor === p;
+        return (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onPaletteClick(p)}
+            className={cn(
+              'flex aspect-square flex-1 items-center justify-center rounded-md transition',
+              active
+                ? 'bg-brand-500/90 text-white shadow-glow ring-2 ring-brand-300'
+                : 'bg-paper/70 hover:bg-brand-100 dark:bg-stone-800/70 dark:hover:bg-brand-900/40',
+            )}
+            title="Выберите фигуру, затем нажимайте на клетки"
+          >
+            <PieceSvg code={p} className="h-7 w-7" />
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        onClick={onEraseClick}
+        className={cn(
+          'flex aspect-square flex-1 items-center justify-center rounded-md transition',
+          eraseSticky
+            ? 'bg-red-500 text-white ring-2 ring-red-300'
+            : 'bg-paper/70 hover:bg-red-100 dark:bg-stone-800/70 dark:hover:bg-red-900/40',
+        )}
+        title="Ластик: нажмите, затем тапайте по фигурам, чтобы убрать их"
+      >
+        <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+    </div>
+  );
 
   return (
     <div
       className={cn(
-        'flex w-full',
-        paletteAside ? 'relative h-full w-full min-h-0' : 'flex-col',
+        'w-full',
+        paletteAside
+          ? 'flex flex-col gap-1.5 lg:landscape:relative lg:landscape:block lg:landscape:h-full lg:landscape:min-h-0'
+          : 'flex flex-col',
         !paletteAside && (compact ? 'gap-2' : 'gap-4'),
-        fillContainer && !paletteAside && 'h-full min-h-0',
+        fillContainer && !paletteAside && 'flex h-full min-h-0',
         className,
       )}
     >
+      {/* ── Мобильная/портретная палитра: полоса фигур СВЕРХУ доски ── */}
+      {paletteAside && isEditing && canEdit && renderMobilePaletteRow(topPaletteColor)}
+      {paletteAside && isEditing && !canEdit && (
+        <div className="rounded-lg border border-amber-300/60 bg-amber-50/80 px-2 py-1 text-[11px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-100 lg:landscape:hidden">
+          Учитель редактирует позицию — вы видите изменения в реальном времени.
+        </div>
+      )}
+
       {isEditing && (
         <div
           onDragOver={onPaletteDragOver}
@@ -766,7 +842,7 @@ export function ChessBoard({
             'border border-amber-300/60 bg-amber-50/70 text-amber-900 shadow-soft dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-100',
             compact ? 'rounded-lg p-2 text-xs' : 'rounded-2xl p-3',
             paletteAside &&
-              'absolute right-full top-0 z-30 mr-2 max-h-full w-[6.75rem] overflow-y-auto sm:w-[7.5rem]',
+              'absolute right-full top-0 z-30 mr-2 hidden max-h-full w-[6.75rem] overflow-y-auto sm:w-[7.5rem] lg:landscape:block',
             !paletteAside && fillContainer && 'max-h-[38%] shrink-0 overflow-y-auto',
           )}
         >
@@ -836,7 +912,9 @@ export function ChessBoard({
       <div
         className={cn(
           'relative overflow-hidden',
-          paletteAside && 'h-full w-full',
+          // На телефоне/портрете доска квадратная (по ширине), на широком ландшафте
+          // заполняет фиксированный квадрат-контейнер, а палитра висит сбоку.
+          paletteAside && 'aspect-square w-full lg:landscape:aspect-auto lg:landscape:h-full',
           fillContainer && !paletteAside && 'min-h-0 flex-1',
           !paletteAside && !fillContainer && 'aspect-square w-full',
         )}
@@ -989,6 +1067,25 @@ export function ChessBoard({
           })()}
         </div>
       </div>
+
+      {/* ── Мобильная/портретная палитра: полоса фигур СНИЗУ доски + ластик/очистка ── */}
+      {paletteAside && isEditing && canEdit && (
+        <>
+          {renderMobilePaletteRow(bottomPaletteColor)}
+          <div className="flex items-center justify-between gap-2 lg:landscape:hidden">
+            <span className="text-[10px] text-stone-500 dark:text-stone-400">
+              {eraseSticky
+                ? 'Ластик активен — тапайте по фигурам'
+                : paletteCursor
+                  ? `Расставляйте ${paletteCursor.toUpperCase()} тапами по клеткам`
+                  : 'Выберите фигуру сверху или снизу'}
+            </span>
+            <button onClick={clearBoard} className="btn-ghost shrink-0 text-xs">
+              Очистить
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

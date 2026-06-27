@@ -31,8 +31,8 @@ function getCtx(): AudioContext | null {
       return null;
     }
     masterBus = ctx.createGain();
-    // Лёгкое усиление — родной Lichess-сэмпл довольно тихий.
-    masterBus.gain.value = 1.4;
+    // Общая громкость всех шахматных звуков (1.4 − 25% = 1.05).
+    masterBus.gain.value = 1.05;
     masterBus.connect(ctx.destination);
   }
   if (ctx.state === 'suspended') {
@@ -93,7 +93,7 @@ async function load(name: SoundName): Promise<AudioBuffer | null> {
   return p;
 }
 
-function play(name: SoundName): void {
+function play(name: SoundName, gain = 1): void {
   const c = getCtx();
   if (!c) return;
   const buf = buffers[name];
@@ -101,19 +101,28 @@ function play(name: SoundName): void {
     // Первый вызов — подгружаем и затем играем.
     void load(name).then((b) => {
       if (!b) return;
-      playBuffer(b);
+      playBuffer(b, gain);
     });
     return;
   }
-  playBuffer(buf);
+  playBuffer(buf, gain);
 }
 
-function playBuffer(buf: AudioBuffer): void {
+function playBuffer(buf: AudioBuffer, gain = 1): void {
   const c = getCtx();
   if (!c) return;
   const src = c.createBufferSource();
   src.buffer = buf;
-  src.connect(masterBus ?? c.destination);
+  // Индивидуальная громкость сэмпла (поверх masterBus): нужна, чтобы, например,
+  // звук мата звучал чуть тише обычных ходов.
+  if (gain !== 1) {
+    const g = c.createGain();
+    g.gain.value = gain;
+    src.connect(g);
+    g.connect(masterBus ?? c.destination);
+  } else {
+    src.connect(masterBus ?? c.destination);
+  }
   try {
     src.start(0);
   } catch {
@@ -131,7 +140,8 @@ export function playCaptureSound(): void {
   play('capture');
 }
 
-/** Звук мата — характерный финальный сэмпл Lichess. */
+/** Звук мата — характерный финальный сэмпл Lichess. Делаем его мягче обычных
+ *  звуков (−30%), чтобы не «бил в ухо». */
 export function playCheckmateSound(): void {
-  play('checkmate');
+  play('checkmate', 0.7);
 }

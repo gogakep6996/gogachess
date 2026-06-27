@@ -84,9 +84,6 @@ export function Header() {
           <Link href="/class" className="hidden text-sm text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
             Класс
           </Link>
-          <Link href="/analysis" className="hidden text-sm text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
-            Анализ с движком
-          </Link>
           <ThemeToggle />
           {user ? (
             <AccountMenu user={user} onUserChange={setUser} onLogout={logout} />

@@ -17,6 +17,10 @@ export function VersionWatcher() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
 
   useEffect(() => {
+    // На локалхосте (dev) версия меняется при каждой пересборке — баннер
+    // «Доступно обновление» только мешает. Включаем наблюдатель лишь в проде.
+    if (process.env.NODE_ENV !== 'production') return;
+
     let cancelled = false;
     let initialVersion: string | null = null;
 

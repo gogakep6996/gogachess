@@ -144,11 +144,11 @@ function Tile({
 }
 
 function Feature({ title, text, icon }: { title: string; text: string; icon: string }) {
+  // Информационный блок (не ссылка): без фона/тени, чтобы визуально не выглядел
+  // как кликабельная плитка. Иконка без подложки — просто акцент.
   return (
-    <div className="card">
-      <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-brand-100 text-xl text-brand-700 dark:bg-brand-900/40 dark:text-brand-200">
-        {icon}
-      </div>
+    <div className="cursor-default select-none">
+      <div className="mb-3 text-2xl text-brand-600/80 dark:text-brand-300/80">{icon}</div>
       <h3 className="text-lg font-semibold">{title}</h3>
       <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">{text}</p>
     </div>

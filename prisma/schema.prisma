@@ -2,6 +2,9 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Прод на PostgreSQL. Для локальной разработки временно меняйте на
+// provider = "sqlite" (DATABASE_URL="file:./dev.db"), но ПЕРЕД КОММИТОМ/ДЕПЛОЕМ
+// возвращайте обратно postgresql!
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -194,6 +197,9 @@ model Task {
   engineLevel Int      @default(10)
   /// Опубликована (видна на витрине ученикам) или черновик.
   isPublished Boolean  @default(true)
+  /// Домашнее задание: ученики могут решать эту задачу самостоятельно в любое
+  /// время (без урока) на главной странице класса.
+  isHomework  Boolean  @default(false)
   /// Порядок в списке.
   position    Int      @default(0)
   createdAt   DateTime @default(now())

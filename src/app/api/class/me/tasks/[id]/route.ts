@@ -62,6 +62,7 @@ export async function PATCH(
     data.engineLevel = Math.max(0, Math.min(20, Number(body.engineLevel)));
   }
   if (body.isPublished !== undefined) data.isPublished = Boolean(body.isPublished);
+  if (body.isHomework !== undefined) data.isHomework = Boolean(body.isHomework);
   if (body.position !== undefined) data.position = Number(body.position);
 
   const updated = await prisma.task.update({ where: { id }, data });

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { io, type Socket } from 'socket.io-client';
 import {
   SocketEvents,
+  STARTING_FEN,
   type ChatMessageDto,
   type MatchFoundPayload,
   type RoomStatePayload,
@@ -17,17 +18,20 @@ import { ChatPanel } from '@/components/room/ChatPanel';
 import { TournamentGameView } from '@/components/tournament/TournamentGameView';
 import { StandingsTable } from '@/components/tournament/StandingsTable';
 import { TournamentCountdown } from '@/components/tournament/TournamentCountdown';
+import { OwnerControls } from '@/components/tournament/OwnerControls';
 
-const BOARD_SIDE = 'min(94vw, 480px)';
+// Размер ограничен и по ширине, и по высоте окна — чтобы доску не обрезало снизу.
+const BOARD_SIDE = 'min(94vw, calc(100dvh - 13rem), 520px)';
 
 interface Props {
   id: string;
   name: string;
   meId: string | null;
+  isOwner: boolean;
   initiallyJoined: boolean;
 }
 
-export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
+export function TournamentClient({ id, name, meId, isOwner, initiallyJoined }: Props) {
   const [data, setData] = useState<TournamentLivePayload | null>(null);
   const [joined, setJoined] = useState(initiallyJoined);
   // Просмотр чужой партии (пока я НЕ играю).
@@ -53,6 +57,8 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
   }, [activeMatchCode, id]);
   // Общий чат участников турнира (live, in-memory на сервере).
   const [chat, setChat] = useState<ChatMessageDto[]>([]);
+  // Свёрнут ли блок «История партий» (по умолчанию — да, экономим место).
+  const [historyOpen, setHistoryOpen] = useState(false);
   const socketRef = useRef<Socket | null>(null);
 
   // Лёгкий socket для лайв-обновлений турнира + получения MatchFound (автопереход на свою партию).
@@ -146,7 +152,7 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
     [data],
   );
   const finishedMatches = useMemo(
-    () => (data?.matches ?? []).filter((m) => m.status !== 'live').slice(0, 12),
+    () => (data?.matches ?? []).filter((m) => m.status !== 'live').slice(0, 50),
     [data],
   );
 
@@ -155,9 +161,10 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
     return (data?.matches ?? []).find((m) => m.roomCode === activeMatchCode) ?? null;
   }, [activeMatchCode, data?.matches]);
 
+  // Просмотр любой партии (живой или завершённой) — ищем по всем матчам.
   const spectateMatch =
     spectateCode && !activeMatchCode
-      ? (liveMatches.find((m) => m.roomCode === spectateCode) ?? null)
+      ? ((data?.matches ?? []).find((m) => m.roomCode === spectateCode) ?? null)
       : null;
 
   // Ранги игроков по userId — для значков #N.
@@ -224,33 +231,61 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
         )}
         {finishedMatches.length > 0 && !spectateMatch && (
           <div className="mt-6">
-            <h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-stone-500">
-              Завершённые партии
-            </h3>
-            <ul className="grid gap-2 sm:grid-cols-2">
-              {finishedMatches.map((m) => (
-                <li key={m.id} className="card flex items-center justify-between text-sm">
-                  <span>
-                    {m.whiteName} vs {m.blackName}
-                  </span>
-                  <span className="text-xs text-stone-500">
-                    {m.status === 'white'
+            <button
+              onClick={() => setHistoryOpen((o) => !o)}
+              className="flex w-full items-center justify-between gap-2 rounded-xl border border-stone-200 bg-paper px-4 py-2.5 text-left transition hover:brightness-95 dark:border-stone-700 dark:bg-stone-900"
+            >
+              <span className="text-sm font-semibold">
+                История партий
+                <span className="ml-2 text-xs font-normal text-stone-500">
+                  {finishedMatches.length}
+                </span>
+              </span>
+              <span className="text-xs text-stone-500">
+                {historyOpen ? 'свернуть ▲' : 'развернуть ▼'}
+              </span>
+            </button>
+            {historyOpen && (
+              <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                {finishedMatches.map((m) => {
+                  const score =
+                    m.status === 'white'
                       ? '1–0'
                       : m.status === 'black'
                         ? '0–1'
                         : m.status === 'draw'
                           ? '½–½'
-                          : m.status}
-                  </span>
-                </li>
-              ))}
-            </ul>
+                          : m.status;
+                  return (
+                    <li key={m.id}>
+                      <button
+                        onClick={() => m.roomCode && setSpectateCode(m.roomCode)}
+                        disabled={!m.roomCode}
+                        title={m.roomCode ? 'Посмотреть партию' : 'Партия недоступна для просмотра'}
+                        className="card flex w-full items-center justify-between gap-2 text-left text-sm transition enabled:hover:brightness-95 disabled:cursor-default disabled:opacity-60"
+                      >
+                        <span className="truncate">
+                          {m.whiteName} vs {m.blackName}
+                        </span>
+                        <span className="shrink-0 text-xs text-stone-500">{score}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
         )}
       </section>
 
       <aside className="flex flex-col gap-3 lg:sticky lg:top-3 lg:h-[calc(100vh-5rem)]">
-        {data && <TournamentCountdown status={data.status} endsAt={data.endsAt} />}
+        {data && (
+          <TournamentCountdown
+            status={data.status}
+            startsAt={data.startsAt}
+            endsAt={data.endsAt}
+          />
+        )}
 
         {meId && data?.status !== 'finished' && (
           <button
@@ -265,6 +300,8 @@ export function TournamentClient({ id, name, meId, initiallyJoined }: Props) {
             Войти, чтобы участвовать
           </Link>
         )}
+
+        {isOwner && <OwnerControls id={id} status={data?.status ?? 'scheduled'} />}
 
         <StandingsTable standings={data?.standings ?? []} meId={meId} scrollRows={4} />
 
@@ -343,21 +380,40 @@ function SelectedBoard({
   blackRank?: number;
   onBack: () => void;
 }) {
-  const [fen, setFen] = useState<string | undefined>(undefined);
+  const [roomState, setRoomState] = useState<RoomStatePayload | null>(null);
+  // null = «следить за последней позицией»; число = просматриваемый полуход.
+  const [viewIdx, setViewIdx] = useState<number | null>(null);
 
   useEffect(() => {
     const s = io({ path: '/socket.io', withCredentials: true });
     s.on('connect', () => s.emit(SocketEvents.RoomJoin, roomCode));
-    s.on(SocketEvents.RoomState, (st: RoomStatePayload) => setFen(st.fen));
-    s.on(SocketEvents.EditUpdate, (f: string) => setFen(f));
+    s.on(SocketEvents.RoomState, (st: RoomStatePayload) => setRoomState(st));
     return () => {
       s.disconnect();
     };
   }, [roomCode]);
 
+  // Список позиций: стартовая + после каждого хода. Индекс 0 = начальная позиция.
+  const fens = useMemo(() => {
+    const start = roomState?.segmentStartFen || STARTING_FEN;
+    const moves = roomState?.history ?? [];
+    return [start, ...moves.map((h) => h.fen)];
+  }, [roomState]);
+
+  const lastIdx = fens.length - 1;
+  const idx = viewIdx === null ? lastIdx : Math.min(Math.max(viewIdx, 0), lastIdx);
+  const displayFen = fens[idx] ?? STARTING_FEN;
+  const moves = roomState?.history ?? [];
+  const lastMove = idx >= 1 ? moves[idx - 1] : undefined;
+
+  const go = (next: number | null) => {
+    if (next === null || next >= lastIdx) setViewIdx(null);
+    else setViewIdx(Math.max(0, next));
+  };
+
   return (
-    <div>
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="flex flex-col items-center">
+      <div className="mb-2 flex w-full items-center justify-between gap-3">
         <div className="text-sm">
           <span className="font-semibold">{whiteName}</span>
           {whiteRank ? (
@@ -371,23 +427,60 @@ function SelectedBoard({
           ) : null}{' '}
           <span className="text-stone-500">— чёрные</span>
         </div>
-        <div className="flex gap-2">
-          <button onClick={onBack} className="btn-outline text-xs">
-            ← К сетке
-          </button>
-        </div>
+        <button onClick={onBack} className="btn-outline shrink-0 text-xs">
+          ← К сетке
+        </button>
       </div>
-      <div className="mx-auto" style={{ width: BOARD_SIDE, height: BOARD_SIDE }}>
+
+      <div style={{ width: BOARD_SIDE, height: BOARD_SIDE }}>
         <ChessBoard
-          fen={fen ?? 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'}
+          fen={displayFen}
           canMove={false}
           isEditing={false}
           canEdit={false}
+          highlights={lastMove ? { from: lastMove.from, to: lastMove.to } : undefined}
           compact
           fillContainer
           silent
         />
       </div>
+
+      {/* Навигация по ходам партии */}
+      <div
+        className="mt-2 flex items-center justify-center gap-1"
+        style={{ width: BOARD_SIDE }}
+      >
+        <NavBtn onClick={() => go(0)} disabled={idx <= 0} label="⏮" title="В начало" />
+        <NavBtn onClick={() => go(idx - 1)} disabled={idx <= 0} label="◀" title="Назад" />
+        <span className="min-w-[5rem] text-center text-xs font-semibold tabular-nums text-stone-500">
+          ход {idx} / {lastIdx}
+        </span>
+        <NavBtn onClick={() => go(idx + 1)} disabled={idx >= lastIdx} label="▶" title="Вперёд" />
+        <NavBtn onClick={() => go(null)} disabled={idx >= lastIdx} label="⏭" title="В конец" />
+      </div>
     </div>
+  );
+}
+
+function NavBtn({
+  onClick,
+  disabled,
+  label,
+  title,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  label: string;
+  title: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="flex h-9 w-9 items-center justify-center rounded-lg border border-stone-300 bg-paper text-sm text-stone-700 transition enabled:hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200"
+    >
+      {label}
+    </button>
   );
 }
