@@ -19,7 +19,7 @@ interface UseRoomSocketResult {
   connected: boolean;
   error: string | null;
 
-  sendMove: (m: { from: string; to: string; promotion?: string }) => void;
+  sendMove: (m: { from: string; to: string; promotion?: string; fromNodeId?: string | null }) => void;
   startEdit: () => void;
   updateEdit: (fen: string) => void;
   endEdit: (fen: string) => void;
@@ -33,6 +33,10 @@ interface UseRoomSocketResult {
   /** Учитель сообщает серверу, какую позицию он сейчас смотрит — сервер броадкастит
    *  ученикам, чтобы у них показывался тот же ход. null = «следить за текущей». */
   setHistoryView: (idx: number | null) => void;
+  /** Как setHistoryView, но для дерева ходов: учитель показывает конкретный узел (ветку). */
+  setHistoryViewNode: (nodeId: string | null) => void;
+  /** Учитель загружает сохранённую прошлую партию (по индексу) обратно на доску. */
+  loadPastGame: (index: number) => void;
   /** Учитель переключает движок-соперник на доске ученика (только для student-board).
    *  Если next не передан — сервер инвертирует текущее значение. */
   toggleEngine: (next?: boolean) => void;
@@ -98,6 +102,10 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
       setState((prev) => (prev ? { ...prev, historyViewIdx: idx } : prev));
     });
 
+    socket.on(SocketEvents.HistoryViewNode, (nodeId: string | null) => {
+      setState((prev) => (prev ? { ...prev, historyViewNodeId: nodeId } : prev));
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -132,6 +140,12 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
   }, []);
   const setHistoryView = useCallback((idx: number | null) => {
     socketRef.current?.emit(SocketEvents.HistoryView, idx);
+  }, []);
+  const setHistoryViewNode = useCallback((nodeId: string | null) => {
+    socketRef.current?.emit(SocketEvents.HistoryViewNode, nodeId);
+  }, []);
+  const loadPastGame = useCallback((index: number) => {
+    socketRef.current?.emit(SocketEvents.LoadPastGame, index);
   }, []);
   const toggleEngine = useCallback((next?: boolean) => {
     socketRef.current?.emit(SocketEvents.EngineToggle, next);
@@ -175,6 +189,8 @@ export function useRoomSocket(roomCode: string): UseRoomSocketResult {
     setAnnotations,
     undoMove,
     setHistoryView,
+    setHistoryViewNode,
+    loadPastGame,
     toggleEngine,
     setMovesLock,
     setMoveAllow,

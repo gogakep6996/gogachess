@@ -42,8 +42,12 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        display: ['"Playfair Display"', 'Georgia', 'serif'],
+        // Единый шрифт на весь сайт (текст + заголовки) — переменная задаётся
+        // next/font в layout.tsx. `display` — тот же шрифт: раньше здесь стоял
+        // Playfair Display, но он нигде не подключался файлом и в браузере
+        // молча падал на грубый системный Georgia serif.
+        sans: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
+        display: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
         soft: '0 10px 30px -12px rgba(60, 35, 10, 0.25)',

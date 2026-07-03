@@ -33,13 +33,18 @@ export async function GET(
   }
   if (isOwner) codeAccepted = true;
 
-  const tasks =
-    codeAccepted
-      ? await prisma.task.findMany({
+  const [tasks, folders] = codeAccepted
+    ? await Promise.all([
+        prisma.task.findMany({
           where: { classId: cls.id, isHomework: true },
           orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
-        })
-      : [];
+        }),
+        prisma.homeworkFolder.findMany({
+          where: { classId: cls.id },
+          orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+        }),
+      ])
+    : [[], []];
 
   return NextResponse.json({
     class: {
@@ -53,6 +58,7 @@ export async function GET(
     },
     codeAccepted,
     tasks,
+    folders,
     isOwner,
   });
 }

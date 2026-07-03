@@ -66,7 +66,9 @@ export async function POST(
   // Свежий старт: убираем прошлую доску этой задачи у ученика (чтобы решать
   // с начала), затем создаём новую и переиспользуем/создаём TaskSession.
   const existing = await prisma.taskSession.findUnique({
-    where: { taskId_userId: { taskId: task.id, userId: auth.sub } },
+    where: {
+      taskId_userId_context: { taskId: task.id, userId: auth.sub, context: 'homework' },
+    },
   });
   if (existing?.roomId) {
     await prisma.room.deleteMany({ where: { id: existing.roomId } });
@@ -91,8 +93,30 @@ export async function POST(
     });
   } else {
     await prisma.taskSession.create({
-      data: { taskId: task.id, userId: auth.sub, roomId: room.id, fen, status: 'active' },
+      data: {
+        taskId: task.id,
+        userId: auth.sub,
+        context: 'homework',
+        roomId: room.id,
+        fen,
+        status: 'active',
+      },
     });
+  }
+
+  // История попыток: незавершённые прошлые попытки помечаем «заброшенными»,
+  // затем открываем новую активную попытку. Каждый запуск «Решать» = +1 попытка.
+  // Обёрнуто в try/catch: сбой ведения истории не должен мешать ученику решать.
+  try {
+    await prisma.taskAttempt.updateMany({
+      where: { taskId: task.id, userId: auth.sub, status: 'active' },
+      data: { status: 'abandoned' },
+    });
+    await prisma.taskAttempt.create({
+      data: { taskId: task.id, userId: auth.sub, status: 'active', startFen: fen },
+    });
+  } catch (e) {
+    console.error('taskAttempt logging failed:', e);
   }
 
   return NextResponse.json({ roomCode: code, sideToPlay: task.sideToPlay });

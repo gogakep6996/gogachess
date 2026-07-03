@@ -20,6 +20,8 @@ import {
   type TournamentStandingDto,
   type RoomMode,
   type MoveHistoryEntry,
+  type MoveTreeNode,
+  type PastGameDto,
   type BoardArrow,
   type BoardMark,
   type ArrowColor,
@@ -82,6 +84,15 @@ interface RoomRuntime {
   /** Текущая позиция, на которую смотрит учитель (для синхронизации перемотки с учениками).
    *  null = «следить за текущей позицией» (показываем последний ход / старт). */
   historyViewIdx: number | null;
+  /** Дерево ходов (варианты как в Lichess). Только для учебных комнат; для
+   *  игровых партий пустое. `history` при этом = активная линия к currentNodeId. */
+  moveNodes: MoveTreeNode[];
+  /** Кончик активной линии (id узла). null = стартовая позиция отрезка. */
+  currentNodeId: string | null;
+  /** Узел, который учитель показывает ученикам (перемотка веток). null = за актуальной. */
+  historyViewNodeId: string | null;
+  /** Снимки прошлых партий на доске (после «начать заново») — для разбора учителем. */
+  pastGames: PastGameDto[];
   /** Часы партии (только для турнирных / казуальных партий с timeControl). */
   clock: ClockState | null;
   /** Активное предложение ничьей (только для tournament/casual). */
@@ -103,6 +114,11 @@ interface RoomRuntime {
    *  моменту не сходил — проигрывает. null = правило не действует (сыграно ≥2 хода
    *  или это не турнирная партия). */
   firstMoveDeadlineAt: number | null;
+  /** Снимок «живой» партии ученика на момент, когда учитель начал разбор
+   *  (загрузил прошлую партию). Пока не null — идёт разбор: при выходе учителя из
+   *  доски позиция ученика восстанавливается из снимка и он продолжает играть с
+   *  движком. null = обычный режим (разбор не начат). */
+  reviewBackup?: RoomReviewBackup | null;
 }
 
 /** Сколько даётся на каждый из первых двух полуходов турнирной партии. */
@@ -133,6 +149,146 @@ function isThreefoldByHistory(segmentStartFen: string, history: MoveHistoryEntry
   } catch {
     return false;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Дерево ходов (варианты как в Lichess). Только для учебных комнат.
+// ─────────────────────────────────────────────────────────────────────────
+/** Сколько последних партий ученика храним на доске (для разбора учителем). */
+const MAX_PAST_GAMES = 6;
+const TREE_KINDS = new Set(['lesson', 'student-board', 'class-demo']);
+function isTreeRoom(kind: string): boolean {
+  return TREE_KINDS.has(kind);
+}
+
+let moveNodeSeq = 0;
+function newNodeId(): string {
+  moveNodeSeq += 1;
+  return `n${Date.now().toString(36)}_${moveNodeSeq.toString(36)}`;
+}
+
+function treeNodeById(runtime: RoomRuntime, id: string | null): MoveTreeNode | null {
+  if (!id) return null;
+  return runtime.moveNodes.find((n) => n.id === id) ?? null;
+}
+
+function treeChildren(runtime: RoomRuntime, parentId: string | null): MoveTreeNode[] {
+  return runtime.moveNodes.filter((n) => n.parentId === parentId);
+}
+
+/** Путь от корня до узла nodeId как плоская история (для runtime.history / доски). */
+function treePathTo(runtime: RoomRuntime, nodeId: string | null): MoveHistoryEntry[] {
+  const path: MoveHistoryEntry[] = [];
+  let cur = treeNodeById(runtime, nodeId);
+  const guard = new Set<string>();
+  while (cur && !guard.has(cur.id)) {
+    guard.add(cur.id);
+    path.push({
+      san: cur.san,
+      from: cur.from,
+      to: cur.to,
+      fen: cur.fen,
+      promotion: cur.promotion,
+      legal: cur.legal,
+    });
+    cur = treeNodeById(runtime, cur.parentId);
+  }
+  path.reverse();
+  return path;
+}
+
+/** Обновляет runtime.history = активная линия к currentNodeId. */
+function syncActiveLine(runtime: RoomRuntime): void {
+  runtime.history = treePathTo(runtime, runtime.currentNodeId);
+}
+
+/** Удаляет узел и всё его поддерево из дерева. */
+function removeSubtree(runtime: RoomRuntime, nodeId: string): void {
+  const toRemove = new Set<string>([nodeId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const n of runtime.moveNodes) {
+      if (n.parentId && toRemove.has(n.parentId) && !toRemove.has(n.id)) {
+        toRemove.add(n.id);
+        changed = true;
+      }
+    }
+  }
+  runtime.moveNodes = runtime.moveNodes.filter((n) => !toRemove.has(n.id));
+}
+
+/** Снимок текущей главной линии как «прошлая партия» (для разбора учителем). */
+function snapshotPastGame(runtime: RoomRuntime): void {
+  if (runtime.history.length === 0) return;
+  runtime.pastGames.push({
+    startFen: runtime.segmentStartFen,
+    moves: runtime.history.map((h) => ({ ...h })),
+    endedAt: Date.now(),
+  });
+  // Ограничиваем память: держим последние 6 партий — самые старые вытесняются.
+  if (runtime.pastGames.length > MAX_PAST_GAMES) {
+    runtime.pastGames.splice(0, runtime.pastGames.length - MAX_PAST_GAMES);
+  }
+}
+
+/** Полный сброс дерева (после reset / edit-end / «начать заново»). */
+function clearTree(runtime: RoomRuntime): void {
+  runtime.moveNodes = [];
+  runtime.currentNodeId = null;
+  runtime.historyViewNodeId = null;
+}
+
+/** Снимок «живой» позиции ученика на момент начала разбора учителем (загрузки
+ *  прошлой партии). Нужен, чтобы при выходе учителя вернуть доску ученика ровно
+ *  туда, где он остановился, и он продолжил играть с движком. */
+interface RoomReviewBackup {
+  fen: string;
+  segmentStartFen: string;
+  history: MoveHistoryEntry[];
+  moveNodes: MoveTreeNode[];
+  currentNodeId: string | null;
+  historyViewNodeId: string | null;
+  historyViewIdx: number | null;
+  freshSegment: boolean;
+  pastGames: PastGameDto[];
+  arrows: BoardArrow[];
+  marks: BoardMark[];
+  engineEnabled: boolean;
+}
+
+function snapshotReview(rt: RoomRuntime): RoomReviewBackup {
+  return {
+    fen: rt.fen,
+    segmentStartFen: rt.segmentStartFen,
+    history: rt.history.map((h) => ({ ...h })),
+    moveNodes: rt.moveNodes.map((n) => ({ ...n })),
+    currentNodeId: rt.currentNodeId,
+    historyViewNodeId: rt.historyViewNodeId,
+    historyViewIdx: rt.historyViewIdx,
+    freshSegment: rt.freshSegment,
+    pastGames: rt.pastGames.map((g) => ({ ...g, moves: g.moves.map((m) => ({ ...m })) })),
+    arrows: rt.arrows.map((a) => ({ ...a })),
+    marks: rt.marks.map((m) => ({ ...m })),
+    engineEnabled: rt.engineEnabled,
+  };
+}
+
+function restoreReview(rt: RoomRuntime, b: RoomReviewBackup): void {
+  rt.fen = b.fen;
+  rt.segmentStartFen = b.segmentStartFen;
+  rt.history = b.history.map((h) => ({ ...h }));
+  rt.moveNodes = b.moveNodes.map((n) => ({ ...n }));
+  rt.currentNodeId = b.currentNodeId;
+  rt.historyViewNodeId = b.historyViewNodeId;
+  rt.historyViewIdx = b.historyViewIdx;
+  rt.freshSegment = b.freshSegment;
+  rt.pastGames = b.pastGames.map((g) => ({ ...g, moves: g.moves.map((m) => ({ ...m })) }));
+  rt.arrows = b.arrows.map((a) => ({ ...a }));
+  rt.marks = b.marks.map((m) => ({ ...m }));
+  rt.engineEnabled = b.engineEnabled;
+  rt.isEditing = false;
+  rt.editorId = null;
 }
 
 const ALLOWED_ARROW_COLORS: ArrowColor[] = ['green', 'red', 'blue', 'yellow'];
@@ -181,6 +337,23 @@ function sanitizeMarks(input: unknown): BoardMark[] {
 
 const rooms = new Map<string, RoomRuntime>();
 
+/**
+ * Отложенное удаление опустевших lesson-комнат. История ходов / дерево живут только
+ * в памяти runtime, поэтому мгновенное удаление при уходе последнего участника
+ * теряло бы историю при обычном обновлении страницы (короткий disconnect→reconnect).
+ * Держим комнату ещё немного и отменяем удаление, если кто-то вернулся.
+ */
+const roomDeletionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const ROOM_EMPTY_GRACE_MS = 60_000;
+
+function cancelRoomDeletion(code: string): void {
+  const t = roomDeletionTimers.get(code);
+  if (t) {
+    clearTimeout(t);
+    roomDeletionTimers.delete(code);
+  }
+}
+
 /** socketId -> { userId, timeControl } */
 const matchQueue = new Map<string, { userId: string; userName: string; timeControl: string }>();
 
@@ -221,10 +394,14 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     timeControl: room.timeControl,
     mode: room.mode,
     history: room.history,
+    moveTree: room.moveNodes,
+    currentNodeId: room.currentNodeId,
+    pastGames: room.pastGames,
     arrows: room.arrows,
     marks: room.marks,
     freshSegment: room.freshSegment,
     historyViewIdx: room.historyViewIdx,
+    historyViewNodeId: room.historyViewNodeId,
     clock: room.clock,
     drawOffer: room.drawOffer,
     whiteId: room.whiteId ?? null,
@@ -317,6 +494,10 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     marks: [],
     freshSegment: true,
     historyViewIdx: null,
+    moveNodes: [],
+    currentNodeId: null,
+    historyViewNodeId: null,
+    pastGames: [],
     clock: needsClock ? makeClock(dbRoom.timeControl) : null,
     drawOffer: null,
     result: null,
@@ -396,38 +577,74 @@ async function loadOrCreateClassRuntime(classId: string): Promise<ClassRuntime |
   return rt;
 }
 
-async function buildClassState(rt: ClassRuntime): Promise<ClassStatePayload> {
+/** Класс по коду его lobby-комнаты (обратный поиск для хуков RoomJoin/disconnect). */
+function findClassRuntimeByLobbyCode(code: string): ClassRuntime | null {
+  for (const rt of classRuntimes.values()) {
+    if (rt.lobbyRoomCode === code) return rt;
+  }
+  return null;
+}
+
+/** userId учеников/учителя, реально вошедших в урок = участники lobby-комнаты.
+ *  «Домашечники» (открыли страницу класса, но не вошли в урок) сюда НЕ попадают —
+ *  ClassAudioProvider с подключением к lobby-комнате у них не смонтирован. */
+function lessonPresentUserIds(rt: ClassRuntime): Set<string> {
+  const present = new Set<string>();
+  const lobbyRt = rt.lobbyRoomCode ? rooms.get(rt.lobbyRoomCode) : null;
+  if (lobbyRt) {
+    for (const p of lobbyRt.participants.values()) present.add(p.userId);
+  }
+  return present;
+}
+
+async function buildClassState(io: IOServer, rt: ClassRuntime): Promise<ClassStatePayload> {
+  void io;
+  // Присутствие на уроке считаем по участникам lobby-комнаты, а не по факту
+  // открытия страницы класса — иначе «домашечники» ошибочно считаются на уроке.
+  const presentUserIds = lessonPresentUserIds(rt);
+
   // Подтягиваем активные task-sessions в этом классе (если урок идёт).
   const sessions: ClassActiveSessionDto[] = [];
   if (rt.lessonActive && rt.currentTaskId) {
-    const dbSessions = await prisma.taskSession.findMany({
-      where: { task: { classId: rt.classId }, taskId: rt.currentTaskId },
-      include: {
-        task: { select: { title: true } },
-        user: { select: { displayName: true } },
-        room: { select: { code: true } },
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
-    for (const s of dbSessions) {
-      if (!s.room) continue;
-      const roomRuntime = rooms.get(s.room.code);
-      const online = roomRuntime
-        ? Array.from(roomRuntime.participants.values()).some((p) => p.userId === s.userId)
-        : false;
-      sessions.push({
-        sessionId: s.id,
-        taskId: s.taskId,
-        taskTitle: s.task.title,
-        roomCode: s.room.code,
-        userId: s.userId,
-        userName: s.user.displayName,
-        fen: s.fen,
-        movesPlayed: s.movesPlayed,
-        status: s.status,
-        online,
-        updatedAt: s.updatedAt.getTime(),
+    try {
+      const dbSessions = await prisma.taskSession.findMany({
+        where: {
+          task: { classId: rt.classId },
+          taskId: rt.currentTaskId,
+          context: 'lesson',
+        },
+        include: {
+          task: { select: { title: true } },
+          user: { select: { displayName: true } },
+          room: { select: { code: true } },
+        },
+        orderBy: { updatedAt: 'desc' },
       });
+      for (const s of dbSessions) {
+        if (!s.room) continue;
+        // Показываем мини-доску только если ученик:
+        //  1) реально сейчас в уроке (участник lobby-комнаты) — иначе онлайн врёт;
+        //  2) получил ЭТУ задачу в ТЕКУЩЕМ уроке (distributedTo). Это отсекает
+        //     «зависшие» сессии учеников из прошлого урока, у которых в БД осталась
+        //     старая lesson-сессия по той же задаче.
+        if (!presentUserIds.has(s.userId)) continue;
+        if (!rt.distributedTo.has(s.userId)) continue;
+        sessions.push({
+          sessionId: s.id,
+          taskId: s.taskId,
+          taskTitle: s.task.title,
+          roomCode: s.room.code,
+          userId: s.userId,
+          userName: s.user.displayName,
+          fen: s.fen,
+          movesPlayed: s.movesPlayed,
+          status: s.status,
+          online: true,
+          updatedAt: s.updatedAt.getTime(),
+        });
+      }
+    } catch (e) {
+      console.error('buildClassState: не удалось загрузить сессии урока', e);
     }
   }
   return {
@@ -438,17 +655,20 @@ async function buildClassState(rt: ClassRuntime): Promise<ClassStatePayload> {
     demoRoomCode: rt.demoRoomCode,
     demoBroadcast: rt.demoBroadcast,
     lobbyRoomCode: rt.lobbyRoomCode,
-    lobbyParticipants: Array.from(rt.lobbyMembers.entries()).map(([userId, info]) => ({
-      userId,
-      name: info.name,
-      role: info.role,
-    })),
+    // Ростер — только фактически присутствующие в канале класса.
+    lobbyParticipants: Array.from(rt.lobbyMembers.entries())
+      .filter(([userId]) => presentUserIds.has(userId))
+      .map(([userId, info]) => ({
+        userId,
+        name: info.name,
+        role: info.role,
+      })),
     sessions,
   };
 }
 
 async function broadcastClass(io: IOServer, rt: ClassRuntime): Promise<void> {
-  const state = await buildClassState(rt);
+  const state = await buildClassState(io, rt);
   io.to(`class:${rt.slug}`).emit(SocketEvents.ClassState, state);
 }
 
@@ -484,12 +704,33 @@ async function syncTaskSessionAfterMove(io: IOServer, runtime: RoomRuntime): Pro
       solvedAt,
     },
   });
-  if (status === 'solved' && session.status !== 'solved') {
+  const justSolved = status === 'solved' && session.status !== 'solved';
+  if (justSolved) {
     io.to(`class:${session.task.class.slug}`).emit(SocketEvents.TaskSessionSolved, {
       sessionId: session.id,
       userId: session.userId,
       taskId: session.taskId,
     });
+  }
+  // История домашних заданий: на каждый ход обновляем ходы текущей активной
+  // попытки (чтобы учитель мог перелистать партию), при решении — помечаем
+  // попытку решённой. Только для домашнего контекста — ходы на урочной доске
+  // (даже если задача помечена как домашка) в историю попыток не попадают.
+  if (session.context === 'homework') {
+    const attempt = await prisma.taskAttempt.findFirst({
+      where: { taskId: session.taskId, userId: session.userId, status: 'active' },
+      orderBy: { startedAt: 'desc' },
+    });
+    if (attempt) {
+      await prisma.taskAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          moves: JSON.stringify(runtime.history),
+          movesPlayed: runtime.history.length,
+          ...(justSolved ? { status: 'solved', solvedAt: solvedAt ?? new Date() } : {}),
+        },
+      });
+    }
   }
   const rt = classRuntimes.get(session.task.classId);
   if (rt) void broadcastClass(io, rt);
@@ -537,7 +778,9 @@ async function ensureStudentTaskBoard(
   resetExisting: boolean,
 ): Promise<void> {
   const existing = await prisma.taskSession.findUnique({
-    where: { taskId_userId: { taskId: task.id, userId: studentId } },
+    where: {
+      taskId_userId_context: { taskId: task.id, userId: studentId, context: 'lesson' },
+    },
     include: { room: true },
   });
   if (!existing || !existing.room) {
@@ -557,6 +800,7 @@ async function ensureStudentTaskBoard(
         data: {
           taskId: task.id,
           userId: studentId,
+          context: 'lesson',
           roomId: room.id,
           fen: task.fen,
           status: 'active',
@@ -574,6 +818,7 @@ async function ensureStudentTaskBoard(
       roomRt.fen = task.fen;
       roomRt.segmentStartFen = task.fen;
       roomRt.history = [];
+      clearTree(roomRt);
       roomRt.freshSegment = true;
       roomRt.historyViewIdx = null;
       io.to(existing.room.code).emit(SocketEvents.RoomState, buildState(roomRt));
@@ -776,6 +1021,10 @@ app.prepare().then(() => {
         marks: [],
         freshSegment: true,
         historyViewIdx: null,
+        moveNodes: [],
+        currentNodeId: null,
+        historyViewNodeId: null,
+        pastGames: [],
         clock: makeClock(t.timeControl),
         drawOffer: null,
         result: null,
@@ -905,6 +1154,8 @@ app.prepare().then(() => {
         socket.emit(SocketEvents.RoomError, 'Комната не найдена');
         return;
       }
+      // Кто-то вернулся в комнату — отменяем отложенное удаление, чтобы сохранить историю.
+      cancelRoomDeletion(code);
 
       const role: Participant['role'] = runtime.ownerId === userId ? 'teacher' : 'student';
       const participant: Participant = {
@@ -922,6 +1173,35 @@ app.prepare().then(() => {
       socket.emit(SocketEvents.RoomState, buildState(runtime));
       io.to(code).emit(SocketEvents.ParticipantsUpdate, Array.from(runtime.participants.values()));
 
+      // Вход в урок = присоединение к lobby-комнате класса. Если урок идёт и задача
+      // уже роздана, а этому ученику ещё нет — выдаём ему доску (late join), не
+      // трогая остальных. И в любом случае обновляем сетку учителя (состав на уроке
+      // изменился). «Домашечники» сюда не попадают — они в lobby-комнату не входят.
+      if (runtime.kind === 'class-lobby') {
+        const lobbyClass = findClassRuntimeByLobbyCode(code);
+        if (lobbyClass) {
+          if (
+            role === 'student' &&
+            lobbyClass.lessonActive &&
+            lobbyClass.currentTaskId &&
+            !lobbyClass.distributedTo.has(userId)
+          ) {
+            try {
+              const task = await prisma.task.findUnique({
+                where: { id: lobbyClass.currentTaskId },
+              });
+              if (task && task.classId === lobbyClass.classId) {
+                await ensureStudentTaskBoard(io, lobbyClass, task, userId, true);
+                lobbyClass.distributedTo.add(userId);
+              }
+            } catch (e) {
+              console.error('RoomJoin: late-join distribute failed', userId, e);
+            }
+          }
+          void broadcastClass(io, lobbyClass);
+        }
+      }
+
       const history = await prisma.message.findMany({
         where: { room: { code } },
         orderBy: { createdAt: 'asc' },
@@ -938,7 +1218,7 @@ app.prepare().then(() => {
       socket.emit(SocketEvents.ChatHistory, dto);
     });
 
-    socket.on(SocketEvents.MoveMake, async (move: { from: string; to: string; promotion?: string }) => {
+    socket.on(SocketEvents.MoveMake, async (move: { from: string; to: string; promotion?: string; fromNodeId?: string | null }) => {
       const code = socket.data.roomCode as string | undefined;
       if (!code) return;
       const runtime = rooms.get(code);
@@ -1043,9 +1323,19 @@ app.prepare().then(() => {
       }
       const { allowIllegal, sideLock } = runtime.mode;
       try {
+        // Базовый узел, ОТ которого делается ход. Если клиент прислал fromNodeId
+        // (он листал историю и пошёл иначе) — ветвимся от этого узла; иначе играем
+        // от «живого» кончика. null = стартовая позиция отрезка.
+        const baseNodeId: string | null =
+          move.fromNodeId === undefined ? runtime.currentNodeId : move.fromNodeId ?? null;
+        const baseNode = treeNodeById(runtime, baseNodeId);
+        let posFen = baseNode ? baseNode.fen : runtime.segmentStartFen;
+        // «Свежий» выбор стороны действует только у самого старта отрезка.
+        const freshHere = baseNodeId === null && runtime.freshSegment;
+
         const from = move.from as Square;
         const to = move.to as Square;
-        const piece = getPiece(runtime.fen, from);
+        const piece = getPiece(posFen, from);
         if (!piece) {
           socket.emit(SocketEvents.RoomError, 'На клетке нет фигуры');
           return;
@@ -1053,7 +1343,7 @@ app.prepare().then(() => {
 
         let legalApplied = false;
         let san = '';
-        let appliedFen = runtime.fen;
+        let appliedFen = posFen;
         let promotionUsed: string | undefined;
 
         if (allowIllegal) {
@@ -1061,30 +1351,30 @@ app.prepare().then(() => {
             move.promotion && ['q', 'r', 'b', 'n'].includes(String(move.promotion).toLowerCase())
               ? (String(move.promotion).toLowerCase() as 'q' | 'r' | 'b' | 'n')
               : 'q';
-          const forced = forceMove(runtime.fen, from, to, promo);
+          const forced = forceMove(posFen, from, to, promo);
           if (!forced.piece) {
             socket.emit(SocketEvents.RoomError, 'На клетке нет фигуры');
             return;
           }
-          const was = fenSideToMove(runtime.fen);
+          const was = fenSideToMove(posFen);
           appliedFen = setSideToMove(forced.fen, was === 'w' ? 'b' : 'w');
           promotionUsed = forced.promoted ? promo : undefined;
           san = `${move.from}-${move.to}${forced.promoted ? '=' + promo.toUpperCase() : ''}`;
         } else {
-          const stm = fenSideToMove(runtime.fen);
+          const stm = fenSideToMove(posFen);
           if (stm !== piece[0]) {
             // «Оба» + это первый ход в текущем «свежем» отрезке (после старта/edit/reset/initial/undo)
             // → разрешаем начать любой стороной. Кто пошёл — тот и первый,
             // дальше очередь сама встаёт правильно.
-            if (sideLock === null && runtime.freshSegment) {
-              runtime.fen = setSideToMove(runtime.fen, piece[0] as 'w' | 'b');
+            if (sideLock === null && freshHere) {
+              posFen = setSideToMove(posFen, piece[0] as 'w' | 'b');
             } else {
               socket.emit(SocketEvents.RoomError, 'Сейчас не ваш ход');
               return;
             }
           }
           try {
-            const game = new Chess(runtime.fen);
+            const game = new Chess(posFen);
             const r = game.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
             if (r) {
               legalApplied = true;
@@ -1096,7 +1386,7 @@ app.prepare().then(() => {
             // позиция не загружается в chess.js или ход отклонён
           }
           if (!legalApplied) {
-            const pseudo = applyPseudoLegalMove(runtime.fen, from, to, move.promotion);
+            const pseudo = applyPseudoLegalMove(posFen, from, to, move.promotion);
             if (!pseudo) {
               socket.emit(SocketEvents.RoomError, 'Невозможный ход');
               return;
@@ -1118,21 +1408,42 @@ app.prepare().then(() => {
           appliedFen = setSideToMove(appliedFen, sideLock);
         }
 
-        runtime.fen = appliedFen;
-        runtime.history.push({
-          san,
-          from: move.from,
-          to: move.to,
-          fen: runtime.fen,
-          promotion: promotionUsed,
-          legal: legalApplied,
-        });
+        // Вставка в дерево ходов. Если из базового узла уже есть точно такой же
+        // ход — просто переходим на него (без дубликата). Иначе рождается новый
+        // узел: если у базового узла уже были дети — это НОВАЯ ветка (вариант),
+        // а прежние линии сохраняются.
+        const existingChild = treeChildren(runtime, baseNodeId).find(
+          (c) =>
+            c.from === move.from &&
+            c.to === move.to &&
+            (c.promotion ?? '') === (promotionUsed ?? ''),
+        );
+        if (existingChild) {
+          runtime.currentNodeId = existingChild.id;
+          runtime.fen = existingChild.fen;
+        } else {
+          const node: MoveTreeNode = {
+            id: newNodeId(),
+            parentId: baseNodeId,
+            san,
+            from: move.from,
+            to: move.to,
+            fen: appliedFen,
+            promotion: promotionUsed,
+            legal: legalApplied,
+          };
+          runtime.moveNodes.push(node);
+          runtime.currentNodeId = node.id;
+          runtime.fen = appliedFen;
+        }
+        syncActiveLine(runtime);
         runtime.arrows = [];
         runtime.marks = [];
         // Первый ход «свежего» отрезка сделан — дальше очередь работает строго.
         runtime.freshSegment = false;
         // Любой ход возвращает всех к актуальной позиции.
         runtime.historyViewIdx = null;
+        runtime.historyViewNodeId = null;
 
         io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
         await persistFen(code, runtime.fen);
@@ -1201,6 +1512,7 @@ app.prepare().then(() => {
       // После выхода из редактора история партии больше не относится к новой
       // позиции — обнуляем, чтобы навигация назад не показывала фантомы.
       runtime.history = [];
+      clearTree(runtime);
       runtime.arrows = [];
       runtime.marks = [];
       runtime.freshSegment = true;
@@ -1226,6 +1538,7 @@ app.prepare().then(() => {
       runtime.editorId = null;
       runtime.segmentStartFen = runtime.fen;
       runtime.history = [];
+      clearTree(runtime);
       runtime.arrows = [];
       runtime.marks = [];
       runtime.freshSegment = true;
@@ -1257,12 +1570,16 @@ app.prepare().then(() => {
       );
       if (!isOwner && !(runtime.kind === 'student-board' && isParticipant)) return;
       if (runtime.isEditing) return;
+      // Перед сбросом сохраняем сыгранную партию — чтобы учитель мог посмотреть,
+      // как ученик решал до нажатия «Начать заново».
+      snapshotPastGame(runtime);
       runtime.fen = runtime.segmentStartFen;
       // Если sideLock — снова выравниваем сторону FEN под него.
       if (runtime.mode.sideLock) {
         runtime.fen = setSideToMove(runtime.fen, runtime.mode.sideLock);
       }
       runtime.history = [];
+      clearTree(runtime);
       runtime.arrows = [];
       runtime.marks = [];
       runtime.freshSegment = true;
@@ -1311,20 +1628,26 @@ app.prepare().then(() => {
       // инструмент совместного разбора. Остаются только базовые проверки безопасности.
       if (runtime.kind !== 'lesson' && runtime.kind !== 'student-board' && runtime.kind !== 'class-demo') return;
       if (runtime.isEditing) return;
-      if (runtime.history.length === 0) return;
-      runtime.history.pop();
-      runtime.fen =
-        runtime.history.length > 0 ? runtime.history[runtime.history.length - 1].fen : runtime.segmentStartFen;
+      if (!runtime.currentNodeId) return;
+      // Отмена = удаляем текущий узел (и его поддерево ветвей), переходим к родителю.
+      const undone = treeNodeById(runtime, runtime.currentNodeId);
+      const parentId = undone?.parentId ?? null;
+      if (undone) removeSubtree(runtime, undone.id);
+      runtime.currentNodeId = parentId;
+      const parent = treeNodeById(runtime, parentId);
+      runtime.fen = parent ? parent.fen : runtime.segmentStartFen;
       // Если стоит фиксация стороны — гарантируем, что после отмены стороной хода
       // снова окажется sideLock (в истории/segmentStartFen она могла быть другой).
       if (runtime.mode.sideLock) {
         runtime.fen = setSideToMove(runtime.fen, runtime.mode.sideLock);
       }
+      syncActiveLine(runtime);
       runtime.arrows = [];
       runtime.marks = [];
       // После отмены — снова «свежий» отрезок: в режиме «оба» можно начать любой стороной.
       runtime.freshSegment = true;
       runtime.historyViewIdx = null;
+      runtime.historyViewNodeId = null;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       void persistFen(code, runtime.fen);
       void syncTaskSessionAfterMove(io, runtime);
@@ -1361,6 +1684,82 @@ app.prepare().then(() => {
       if (runtime.historyViewIdx === next) return;
       runtime.historyViewIdx = next;
       io.to(code).emit(SocketEvents.HistoryView, runtime.historyViewIdx);
+    });
+
+    // Учитель показывает конкретный узел дерева (ветку) — ученики следуют за ним.
+    socket.on(SocketEvents.HistoryViewNode, (nodeIdRaw: unknown) => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.ownerId !== userId) return;
+      if (!isTreeRoom(runtime.kind)) return;
+      let next: string | null = null;
+      if (typeof nodeIdRaw === 'string') {
+        // Узел должен существовать; кончик активной линии => null («за актуальной»).
+        const exists = runtime.moveNodes.some((n) => n.id === nodeIdRaw);
+        next = exists && nodeIdRaw !== runtime.currentNodeId ? nodeIdRaw : null;
+      }
+      if (runtime.historyViewNodeId === next) return;
+      runtime.historyViewNodeId = next;
+      io.to(code).emit(SocketEvents.HistoryViewNode, runtime.historyViewNodeId);
+    });
+
+    // Учитель загружает сохранённую прошлую партию обратно на доску ученика.
+    socket.on(SocketEvents.LoadPastGame, async (indexRaw: unknown) => {
+      const code = socket.data.roomCode as string | undefined;
+      if (!code) return;
+      const runtime = rooms.get(code);
+      if (!runtime) return;
+      if (runtime.ownerId !== userId) return;
+      if (!isTreeRoom(runtime.kind)) return;
+      if (runtime.isEditing) return;
+      const index = typeof indexRaw === 'number' ? Math.floor(indexRaw) : -1;
+      const game = runtime.pastGames[index];
+      if (!game) return;
+      // Начало разбора: один раз запоминаем «живую» позицию ученика (до загрузки),
+      // чтобы при выходе учителя вернуть её и ученик продолжил играть с движком.
+      if (!runtime.reviewBackup) {
+        runtime.reviewBackup = snapshotReview(runtime);
+      }
+      // На время разбора движок молчит — партию разбирают вручную, без ответных
+      // ходов движка (в т.ч. движок НЕ ходит в момент самой загрузки позиции).
+      runtime.engineEnabled = false;
+      // Сохраняем текущую линию (если в ней есть ходы), чтобы не потерять её.
+      snapshotPastGame(runtime);
+      // Восстанавливаем партию как активную линию дерева.
+      runtime.segmentStartFen = game.startFen;
+      clearTree(runtime);
+      let parentId: string | null = null;
+      for (const mv of game.moves) {
+        const node: MoveTreeNode = {
+          id: newNodeId(),
+          parentId,
+          san: mv.san,
+          from: mv.from,
+          to: mv.to,
+          fen: mv.fen,
+          promotion: mv.promotion,
+          legal: mv.legal,
+        };
+        runtime.moveNodes.push(node);
+        parentId = node.id;
+      }
+      runtime.currentNodeId = parentId;
+      runtime.fen =
+        game.moves.length > 0 ? game.moves[game.moves.length - 1].fen : game.startFen;
+      if (runtime.mode.sideLock) {
+        runtime.fen = setSideToMove(runtime.fen, runtime.mode.sideLock);
+      }
+      syncActiveLine(runtime);
+      runtime.arrows = [];
+      runtime.marks = [];
+      runtime.freshSegment = game.moves.length === 0;
+      runtime.historyViewIdx = null;
+      runtime.historyViewNodeId = null;
+      io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+      await persistFen(code, runtime.fen);
+      void syncTaskSessionAfterMove(io, runtime);
     });
 
     // Учитель переключает движок-соперник на доске ученика. Имеет смысл
@@ -1640,6 +2039,10 @@ app.prepare().then(() => {
           marks: [],
           freshSegment: true,
           historyViewIdx: null,
+          moveNodes: [],
+          currentNodeId: null,
+          historyViewNodeId: null,
+          pastGames: [],
           clock: makeClock(timeControl),
           drawOffer: null,
           result: null,
@@ -1783,21 +2186,11 @@ app.prepare().then(() => {
         name: userName,
         role: isStudent ? 'student' : 'teacher',
       });
-      // Опоздавший ученик: урок уже идёт и задача роздана, но этому ученику её
-      // ещё не выдавали (его нет в distributedTo) → выдаём доску автоматически,
-      // не трогая остальных. Переподключившийся (refresh) ученик уже есть в
-      // distributedTo → сюда не попадёт, его прогресс сохраняется.
-      if (isStudent && rt.lessonActive && rt.currentTaskId && !rt.distributedTo.has(userId)) {
-        const task = await prisma.task.findUnique({ where: { id: rt.currentTaskId } });
-        if (task && task.classId === rt.classId) {
-          // resetExisting=true: опоздавший начинает задачу с начала. Это безопасно —
-          // переподключившиеся ученики уже в distributedTo и сюда не попадают, так что
-          // сброшена может быть только устаревшая сессия с прошлого урока.
-          await ensureStudentTaskBoard(io, rt, task, userId, true);
-          rt.distributedTo.add(userId);
-        }
-      }
-      const state = await buildClassState(rt);
+      // ВАЖНО: здесь задачу НЕ раздаём. Подписка на канал класса — это просто
+      // открытие страницы класса (в т.ч. ради домашних заданий), а не вход в урок.
+      // Раздача опоздавшему происходит при фактическом входе в урок = присоединении
+      // к lobby-комнате (см. обработчик RoomJoin для kind='class-lobby').
+      const state = await buildClassState(io, rt);
       socket.emit(SocketEvents.ClassState, state);
       void broadcastClass(io, rt);
     });
@@ -1847,6 +2240,27 @@ app.prepare().then(() => {
       rt.demoRoomCode = null;
       rt.demoBroadcast = false;
       rt.distributedTo = new Set();
+      // Урок завершён — стираем историю прошлых партий на всех досках класса.
+      try {
+        const boards = await prisma.taskSession.findMany({
+          where: {
+            context: 'lesson',
+            roomId: { not: null },
+            task: { classId: rt.classId },
+          },
+          include: { room: true },
+        });
+        for (const s of boards) {
+          if (!s.room) continue;
+          const roomRt = rooms.get(s.room.code);
+          if (roomRt && roomRt.pastGames.length > 0) {
+            roomRt.pastGames = [];
+            io.to(s.room.code).emit(SocketEvents.RoomState, buildState(roomRt));
+          }
+        }
+      } catch (e) {
+        console.error('ClassLessonStop: clear pastGames failed', e);
+      }
       // Lobby room оставляем — он легковесный и пригодится в следующий урок.
       void broadcastClass(io, rt);
     });
@@ -1866,14 +2280,19 @@ app.prepare().then(() => {
       // присутствующими учениками. Опоздавшие подхватят задачу при входе
       // (см. ClassSubscribe), и тоже попадут в этот набор.
       rt.distributedTo = new Set();
-      // Для каждого присутствующего ученика гарантируем TaskSession + Room.
+      // Доску получают только ученики, реально вошедшие в урок (участники
+      // lobby-комнаты). Кто открыл класс ради домашек — задачу не получает.
       // resetExisting=true — повторная раздача всегда начинает задачу заново.
-      const students = Array.from(rt.lobbyMembers.entries()).filter(
-        ([uid]) => uid !== rt.ownerId,
+      const studentIds = Array.from(lessonPresentUserIds(rt)).filter(
+        (uid) => uid !== rt.ownerId,
       );
-      for (const [studentId] of students) {
-        await ensureStudentTaskBoard(io, rt, task, studentId, true);
-        rt.distributedTo.add(studentId);
+      for (const studentId of studentIds) {
+        try {
+          await ensureStudentTaskBoard(io, rt, task, studentId, true);
+          rt.distributedTo.add(studentId);
+        } catch (e) {
+          console.error('ClassDistribute: ensureStudentTaskBoard failed', studentId, e);
+        }
       }
       void broadcastClass(io, rt);
     });
@@ -1897,6 +2316,7 @@ app.prepare().then(() => {
           roomRt.fen = fen;
           roomRt.segmentStartFen = fen;
           roomRt.history = [];
+          clearTree(roomRt);
           roomRt.freshSegment = true;
           io.to(rt.demoRoomCode).emit(SocketEvents.RoomState, buildState(roomRt));
         }
@@ -1982,17 +2402,32 @@ app.prepare().then(() => {
       }
       io.to(code).emit(SocketEvents.ParticipantsUpdate, Array.from(runtime.participants.values()));
 
-      // student-board: если учитель (владелец) покинул доску ученика, а движок
-      // был выключен им для разбора позиции — снова включаем его, чтобы ученик
-      // продолжил играть против движка автоматически. Выключение движка имеет
-      // смысл только пока учитель сам стоит за доской.
-      if (runtime.kind === 'student-board' && !runtime.engineEnabled) {
+      // Выход из lobby-комнаты = уход с урока → обновляем сетку учителя, чтобы
+      // мини-доска и онлайн-статус ушедшего ученика сразу пропали.
+      if (runtime.kind === 'class-lobby') {
+        const lobbyClass = findClassRuntimeByLobbyCode(code);
+        if (lobbyClass) void broadcastClass(io, lobbyClass);
+      }
+
+      // student-board: учитель (владелец) покинул доску ученика.
+      if (runtime.kind === 'student-board') {
         const ownerStillHere = Array.from(runtime.participants.values()).some(
           (p) => p.userId === runtime.ownerId,
         );
         if (!ownerStillHere) {
-          runtime.engineEnabled = true;
-          io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+          if (runtime.reviewBackup) {
+            // Учитель разбирал прошлую партию → возвращаем ученику его «живую»
+            // позицию (до захода учителя) и включённый движок: он продолжает игру.
+            restoreReview(runtime, runtime.reviewBackup);
+            runtime.reviewBackup = null;
+            io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+            void persistFen(code, runtime.fen);
+            void syncTaskSessionAfterMove(io, runtime);
+          } else if (!runtime.engineEnabled) {
+            // Движок был выключен учителем вручную (без разбора) — включаем обратно.
+            runtime.engineEnabled = true;
+            io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
+          }
         }
       }
       if (runtime.editorId && !Array.from(runtime.participants.values()).find((p) => p.userId === runtime.editorId)) {
@@ -2001,7 +2436,17 @@ app.prepare().then(() => {
         io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
       }
       if (runtime.participants.size === 0 && runtime.kind === 'lesson') {
-        rooms.delete(code);
+        // Не удаляем сразу: даём время на реконнект (обновление страницы), иначе
+        // теряется история ходов/дерево, которые хранятся только в памяти runtime.
+        cancelRoomDeletion(code);
+        roomDeletionTimers.set(
+          code,
+          setTimeout(() => {
+            roomDeletionTimers.delete(code);
+            const rt = rooms.get(code);
+            if (rt && rt.participants.size === 0) rooms.delete(code);
+          }, ROOM_EMPTY_GRACE_MS),
+        );
       }
     });
   });

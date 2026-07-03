@@ -12,6 +12,9 @@ interface Props {
   middleSlot?: React.ReactNode;
   /** Горизонтальная (рядом) или вертикальная (стопкой, для боковой колонки) раскладка. */
   layout?: 'vertical' | 'horizontal';
+  /** Показывать ли встроенный чат. У учителя он вынесен в плавающую иконку
+   *  (`FloatingChat`), поэтому здесь его отключаем, чтобы не дублировать. */
+  showChat?: boolean;
 }
 
 /**
@@ -30,6 +33,7 @@ export function ClassLobbyPanel({
   isTeacher,
   middleSlot,
   layout = 'vertical',
+  showChat = true,
 }: Props) {
   const ctx = useClassAudio();
   if (!ctx) {
@@ -91,16 +95,19 @@ export function ClassLobbyPanel({
       {middleSlot}
       {/* Чат: фиксированная высота, чтобы при добавлении сообщений блок
           не растягивался бесконечно вниз. Внутренняя область с сообщениями
-          прокручивается сама (overflow-y-auto в ChatPanel). */}
-      <div className="card !p-2 h-[440px]">
-        <ChatPanel
-          variant="compact"
-          messages={messages}
-          meId={meId}
-          onSend={(text) => sendChat(text)}
-          onClear={isTeacher ? clearChat : undefined}
-        />
-      </div>
+          прокручивается сама (overflow-y-auto в ChatPanel).
+          У учителя чат вынесен в плавающую иконку — здесь он скрыт (showChat=false). */}
+      {showChat && (
+        <div className="card !p-2 h-[440px]">
+          <ChatPanel
+            variant="compact"
+            messages={messages}
+            meId={meId}
+            onSend={(text) => sendChat(text)}
+            onClear={isTeacher ? clearChat : undefined}
+          />
+        </div>
+      )}
     </div>
   );
 }

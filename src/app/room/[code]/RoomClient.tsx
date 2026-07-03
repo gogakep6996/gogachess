@@ -1,9 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChessBoard } from '@/components/chess/ChessBoard';
+import { MiniBoard } from '@/components/chess/MiniBoard';
+import { MoveNav } from '@/components/tournament/MoveNav';
 import { PromotionDialog } from '@/components/chess/PromotionDialog';
 import { ChatPanel } from '@/components/room/ChatPanel';
+import { FloatingChat } from '@/components/class/FloatingChat';
 import { AudioPanel } from '@/components/room/AudioPanel';
 import { EnginePanel } from '@/components/room/EnginePanel';
 import { HistoryPanel } from '@/components/room/HistoryPanel';
@@ -13,7 +16,12 @@ import { useRoomSocket } from '@/hooks/useRoomSocket';
 import { useAudioRoom } from '@/hooks/useAudioRoom';
 import { useStockfish } from '@/hooks/useStockfish';
 import { useClassAudio } from '@/contexts/ClassAudioContext';
-import { DEFAULT_ROOM_MODE, STARTING_FEN } from '@/lib/socket-events';
+import {
+  DEFAULT_ROOM_MODE,
+  STARTING_FEN,
+  type MoveTreeNode,
+  type PastGameDto,
+} from '@/lib/socket-events';
 import { getPiece, type Square } from '@/lib/fen';
 import { cn } from '@/lib/utils';
 
@@ -104,6 +112,8 @@ export function RoomClient({
     undoMove,
     resetToInitial,
     setHistoryView,
+    setHistoryViewNode,
+    loadPastGame,
     toggleEngine,
     setMovesLock,
     setMoveAllow,
@@ -161,11 +171,55 @@ export function RoomClient({
   /** Индекс просматриваемой позиции, который выставил учитель и хочет показать ученикам. */
   const remoteViewIdx = state?.historyViewIdx ?? null;
 
+  // ── Дерево ходов (варианты как в Lichess) — только в учебных комнатах. ──
+  const moveTree = state?.moveTree ?? [];
+  const currentNodeId = state?.currentNodeId ?? null;
+  const pastGames = state?.pastGames ?? [];
+  const remoteViewNodeId = state?.historyViewNodeId ?? null;
+  /** В учебных комнатах включаем навигацию по дереву (ветки). */
+  const treeMode = isLessonLike;
+  const nodeMap = useMemo(() => {
+    const m = new Map<string, MoveTreeNode>();
+    for (const n of moveTree) m.set(n.id, n);
+    return m;
+  }, [moveTree]);
+  const childrenMap = useMemo(() => {
+    const m = new Map<string | null, MoveTreeNode[]>();
+    for (const n of moveTree) {
+      const arr = m.get(n.parentId) ?? [];
+      arr.push(n);
+      m.set(n.parentId, arr);
+    }
+    return m;
+  }, [moveTree]);
+  const nodeChildren = useCallback(
+    (id: string | null) => childrenMap.get(id) ?? [],
+    [childrenMap],
+  );
+  /** Путь id-узлов от корня до заданного узла (для навигации по активной линии). */
+  const pathToNode = useCallback(
+    (id: string | null): string[] => {
+      const out: string[] = [];
+      let cur = id ? nodeMap.get(id) : undefined;
+      const guard = new Set<string>();
+      while (cur && !guard.has(cur.id)) {
+        guard.add(cur.id);
+        out.push(cur.id);
+        cur = cur.parentId ? nodeMap.get(cur.parentId) : undefined;
+      }
+      out.reverse();
+      return out;
+    },
+    [nodeMap],
+  );
+
   // Только владелец lesson-комнаты управляет режимом; ученики могут редактировать,
   // если учитель открыл редактор и разрешил всем редактирование.
   const canEditNow = isEditing && (isOwner || mode.studentsCanEdit);
 
   const [copied, setCopied] = useState(false);
+  /** Открыт ли просмотр прошлых партий ученика (для учителя). */
+  const [pastGamesOpen, setPastGamesOpen] = useState(false);
 
   // Переворот доски (чёрные снизу). Локально для каждого пользователя.
   const [flipped, setFlipped] = useState(false);
@@ -215,15 +269,140 @@ export function RoomClient({
     }
   }
 
-  const lastIdx = history.length - 1;
-  const isViewingPast = viewIdx < lastIdx;
-  const startFen = segmentStartFen;
-  const viewFen = viewIdx === -1 ? startFen : history[viewIdx]?.fen ?? fen;
+  // ── Навигация по дереву ходов (варианты). Активна в учебных комнатах. ──
+  const [viewNodeId, setViewNodeId] = useState<string | null>(null);
+  const followTreeRef = useRef<boolean>(true);
 
-  const goPrev = () => selectHistoryIdx(viewIdx - 1);
-  const goNext = () => selectHistoryIdx(viewIdx + 1);
-  const goStart = () => selectHistoryIdx(-1);
-  const goEnd = () => selectHistoryIdx(lastIdx);
+  // Следуем за «живым» кончиком, пока пользователь не ушёл в историю.
+  useEffect(() => {
+    if (!treeMode || isEditing) return;
+    if (followTreeRef.current) setViewNodeId(currentNodeId);
+  }, [treeMode, isEditing, currentNodeId]);
+
+  useEffect(() => {
+    if (treeMode && isEditing) {
+      followTreeRef.current = true;
+      setViewNodeId(currentNodeId);
+    }
+  }, [treeMode, isEditing, currentNodeId]);
+
+  // Ученики следуют за узлом, который показывает учитель (перемотка веток).
+  useEffect(() => {
+    if (!treeMode || isOwner || isEditing) return;
+    if (remoteViewNodeId === null) {
+      followTreeRef.current = true;
+      setViewNodeId(currentNodeId);
+    } else {
+      followTreeRef.current = false;
+      setViewNodeId(remoteViewNodeId);
+    }
+  }, [treeMode, isOwner, isEditing, remoteViewNodeId, currentNodeId]);
+
+  const selectTreeNode = useCallback(
+    (id: string | null) => {
+      setViewNodeId(id);
+      followTreeRef.current = id === currentNodeId;
+      if (isOwner && isLessonLike) {
+        setHistoryViewNode(id === currentNodeId ? null : id);
+      }
+    },
+    [currentNodeId, isOwner, isLessonLike, setHistoryViewNode],
+  );
+
+  const treePrev = useCallback(() => {
+    if (viewNodeId === null) return;
+    const n = nodeMap.get(viewNodeId);
+    selectTreeNode(n?.parentId ?? null);
+  }, [viewNodeId, nodeMap, selectTreeNode]);
+
+  const treeNext = useCallback(() => {
+    // Вперёд по активной линии (к currentNodeId), вне её — в первый дочерний.
+    const activePath = pathToNode(currentNodeId);
+    if (viewNodeId === null) {
+      const first = activePath[0] ?? nodeChildren(null)[0]?.id ?? null;
+      if (first) selectTreeNode(first);
+      return;
+    }
+    const idx = activePath.indexOf(viewNodeId);
+    if (idx >= 0 && idx < activePath.length - 1) {
+      selectTreeNode(activePath[idx + 1]);
+      return;
+    }
+    const child = nodeChildren(viewNodeId)[0];
+    if (child) selectTreeNode(child.id);
+  }, [viewNodeId, currentNodeId, pathToNode, nodeChildren, selectTreeNode]);
+
+  const treeStart = useCallback(() => selectTreeNode(null), [selectTreeNode]);
+  const treeEnd = useCallback(
+    () => selectTreeNode(currentNodeId),
+    [selectTreeNode, currentNodeId],
+  );
+
+  const lastIdx = history.length - 1;
+  const startFen = segmentStartFen;
+  const viewNode = treeMode && viewNodeId ? nodeMap.get(viewNodeId) ?? null : null;
+  const isViewingPast = treeMode ? viewNodeId !== currentNodeId : viewIdx < lastIdx;
+  const viewFen = treeMode
+    ? viewNode
+      ? viewNode.fen
+      : startFen
+    : viewIdx === -1
+      ? startFen
+      : history[viewIdx]?.fen ?? fen;
+  /** В начале ли навигации (для отключения кнопок «назад»). */
+  const atNavStart = treeMode ? viewNodeId === null : viewIdx === -1;
+  /** В конце ли (на «живой» позиции). */
+  const atNavEnd = treeMode ? viewNodeId === currentNodeId : viewIdx >= lastIdx;
+
+  const goPrev = treeMode ? treePrev : () => selectHistoryIdx(viewIdx - 1);
+  const goNext = treeMode ? treeNext : () => selectHistoryIdx(viewIdx + 1);
+  const goStart = treeMode ? treeStart : () => selectHistoryIdx(-1);
+  const goEnd = treeMode ? treeEnd : () => selectHistoryIdx(lastIdx);
+
+  /** Номер просматриваемого полухода и всего в активной линии (для подписи навигации). */
+  const totalPly = treeMode ? pathToNode(currentNodeId).length : lastIdx + 1;
+  const viewPly = treeMode ? (viewNodeId ? pathToNode(viewNodeId).length : 0) : viewIdx + 1;
+
+  // Перелистывание ходов стрелками, как в Lichess (← → и Home/End).
+  const navRef = useRef({ goPrev, goNext, goStart, goEnd, isEditing });
+  navRef.current = { goPrev, goNext, goStart, goEnd, isEditing };
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      )
+        return;
+      const nav = navRef.current;
+      if (nav.isEditing) return;
+      switch (e.key) {
+        case 'ArrowLeft':
+          nav.goPrev();
+          e.preventDefault();
+          break;
+        case 'ArrowRight':
+          nav.goNext();
+          e.preventDefault();
+          break;
+        case 'ArrowUp':
+        case 'Home':
+          nav.goStart();
+          e.preventDefault();
+          break;
+        case 'ArrowDown':
+        case 'End':
+          nav.goEnd();
+          e.preventDefault();
+          break;
+        default:
+          break;
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const [draftFen, setDraftFen] = useState<string | null>(null);
   useEffect(() => {
@@ -254,7 +433,7 @@ export function RoomClient({
   );
   function confirmPromotion(piece: 'q' | 'r' | 'b' | 'n') {
     if (!pendingPromotion) return;
-    sendMove({ from: pendingPromotion.from, to: pendingPromotion.to, promotion: piece });
+    commitMove({ from: pendingPromotion.from, to: pendingPromotion.to, promotion: piece });
     setPendingPromotion(null);
   }
   function cancelPromotion() {
@@ -272,14 +451,20 @@ export function RoomClient({
     }
   }
 
-  const canMove = !isEditing && connected && !isViewingPast && !movesBlockedForMe;
+  // Ветвление «в прошлом» (новая ветка/вариант) разрешаем учителю и ученику на
+  // его СОБСТВЕННОЙ доске задачи. Наблюдателю трансляции — только актуальная позиция.
+  const canBranchPast = treeMode && (isOwner || roomKind === 'student-board');
+  const canMove =
+    !isEditing && connected && !movesBlockedForMe && (canBranchPast || !isViewingPast);
   const displayFen = isEditing
     ? canEditNow && draftFen
       ? draftFen
       : fen
-    : isViewingPast
+    : treeMode
       ? viewFen
-      : fen;
+      : isViewingPast
+        ? viewFen
+        : fen;
 
   // ---- Игра против компьютера ----
   // humanColor === null: движок включён, но «человеческая» сторона ещё не определена
@@ -421,20 +606,30 @@ export function RoomClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compEngine.bestmoveSeq]);
 
-  // Обёртка над sendMove: в vsComp с humanColor=null первый ход человека
-  // (учителя) синхронно определяет его сторону, чтобы движок мог отреагировать
-  // максимально быстро. Для ходов учеников это же делает useEffect выше.
-  const sendMoveVsComp = useCallback(
+  // Единая отправка хода пользователя. В учебных комнатах добавляем fromNodeId
+  // (узел, который сейчас показан) — если это не кончик активной линии, сервер
+  // создаст новую ветку. В vsComp с humanColor=null первый ход определяет сторону.
+  const commitMove = useCallback(
     (m: { from: string; to: string; promotion?: string }) => {
       if (vsComp && vsComp.humanColor === null) {
-        const piece = getPiece(fen, m.from as Square);
+        const piece = getPiece(displayFen, m.from as Square);
         if (piece) {
           setVsComp({ humanColor: piece[0] as 'w' | 'b' });
         }
       }
-      sendMove(m);
+      if (treeMode) {
+        // После своего хода снова следуем за живым кончиком (новой веткой).
+        followTreeRef.current = true;
+        // Ветвимся только если реально смотрим прошлую позицию. Иначе (следим за
+        // кончиком) не шлём fromNodeId — сервер продолжит от актуального узла, что
+        // исключает ложную ветку из-за гонки состояния при быстрой линейной игре.
+        const branching = viewNodeId !== currentNodeId;
+        sendMove(branching ? { ...m, fromNodeId: viewNodeId } : m);
+      } else {
+        sendMove(m);
+      }
     },
-    [vsComp, fen, sendMove],
+    [vsComp, displayFen, treeMode, viewNodeId, currentNodeId, sendMove],
   );
 
   /** Защёлка: учитель только что включил vsComp и параллельно сбросил конфликтующий
@@ -517,8 +712,11 @@ export function RoomClient({
   //   • во всех остальных случаях (учитель/трансляция) слева полоски нет —
   //     резерв 40rem, чтобы на узких экранах (iPad Pro портрет, 1024px) доска
   //     не сжималась до ~256px, а занимала ~384px и оставалась читаемой.
-  // Есть ли СЛЕВА от доски доп. полоска (кнопка «Начать заново» для ученика).
-  const hasLeftStrip = !isOwner && !!studentTaskMode;
+  // Полоска слева от доски у учителя: блок «Прошлые партии» ученика.
+  const showPastGamesStrip = isOwner && pastGames.length > 0;
+  // Есть ли СЛЕВА от доски доп. полоска (у ученика — «Начать заново»,
+  // у учителя — «Прошлые партии»). Влияет на резерв ширины доски.
+  const hasLeftStrip = (!isOwner && !!studentTaskMode) || showPastGamesStrip;
   // В режиме редактора на телефоне/портрете доска перестаёт быть жёстко квадратной
   // на уровне контейнера: ChessBoard сам держит квадрат, а сверху/снизу появляются
   // полосы палитры фигур. Поэтому aspect-square оставляем только для ландшафта.
@@ -636,6 +834,24 @@ export function RoomClient({
                 </div>
               </aside>
             )}
+            {/* Левая полоска учителя: прошлые партии ученика (до «Начать заново»). */}
+            {showPastGamesStrip && (
+              <aside className="absolute bottom-0 right-full top-0 mr-2 hidden w-[120px] flex-col justify-start gap-2 lg:landscape:flex">
+                <div className="rounded-lg border border-stone-200/70 bg-paper/80 p-2 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/50">
+                  <button
+                    type="button"
+                    onClick={() => setPastGamesOpen(true)}
+                    className="w-full rounded-md border border-brand-300 bg-brand-50 px-2 py-1.5 text-[11px] font-semibold text-brand-700 shadow-sm transition-colors hover:bg-brand-100 dark:border-brand-700 dark:bg-brand-900/40 dark:text-brand-200 dark:hover:bg-brand-900/60"
+                    title="Партии ученика до «Начать заново»"
+                  >
+                    ⟲ Прошлые партии ({pastGames.length})
+                  </button>
+                  <div className="mt-1 text-center text-[10px] text-stone-500 dark:text-stone-400">
+                    Партии ученика до «Начать заново».
+                  </div>
+                </div>
+              </aside>
+            )}
             <div className={boardClassName}>
               <ChessBoard
                 fen={displayFen}
@@ -651,7 +867,7 @@ export function RoomClient({
                     : !mode.allowIllegal && mode.sideLock === null && freshSegment
                 }
                 onPromotionRequest={handlePromotionRequest}
-                onMove={vsComp ? sendMoveVsComp : sendMove}
+                onMove={commitMove}
                 onEditFen={handleEditChange}
                 arrows={arrows}
                 marks={marks}
@@ -699,25 +915,25 @@ export function RoomClient({
                 </button>
                 <div className="rounded-lg border border-stone-200/70 bg-paper/70 p-1.5 shadow-sm dark:border-stone-700/60 dark:bg-stone-900/40">
                   <div className="flex items-center justify-between gap-0.5">
-                    <NavButton onClick={goStart} disabled={viewIdx === -1} title="К началу" small>
+                    <NavButton onClick={goStart} disabled={atNavStart} title="К началу" small>
                       «
                     </NavButton>
-                    <NavButton onClick={goPrev} disabled={viewIdx === -1} title="Назад" small>
+                    <NavButton onClick={goPrev} disabled={atNavStart} title="Назад" small>
                       ‹
                     </NavButton>
-                    <NavButton onClick={goNext} disabled={!isViewingPast} title="Вперёд" small>
+                    <NavButton onClick={goNext} disabled={atNavEnd} title="Вперёд" small>
                       ›
                     </NavButton>
-                    <NavButton onClick={goEnd} disabled={!isViewingPast} title="К текущей" small>
+                    <NavButton onClick={goEnd} disabled={atNavEnd} title="К текущей" small>
                       »
                     </NavButton>
                   </div>
                   <div className="mt-1 text-center text-[10px] font-semibold tabular-nums text-stone-500">
-                    {history.length === 0
+                    {totalPly === 0
                       ? 'Старт'
                       : isViewingPast
-                        ? `${viewIdx + 1}/${lastIdx + 1}`
-                        : `ход ${lastIdx + 1}`}
+                        ? `${viewPly}/${totalPly}`
+                        : `ход ${totalPly}`}
                   </div>
                   {isLessonLike && !isStudentInBroadcast && (
                     <button
@@ -765,9 +981,10 @@ export function RoomClient({
                 goNext={goNext}
                 goEnd={goEnd}
                 isViewingPast={isViewingPast}
-                viewIdx={viewIdx}
-                historyLength={history.length}
-                lastIdx={lastIdx}
+                atStart={atNavStart}
+                atEnd={atNavEnd}
+                viewPly={viewPly}
+                totalPly={totalPly}
               />
             </div>
             {isLessonLike && !isStudentInBroadcast && (
@@ -784,6 +1001,16 @@ export function RoomClient({
                 ⟲ Начать заново
               </button>
             )}
+            {showPastGamesStrip && (
+              <button
+                type="button"
+                onClick={() => setPastGamesOpen(true)}
+                className="rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700 shadow-sm transition-colors hover:bg-brand-100 dark:border-brand-700 dark:bg-brand-900/40 dark:text-brand-200 dark:hover:bg-brand-900/60"
+                title="Партии ученика до «Начать заново»"
+              >
+                ⟲ Прошлые партии ({pastGames.length})
+              </button>
+            )}
           </div>
 
           {/* ── Мобильная нижняя nav-строка (lg:hidden) ── */}
@@ -794,9 +1021,10 @@ export function RoomClient({
               goNext={goNext}
               goEnd={goEnd}
               isViewingPast={isViewingPast}
-              viewIdx={viewIdx}
-              historyLength={history.length}
-              lastIdx={lastIdx}
+              atStart={atNavStart}
+              atEnd={atNavEnd}
+              viewPly={viewPly}
+              totalPly={totalPly}
             />
             <button
               type="button"
@@ -818,6 +1046,16 @@ export function RoomClient({
                 title="Сбросить задачу к стартовой позиции"
               >
                 ⟲ Начать заново
+              </button>
+            )}
+            {showPastGamesStrip && (
+              <button
+                type="button"
+                onClick={() => setPastGamesOpen(true)}
+                className="rounded-md border border-brand-300 bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-700 shadow-sm transition-colors hover:bg-brand-100 dark:border-brand-700 dark:bg-brand-900/40 dark:text-brand-200 dark:hover:bg-brand-900/60"
+                title="Партии ученика до «Начать заново»"
+              >
+                ⟲ Прошлые партии ({pastGames.length})
               </button>
             )}
           </div>
@@ -1006,21 +1244,17 @@ export function RoomClient({
             history={history}
             viewIdx={viewIdx}
             onSelect={selectHistoryIdx}
-            className="min-h-[4rem] max-h-[6rem] shrink-0"
+            treeMode={treeMode}
+            moveTree={moveTree}
+            segmentStartFen={segmentStartFen}
+            currentNodeId={currentNodeId}
+            viewNodeId={viewNodeId}
+            onSelectNode={selectTreeNode}
+            className="min-h-[4rem] max-h-[12rem] shrink-0"
           />
-          {/* Чат: для учителя — здесь, справа (с кнопкой «очистить»). У ученика
-              чат вынесен в левую колонку (слева от доски), поэтому тут его нет. */}
-          {isOwner && (
-            <div className="flex min-h-[12rem] flex-col overflow-hidden lg:min-h-0 lg:flex-1">
-              <ChatPanel
-                variant="compact"
-                messages={messages}
-                meId={meId}
-                onSend={sendChat}
-                onClear={clearChat}
-              />
-            </div>
-          )}
+          {/* Чат владельца/учителя вынесен в плавающую иконку (FloatingChat,
+              правый нижний угол) — здесь встроенный чат больше не показываем.
+              У ученика (не-владельца) чат остаётся слева от доски (см. выше). */}
         </section>
       </div>
 
@@ -1031,7 +1265,130 @@ export function RoomClient({
           onCancel={cancelPromotion}
         />
       )}
+
+      {pastGamesOpen && (
+        <PastGamesModal
+          games={pastGames}
+          flipped={flipped}
+          onClose={() => setPastGamesOpen(false)}
+          onLoad={(index) => {
+            loadPastGame(index);
+            setPastGamesOpen(false);
+          }}
+        />
+      )}
+
+      {/* Плавающая иконка чата для владельца/учителя (правый нижний угол).
+          Внутри класса (под ClassAudioProvider) плавающий чат уже рисует
+          ClassMeClient на уровне провайдера — тут его не дублируем (classAudio). */}
+      {isOwner && !classAudio && (
+        <FloatingChat
+          messages={messages}
+          meId={meId}
+          onSend={sendChat}
+          onClear={clearChat}
+        />
+      )}
     </main>
+  );
+}
+
+/** Просмотр прошлых партий ученика (сохранённых при «Начать заново»). */
+function PastGamesModal({
+  games,
+  flipped,
+  onClose,
+  onLoad,
+}: {
+  games: PastGameDto[];
+  flipped: boolean;
+  onClose: () => void;
+  onLoad: (index: number) => void;
+}) {
+  // Последняя партия — сверху (самая свежая интереснее).
+  const ordered = [...games].reverse();
+  const [sel, setSel] = useState(0);
+  // Индекс выбранной партии в исходном массиве games (не в перевёрнутом).
+  const originalIndex = games.length - 1 - sel;
+  const [viewIdx, setViewIdx] = useState<number | null>(null);
+  useEffect(() => setViewIdx(null), [sel]);
+
+  const game = ordered[sel];
+  const moves = game?.moves ?? [];
+  const start = game?.startFen || STARTING_FEN;
+  const viewedFen =
+    moves.length === 0
+      ? start
+      : viewIdx === null
+        ? moves[moves.length - 1].fen
+        : viewIdx === -1
+          ? start
+          : moves[viewIdx]?.fen ?? start;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-stone-200 bg-paper p-4 shadow-xl dark:border-stone-700 dark:bg-stone-900"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-200">
+            Прошлые партии ученика
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md px-2 py-1 text-sm text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+          <MiniBoard fen={viewedFen} size={300} flipped={flipped} />
+          <div className="flex w-full flex-col gap-2 sm:w-64">
+            <div className="flex flex-wrap gap-1">
+              {ordered.map((g, i) => (
+                <button
+                  key={g.endedAt + ':' + i}
+                  onClick={() => setSel(i)}
+                  className={cn(
+                    'flex h-8 min-w-8 items-center justify-center rounded-lg border px-2 text-sm font-semibold transition-colors',
+                    i === sel
+                      ? 'border-brand-500 bg-brand-500 text-white'
+                      : 'border-stone-300 bg-paper text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800',
+                  )}
+                  title={`Партия ${ordered.length - i}`}
+                >
+                  {ordered.length - i}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => onLoad(originalIndex)}
+              className="self-start rounded-md border border-brand-500 bg-brand-500 px-2.5 py-1 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-brand-600"
+              title="Загрузить выбранную партию на доску ученика"
+            >
+              ⤓ Загрузить
+            </button>
+            <div className="text-xs text-stone-500">
+              {moves.length} ходов
+            </div>
+            {moves.length === 0 ? (
+              <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-500 dark:border-stone-700 dark:bg-stone-800/40">
+                В этой партии нет ходов.
+              </div>
+            ) : (
+              <MoveNav history={moves} viewIdx={viewIdx} onSelect={setViewIdx} />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1138,38 +1495,40 @@ function NavRow({
   goNext,
   goEnd,
   isViewingPast,
-  viewIdx,
-  historyLength,
-  lastIdx,
+  atStart,
+  atEnd,
+  viewPly,
+  totalPly,
 }: {
   goStart: () => void;
   goPrev: () => void;
   goNext: () => void;
   goEnd: () => void;
   isViewingPast: boolean;
-  viewIdx: number;
-  historyLength: number;
-  lastIdx: number;
+  atStart: boolean;
+  atEnd: boolean;
+  viewPly: number;
+  totalPly: number;
 }) {
   return (
     <>
-      <NavButton onClick={goStart} disabled={viewIdx === -1} title="К началу партии">
+      <NavButton onClick={goStart} disabled={atStart} title="К началу партии">
         «
       </NavButton>
-      <NavButton onClick={goPrev} disabled={viewIdx === -1} title="Ход назад">
+      <NavButton onClick={goPrev} disabled={atStart} title="Ход назад">
         ‹
       </NavButton>
       <div className="min-w-[5rem] flex-1 text-center text-xs font-semibold tabular-nums text-stone-500 sm:text-sm">
-        {historyLength === 0
+        {totalPly === 0
           ? 'Старт'
           : isViewingPast
-            ? `Ход ${viewIdx + 1} / ${lastIdx + 1}`
-            : `Текущая · ход ${lastIdx + 1}`}
+            ? `Ход ${viewPly} / ${totalPly}`
+            : `Текущая · ход ${totalPly}`}
       </div>
-      <NavButton onClick={goNext} disabled={!isViewingPast} title="Ход вперёд">
+      <NavButton onClick={goNext} disabled={atEnd} title="Ход вперёд">
         ›
       </NavButton>
-      <NavButton onClick={goEnd} disabled={!isViewingPast} title="К текущей позиции">
+      <NavButton onClick={goEnd} disabled={atEnd} title="К текущей позиции">
         »
       </NavButton>
     </>

@@ -30,6 +30,12 @@ export const SocketEvents = {
   /** Учитель листает историю ходов — броадкастим всем, чтобы у учеников
    *  показывалась та же позиция, что и у учителя. */
   HistoryView: 'chess:history-view',
+  /** Как HistoryView, но для дерева ходов: учитель показывает конкретный узел
+   *  (ветку), ученики следуют за ним. payload: nodeId (string | null). */
+  HistoryViewNode: 'chess:history-view-node',
+  /** Учитель загружает одну из сохранённых прошлых партий обратно на доску.
+   *  payload: index (номер в списке pastGames). */
+  LoadPastGame: 'chess:load-past-game',
   /** Учитель: запретить/разрешить ученикам делать ходы на этой доске
    *  (например, на трансляции). payload { locked: boolean }. */
   MovesLock: 'chess:moves-lock',
@@ -139,6 +145,35 @@ export interface MoveHistoryEntry {
   legal: boolean;
 }
 
+/**
+ * Узел дерева ходов (варианты как в Lichess). В учебных комнатах вместо плоской
+ * истории хранится дерево: если пойти по-другому из прошлой позиции — рождается
+ * новая ветка (sibling), а прежняя линия сохраняется.
+ */
+export interface MoveTreeNode {
+  /** Уникальный id узла. */
+  id: string;
+  /** Родитель (id) или null, если ход сделан из стартовой позиции отрезка. */
+  parentId: string | null;
+  san: string;
+  from: string;
+  to: string;
+  /** FEN после хода. */
+  fen: string;
+  promotion?: string;
+  legal: boolean;
+}
+
+/** Одна завершённая партия ученика (снимок для разбора учителем после «начать заново»). */
+export interface PastGameDto {
+  /** FEN, с которого партия начиналась. */
+  startFen: string;
+  /** Ходы главной линии этой партии. */
+  moves: MoveHistoryEntry[];
+  /** Когда партия была завершена/сброшена (ms epoch). */
+  endedAt: number;
+}
+
 export type ArrowColor = 'green' | 'red' | 'blue' | 'yellow';
 
 export interface BoardArrow {
@@ -215,6 +250,13 @@ export interface RoomStatePayload {
   timeControl: string | null;
   mode: RoomMode;
   history: MoveHistoryEntry[];
+  /** Полное дерево ходов (учебные комнаты; поддержка веток-вариантов).
+   *  Для игровых партий (турнир/casual) пустой массив — там веток нет. */
+  moveTree: MoveTreeNode[];
+  /** id «живого» узла (кончик активной линии). null = стартовая позиция отрезка. */
+  currentNodeId: string | null;
+  /** Прошлые партии ученика на этой доске (снимки после «начать заново») — для разбора учителем. */
+  pastGames: PastGameDto[];
   arrows: BoardArrow[];
   marks: BoardMark[];
   /** «Свежий» отрезок: следующий ход — первый, и его можно сделать любой стороной
@@ -224,6 +266,9 @@ export interface RoomStatePayload {
   /** Текущий индекс просматриваемого хода у учителя.
    *  null = «следить за текущей позицией» (последний ход или старт). */
   historyViewIdx: number | null;
+  /** Узел дерева, который показывает учитель (для синхронизации веток с учениками).
+   *  null = следить за текущей позицией. */
+  historyViewNodeId: string | null;
   /** Часы для турнирных / казуальных партий. null для уроков. */
   clock: ClockState | null;
   /** Активное предложение ничьей (null если нет). */

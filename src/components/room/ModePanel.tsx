@@ -24,62 +24,13 @@ export function ModePanel({ mode, canEdit, onChange, className }: Props) {
       </h3>
 
       <div className="space-y-1.5">
-        <ToggleRow
-          label="Любые ходы"
-          hint="Без правил шахмат — фигура двигается куда угодно. Подсказка легальных ходов остаётся."
-          checked={mode.allowIllegal}
-          disabled={!canEdit}
-          onChange={(v) => onChange({ allowIllegal: v })}
-        />
         <SideRow
           value={mode.sideLock}
           disabled={!canEdit}
           onChange={(v) => onChange({ sideLock: v })}
         />
-        <ToggleRow
-          label="Ученикам можно править"
-          hint="Когда учитель открыл редактор — ученики тоже могут переставлять фигуры."
-          checked={mode.studentsCanEdit}
-          disabled={!canEdit}
-          onChange={(v) => onChange({ studentsCanEdit: v })}
-        />
       </div>
     </div>
-  );
-}
-
-function ToggleRow({
-  label,
-  hint,
-  checked,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  checked: boolean;
-  disabled: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label
-      className={cn(
-        'flex cursor-pointer items-center justify-between gap-2 rounded-md px-1.5 py-1 text-[11px]',
-        disabled ? 'cursor-not-allowed opacity-70' : 'hover:bg-stone-100/70 dark:hover:bg-stone-800/40',
-      )}
-      title={hint}
-    >
-      <span className="min-w-0 truncate font-medium text-stone-700 dark:text-stone-200">
-        {label}
-      </span>
-      <input
-        type="checkbox"
-        className="h-4 w-4 cursor-pointer accent-brand-500"
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-    </label>
   );
 }
 

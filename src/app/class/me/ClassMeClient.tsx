@@ -2,9 +2,11 @@
 
 import { useState, type ReactNode } from 'react';
 import { useClassSocket } from '@/hooks/useClassSocket';
-import { TasksLibrary, type TaskDto } from './TasksLibrary';
+import { TasksLibrary, type TaskDto, type FolderDto } from './TasksLibrary';
+import { HomeworkManager } from './HomeworkManager';
 import { LessonDashboard, type IntrudeRequest } from './LessonDashboard';
 import { ClassLobbyPanel } from '@/components/class/ClassLobbyPanel';
+import { LobbyFloatingChat } from '@/components/class/FloatingChat';
 import { RoomClient } from '@/app/room/[code]/RoomClient';
 import { ClassAudioProvider } from '@/contexts/ClassAudioContext';
 import type { ClassDto } from './ClassSettings';
@@ -15,13 +17,21 @@ interface Props {
   meName: string;
   initialClass: ClassDto;
   initialTasks: TaskDto[];
+  initialFolders: FolderDto[];
 }
 
-type Tab = 'tasks' | 'lesson';
+type Tab = 'tasks' | 'lesson' | 'homework';
 
-export function ClassMeClient({ meId, meName, initialClass, initialTasks }: Props) {
+export function ClassMeClient({
+  meId,
+  meName,
+  initialClass,
+  initialTasks,
+  initialFolders,
+}: Props) {
   const [cls] = useState<ClassDto>(initialClass);
   const [tasks, setTasks] = useState<TaskDto[]>(initialTasks);
+  const [folders, setFolders] = useState<FolderDto[]>(initialFolders);
   const [tab, setTab] = useState<Tab>('lesson');
   // Вторжение учителя в личную доску ученика. Когда задано — рендерим
   // full-screen RoomClient (учитель = owner student-board комнаты, видит весь
@@ -51,6 +61,9 @@ export function ClassMeClient({ meId, meName, initialClass, initialTasks }: Prop
   return inLesson && state?.lobbyRoomCode ? (
     <ClassAudioProvider lobbyRoomCode={state.lobbyRoomCode}>
       {view}
+      {/* Плавающая иконка чата в правом нижнем углу — доступна во всех видах
+          урока (дашборд, доска ученика, «Моя доска», трансляция). */}
+      <LobbyFloatingChat meId={meId} isTeacher />
     </ClassAudioProvider>
   ) : (
     view
@@ -181,6 +194,9 @@ export function ClassMeClient({ meId, meName, initialClass, initialTasks }: Prop
               <TabButton active={tab === 'lesson'} onClick={() => setTab('lesson')}>
                 Урок
               </TabButton>
+              <TabButton active={tab === 'homework'} onClick={() => setTab('homework')}>
+                Домашние задания · {tasks.filter((t) => t.isHomework).length}
+              </TabButton>
               <TabButton active={tab === 'tasks'} onClick={() => setTab('tasks')}>
                 Моя библиотека · {tasks.length}
               </TabButton>
@@ -194,6 +210,13 @@ export function ClassMeClient({ meId, meName, initialClass, initialTasks }: Prop
               socket={classSocket}
               onIntrude={setIntrudeRoom}
             />
+          ) : tab === 'homework' ? (
+            <HomeworkManager
+              tasks={tasks}
+              folders={folders}
+              onTasksChange={setTasks}
+              onFoldersChange={setFolders}
+            />
           ) : (
             <TasksLibrary cls={cls} tasks={tasks} onTasksChange={setTasks} />
           )}
@@ -204,6 +227,7 @@ export function ClassMeClient({ meId, meName, initialClass, initialTasks }: Prop
             meId={meId}
             isTeacher
             layout="vertical"
+            showChat={false}
             middleSlot={
               <div className="card !p-3">
                 <div className="mb-2 text-xs font-semibold uppercase text-stone-500">

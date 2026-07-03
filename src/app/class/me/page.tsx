@@ -38,10 +38,16 @@ export default async function ClassMePage() {
   }
 
   const cls = existing ?? (await ensureClassForUser(auth.sub));
-  const tasks = await prisma.task.findMany({
-    where: { classId: cls.id },
-    orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
-  });
+  const [tasks, folders] = await Promise.all([
+    prisma.task.findMany({
+      where: { classId: cls.id },
+      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+    }),
+    prisma.homeworkFolder.findMany({
+      where: { classId: cls.id },
+      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+    }),
+  ]);
 
   return (
     // Контейнер как в /room/[code]: фиксированная высота на десктопе, чтобы
@@ -64,6 +70,7 @@ export default async function ClassMePage() {
           ownerName: cls.owner.displayName,
         }}
         initialTasks={tasks}
+        initialFolders={folders}
       />
     </div>
   );

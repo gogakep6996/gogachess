@@ -65,6 +65,23 @@ export async function PATCH(
   if (body.isHomework !== undefined) data.isHomework = Boolean(body.isHomework);
   if (body.position !== undefined) data.position = Number(body.position);
 
+  // Назначение папки домашнего задания. null = убрать из папки («Без папки»).
+  // Строку принимаем только если папка принадлежит тому же классу.
+  if (body.folderId !== undefined) {
+    if (body.folderId === null) {
+      data.folderId = null;
+    } else if (typeof body.folderId === 'string') {
+      const folder = await prisma.homeworkFolder.findUnique({
+        where: { id: body.folderId },
+        select: { classId: true },
+      });
+      if (!folder || folder.classId !== result.task.classId) {
+        return NextResponse.json({ error: 'folder not found' }, { status: 400 });
+      }
+      data.folderId = body.folderId;
+    }
+  }
+
   const updated = await prisma.task.update({ where: { id }, data });
   return NextResponse.json({ task: updated });
 }

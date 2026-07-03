@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { Inter } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
 import { AnalyticsGate } from '@/components/analytics/AnalyticsGate';
@@ -6,6 +7,14 @@ import { CookieConsent } from '@/components/legal/CookieConsent';
 import { VersionWatcher } from '@/components/system/VersionWatcher';
 import { buildBoardThemeCss, BOARD_THEME_KEY, PIECE_THEME_KEY } from '@/lib/board-theme';
 import { PieceSetHydrator } from '@/components/ui/PieceSetHydrator';
+
+// Единый шрифт на весь сайт (текст и заголовки) — самохостится Next.js при
+// сборке (без внешних запросов к Google Fonts, без сдвига layout при загрузке).
+const inter = Inter({
+  subsets: ['latin', 'cyrillic'],
+  variable: '--font-sans',
+  display: 'swap',
+});
 
 const SITE_URL = (process.env.SITE_URL || 'https://gogachess.ru').replace(/\/$/, '');
 const SITE_TITLE = 'gogachess — шахматы для обучения';
@@ -94,7 +103,7 @@ const boardThemeCss = buildBoardThemeCss();
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru" suppressHydrationWarning>
+    <html lang="ru" suppressHydrationWarning className={inter.variable}>
       <head>
         <style dangerouslySetInnerHTML={{ __html: boardThemeCss }} />
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />

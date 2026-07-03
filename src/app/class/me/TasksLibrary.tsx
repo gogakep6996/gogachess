@@ -9,6 +9,7 @@ import type { ClassDto } from './ClassSettings';
 export interface TaskDto {
   id: string;
   classId: string;
+  folderId: string | null;
   title: string;
   description: string | null;
   fen: string;
@@ -19,6 +20,15 @@ export interface TaskDto {
   engineLevel: number;
   isPublished: boolean;
   isHomework: boolean;
+  position: number;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
+export interface FolderDto {
+  id: string;
+  classId: string;
+  name: string;
   position: number;
   createdAt: string | Date;
   updatedAt: string | Date;

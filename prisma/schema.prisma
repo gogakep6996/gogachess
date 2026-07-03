@@ -33,6 +33,7 @@ model User {
   blackMatches        TournamentMatch[]      @relation("MatchBlack")
   ownedClass          Class?                 @relation("ClassOwner")
   taskSessions        TaskSession[]
+  taskAttempts        TaskAttempt[]
   authTokens          AuthToken[]
   notifications       Notification[]
 }
@@ -177,7 +178,25 @@ model Class {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  tasks       Task[]
+  tasks           Task[]
+  homeworkFolders HomeworkFolder[]
+}
+
+/// Папка для домашних заданий внутри класса — учитель раскладывает по ним ДЗ,
+/// чтобы не держать все задачи в одной куче.
+model HomeworkFolder {
+  id        String   @id @default(cuid())
+  classId   String
+  class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  name      String
+  /// Порядок папок в списке.
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks     Task[]
+
+  @@index([classId, position])
 }
 
 /// Учебная задача (позиция-заготовка) в библиотеке учителя.
@@ -185,6 +204,10 @@ model Task {
   id          String   @id @default(cuid())
   classId     String
   class       Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  /// Папка домашнего задания. null = задача не разложена по папкам («Без папки»).
+  /// При удалении папки задача остаётся, folderId просто обнуляется (SetNull).
+  folderId    String?
+  folder      HomeworkFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
   title       String
   description String?
   fen         String
@@ -209,17 +232,24 @@ model Task {
   updatedAt   DateTime @updatedAt
 
   sessions    TaskSession[]
+  attempts    TaskAttempt[]
 
   @@index([classId, position])
+  @@index([folderId])
 }
 
-/// Попытка ученика решить задачу. Уникальна по (taskId, userId) — resume на возврате.
+/// Живая доска ученика по задаче. Уникальна по (taskId, userId, context) —
+/// урок и домашнее задание ведут раздельные доски, чтобы прогресс из домашки
+/// не «протекал» в урок и наоборот.
 model TaskSession {
   id          String   @id @default(cuid())
   taskId      String
   task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Контекст доски: 'lesson' (раздача учителем на уроке) | 'homework'
+  /// (самостоятельное решение на странице класса). Разделяет прогресс.
+  context     String   @default("lesson")
   /// Привязка к Room (kind='student-board') — там и крутится сокет / движок / история.
   roomId      String?  @unique
   room        Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
@@ -233,6 +263,33 @@ model TaskSession {
   updatedAt   DateTime @updatedAt
   solvedAt    DateTime?
 
-  @@unique([taskId, userId])
+  @@unique([taskId, userId, context])
   @@index([taskId, status])
+}
+
+/// Лог попытки решения ДОМАШНЕГО задания — по одной записи на каждый запуск
+/// «Решать». В отличие от TaskSession (одна живая доска на пару задача+ученик),
+/// здесь копится история: сколько попыток было и сколько из них решены.
+model TaskAttempt {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 'active' | 'solved' | 'abandoned'
+  status      String    @default("active")
+  /// Сколько ходов сделано к моменту решения/отказа.
+  movesPlayed Int       @default(0)
+  /// Стартовая позиция попытки (FEN задачи на момент запуска) — нужна для
+  /// воспроизведения «до первого хода».
+  startFen    String?
+  /// Полная история ходов попытки: JSON-массив MoveHistoryEntry (san/from/to/fen).
+  /// Учитель по ней перелистывает партию попытки.
+  moves       String?
+  startedAt   DateTime  @default(now())
+  solvedAt    DateTime?
+
+  @@index([taskId, userId])
+  @@index([taskId, status])
+  @@index([userId])
 }

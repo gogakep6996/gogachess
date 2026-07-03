@@ -3,12 +3,13 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MiniBoard } from '@/components/chess/MiniBoard';
+import { FolderIcon } from '@/components/ui/FolderIcon';
 import { STARTING_FEN } from '@/lib/socket-events';
 import { useClassSocket } from '@/hooks/useClassSocket';
 import { ClassLobbyPanel } from '@/components/class/ClassLobbyPanel';
 import { RoomClient } from '@/app/room/[code]/RoomClient';
 import { ClassAudioProvider } from '@/contexts/ClassAudioContext';
-import type { TaskDto } from '../me/TasksLibrary';
+import type { TaskDto, FolderDto } from '../me/TasksLibrary';
 
 interface ClassDto {
   id: string;
@@ -24,12 +25,15 @@ interface Props {
   meName: string | null;
   cls: ClassDto;
   initialTasks: TaskDto[];
+  initialFolders: FolderDto[];
   isOwner: boolean;
 }
 
 const CODE_STORAGE_KEY = (slug: string) => `class-access:${slug}`;
 // Где запоминаем открытую доску домашки — чтобы при F5 ученик остался за задачей.
 const HOMEWORK_STORAGE_KEY = (slug: string) => `class-homework:${slug}`;
+// Признак «ученик зашёл на урок» — чтобы при обновлении страницы не выкидывало с урока.
+const LESSON_JOINED_KEY = (slug: string) => `class-lesson-joined:${slug}`;
 
 interface HomeworkBoard {
   roomCode: string;
@@ -37,15 +41,32 @@ interface HomeworkBoard {
   taskTitle: string;
 }
 
-export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: Props) {
+export function ClassPublicClient({
+  meId,
+  meName,
+  cls,
+  initialTasks,
+  initialFolders,
+  isOwner,
+}: Props) {
   const [tasks, setTasks] = useState<TaskDto[]>(initialTasks);
+  const [folders, setFolders] = useState<FolderDto[]>(initialFolders);
   const [codeNeeded, setCodeNeeded] = useState(cls.hasAccessCode && !isOwner && tasks.length === 0);
   const [code, setCode] = useState('');
   const [codeError, setCodeError] = useState<string | null>(null);
 
   // Ученик ЯВНО зашёл на урок (через кнопку «Урок»). По умолчанию — нет:
   // сначала ученик попадает на главную с домашками, а на урок входит сам.
-  const [lessonJoined, setLessonJoined] = useState(false);
+  // Лениво восстанавливаем из sessionStorage — чтобы при F5 не выкидывало с урока
+  // (если урок к этому моменту уже закончился, эффект ниже сбросит флаг обратно).
+  const [lessonJoined, setLessonJoined] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.sessionStorage.getItem(LESSON_JOINED_KEY(cls.slug)) === '1';
+    } catch {
+      return false;
+    }
+  });
   // Доска самостоятельного решения домашнего задания (вне урока).
   // Лениво восстанавливаем из sessionStorage — чтобы при обновлении страницы
   // ученик остался за задачей, а не «выпадал» на главную.
@@ -60,6 +81,9 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
   });
   const [startingTaskId, setStartingTaskId] = useState<string | null>(null);
   const [homeworkError, setHomeworkError] = useState<string | null>(null);
+  // Открытая папка домашек: undefined = список папок (блоки), иначе id группы
+  // (id папки или '__none__' для «Без папки»).
+  const [openHwFolder, setOpenHwFolder] = useState<string | undefined>(undefined);
 
   // Сохраняем/чистим доску домашки в sessionStorage (живёт до закрытия вкладки).
   useEffect(() => {
@@ -76,6 +100,19 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
       // приватный режим — не критично
     }
   }, [homeworkBoard, cls.slug]);
+
+  // Запоминаем/сбрасываем факт входа на урок (живёт до закрытия вкладки).
+  useEffect(() => {
+    try {
+      if (lessonJoined) {
+        window.sessionStorage.setItem(LESSON_JOINED_KEY(cls.slug), '1');
+      } else {
+        window.sessionStorage.removeItem(LESSON_JOINED_KEY(cls.slug));
+      }
+    } catch {
+      // приватный режим — не критично
+    }
+  }, [lessonJoined, cls.slug]);
 
   // Кнопка «назад» браузера: если ученик за доской домашки — возвращаем его на
   // главную (к списку ДЗ), а не уводим с сайта.
@@ -153,9 +190,14 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
       setCodeError('Ошибка запроса');
       return;
     }
-    const data = (await res.json()) as { codeAccepted: boolean; tasks: TaskDto[] };
+    const data = (await res.json()) as {
+      codeAccepted: boolean;
+      tasks: TaskDto[];
+      folders?: FolderDto[];
+    };
     if (data.codeAccepted) {
       setTasks(data.tasks);
+      if (data.folders) setFolders(data.folders);
       setCodeNeeded(false);
       setCodeError(null);
       if (persist) {
@@ -198,7 +240,29 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
   const lobbyParticipants = state?.lobbyParticipants ?? [];
   // «На уроке» — только если ученик сам зашёл (lessonJoined) и урок идёт.
   const inLesson = !!(lessonJoined && state?.lessonActive && state.lobbyRoomCode && meId);
-  const homeworkTasks = useMemo(() => tasks.filter((t) => t.isHomework), [tasks]);
+  // Домашки, сгруппированные по папкам (в порядке папок учителя),
+  // плюс отдельная группа «Без папки» в конце.
+  const homeworkGroups = useMemo(() => {
+    const hw = tasks.filter((t) => t.isHomework);
+    const byFolder = new Map<string, TaskDto[]>();
+    const noFolder: TaskDto[] = [];
+    for (const t of hw) {
+      if (t.folderId) {
+        const arr = byFolder.get(t.folderId) ?? [];
+        arr.push(t);
+        byFolder.set(t.folderId, arr);
+      } else {
+        noFolder.push(t);
+      }
+    }
+    const groups: { id: string; name: string | null; tasks: TaskDto[] }[] = [];
+    for (const f of folders) {
+      const arr = byFolder.get(f.id);
+      if (arr && arr.length) groups.push({ id: f.id, name: f.name, tasks: arr });
+    }
+    if (noFolder.length) groups.push({ id: '__none__', name: null, tasks: noFolder });
+    return { total: hw.length, groups };
+  }, [tasks, folders]);
 
   // ЖЁСТКИЙ ГЕЙТ: класс с кодом доступа закрыт целиком, пока код не введён.
   // Не показываем ни доску урока, ни лобби, ни список задач, ни аудио —
@@ -321,6 +385,35 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
     );
   }
 
+  // Карточка одной домашки (используется и в плоском списке, и внутри папки).
+  function renderHwCard(t: TaskDto): ReactNode {
+    const starting = startingTaskId === t.id;
+    return (
+      <li
+        key={t.id}
+        className="card flex w-[244px] flex-col items-center gap-1.5 !p-2 text-center"
+      >
+        <MiniBoard fen={t.fen || STARTING_FEN} size={170} flipped={t.sideToPlay === 'b'} />
+        <div className="w-full truncate text-sm font-semibold" title={t.title}>
+          {t.title}
+        </div>
+        {meId ? (
+          <button
+            onClick={() => startHomework(t)}
+            disabled={starting}
+            className="btn-primary px-4 py-1 text-xs disabled:opacity-60"
+          >
+            {starting ? 'Открываем…' : '▶ Решать'}
+          </button>
+        ) : (
+          <Link href={`/login?next=/class/${cls.slug}`} className="btn-outline px-4 py-1 text-xs">
+            Войти
+          </Link>
+        )}
+      </li>
+    );
+  }
+
   function renderView(): ReactNode {
     // 1) Ученик решает домашку самостоятельно (вне урока).
     if (homeworkBoard && meId) {
@@ -429,47 +522,83 @@ export function ClassPublicClient({ meId, meName, cls, initialTasks, isOwner }: 
             </div>
           )}
 
-          {/* ── Домашние задания (решаются в любое время) ── */}
+          {/* ── Домашние задания: папки-блоки → внутри задачи ── */}
           <h2 className="mt-1 text-base font-semibold">
-            Домашние задания · {homeworkTasks.length}
+            Домашние задания · {homeworkGroups.total}
           </h2>
-          {homeworkTasks.length === 0 ? (
+          {homeworkGroups.total === 0 ? (
             <div className="card text-sm text-stone-500">
               Учитель пока не добавил домашних заданий. Загляните позже!
             </div>
-          ) : (
+          ) : folders.length === 0 ? (
+            // Папок нет — показываем задачи сразу списком.
             <ul className="flex flex-wrap gap-2">
-              {homeworkTasks.map((t) => {
-                const starting = startingTaskId === t.id;
-                return (
-                  <li
-                    key={t.id}
-                    className="card flex w-[244px] flex-col items-center gap-1.5 !p-2 text-center"
-                  >
-                    <MiniBoard fen={t.fen || STARTING_FEN} size={170} flipped={t.sideToPlay === 'b'} />
-                    <div className="w-full truncate text-sm font-semibold" title={t.title}>
-                      {t.title}
-                    </div>
-                    {meId ? (
-                      <button
-                        onClick={() => startHomework(t)}
-                        disabled={starting}
-                        className="btn-primary px-4 py-1 text-xs disabled:opacity-60"
-                      >
-                        {starting ? 'Открываем…' : '▶ Решать'}
-                      </button>
-                    ) : (
-                      <Link
-                        href={`/login?next=/class/${cls.slug}`}
-                        className="btn-outline px-4 py-1 text-xs"
-                      >
-                        Войти
-                      </Link>
-                    )}
-                  </li>
-                );
-              })}
+              {homeworkGroups.groups.flatMap((g) => g.tasks).map((t) => renderHwCard(t))}
             </ul>
+          ) : openHwFolder === undefined ? (
+            // Список папок-блоков.
+            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {homeworkGroups.groups.map((group) => (
+                <li key={group.id}>
+                  <button
+                    onClick={() => setOpenHwFolder(group.id)}
+                    className="card group flex w-full items-center gap-3.5 !p-4 pr-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
+                  >
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-600 transition-colors group-hover:bg-brand-500/15 dark:bg-brand-400/10 dark:text-brand-300">
+                      <FolderIcon className="h-6 w-6" open={!group.name} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px] font-semibold leading-tight">
+                        {group.name ?? 'Без папки'}
+                      </span>
+                      <span className="mt-1 inline-flex items-center rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-500 dark:bg-stone-800 dark:text-stone-400">
+                        {group.tasks.length} шт
+                      </span>
+                    </span>
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4 shrink-0 text-stone-300 transition-transform group-hover:translate-x-0.5 group-hover:text-brand-500 dark:text-stone-600"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            // Внутри выбранной папки.
+            (() => {
+              const group = homeworkGroups.groups.find((g) => g.id === openHwFolder);
+              return (
+                <div>
+                  <div className="mb-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setOpenHwFolder(undefined)}
+                      className="flex items-center gap-1 rounded-full border border-stone-300/70 px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      Папки
+                    </button>
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500/10 text-brand-600 dark:bg-brand-400/10 dark:text-brand-300">
+                      <FolderIcon className="h-4 w-4" open={!group?.name} />
+                    </span>
+                    <h3 className="text-sm font-semibold">{group?.name ?? 'Без папки'}</h3>
+                  </div>
+                  {!group || group.tasks.length === 0 ? (
+                    <div className="card text-sm text-stone-500">В этой папке пока пусто.</div>
+                  ) : (
+                    <ul className="flex flex-wrap gap-2">
+                      {group.tasks.map((t) => renderHwCard(t))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()
           )}
         </main>
       </div>

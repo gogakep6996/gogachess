@@ -23,13 +23,19 @@ export default async function ClassPublicPage({
   const hasAccessCode = Boolean(cls.accessCode);
 
   // Если код доступа задан, задачи прячем до его ввода.
-  const tasks =
-    hasAccessCode && !isOwner
-      ? []
-      : await prisma.task.findMany({
+  const gated = hasAccessCode && !isOwner;
+  const [tasks, folders] = gated
+    ? [[], []]
+    : await Promise.all([
+        prisma.task.findMany({
           where: { classId: cls.id, isHomework: true },
           orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
-        });
+        }),
+        prisma.homeworkFolder.findMany({
+          where: { classId: cls.id },
+          orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+        }),
+      ]);
 
   return (
     // Контейнер как в /class/me: фиксированная высота на десктопе. Это нужно,
@@ -52,6 +58,7 @@ export default async function ClassPublicPage({
           hasAccessCode,
         }}
         initialTasks={tasks}
+        initialFolders={folders}
         isOwner={isOwner}
       />
     </div>

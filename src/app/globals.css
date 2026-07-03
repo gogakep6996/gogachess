@@ -16,7 +16,7 @@ html, body {
 
 body {
   @apply bg-surface text-stone-800 dark:bg-surface-dark dark:text-stone-100;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans), 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 /* Фоновый градиент с лёгкой текстурой */
