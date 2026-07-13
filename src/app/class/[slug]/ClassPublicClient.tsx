@@ -247,10 +247,13 @@ export function ClassPublicClient({
     const byFolder = new Map<string, TaskDto[]>();
     const noFolder: TaskDto[] = [];
     for (const t of hw) {
-      if (t.folderId) {
-        const arr = byFolder.get(t.folderId) ?? [];
-        arr.push(t);
-        byFolder.set(t.folderId, arr);
+      if (t.folderIds && t.folderIds.length) {
+        // Одна задача может быть сразу в нескольких папках — показываем в каждой.
+        for (const fid of t.folderIds) {
+          const arr = byFolder.get(fid) ?? [];
+          arr.push(t);
+          byFolder.set(fid, arr);
+        }
       } else {
         noFolder.push(t);
       }

@@ -20,10 +20,19 @@ export async function GET(req: Request) {
   if (!cls) return NextResponse.json({ tasks: [] });
 
   const all = new URL(req.url).searchParams.get('all') === '1';
-  const tasks = await prisma.task.findMany({
+  const rows = await prisma.task.findMany({
     where: { classId: cls.id, ...(all ? {} : { isPublished: true }) },
     orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+    include: {
+      folderLinks: { select: { folderId: true } },
+      libraryFolderLinks: { select: { folderId: true } },
+    },
   });
+  const tasks = rows.map(({ folderLinks, libraryFolderLinks, ...t }) => ({
+    ...t,
+    folderIds: folderLinks.map((l) => l.folderId),
+    libraryFolderIds: libraryFolderLinks.map((l) => l.folderId),
+  }));
 
   return NextResponse.json({ tasks });
 }
@@ -100,5 +109,8 @@ export async function POST(req: Request) {
     },
   });
 
-  return NextResponse.json({ task });
+  // Новая задача ещё не разложена по папкам.
+  return NextResponse.json({
+    task: { ...task, folderIds: [] as string[], libraryFolderIds: [] as string[] },
+  });
 }

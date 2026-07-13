@@ -33,11 +33,12 @@ export async function GET(
   }
   if (isOwner) codeAccepted = true;
 
-  const [tasks, folders] = codeAccepted
+  const [taskRows, folders] = codeAccepted
     ? await Promise.all([
         prisma.task.findMany({
           where: { classId: cls.id, isHomework: true },
           orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+          include: { folderLinks: { select: { folderId: true } } },
         }),
         prisma.homeworkFolder.findMany({
           where: { classId: cls.id },
@@ -45,6 +46,10 @@ export async function GET(
         }),
       ])
     : [[], []];
+  const tasks = taskRows.map(({ folderLinks, ...t }) => ({
+    ...t,
+    folderIds: folderLinks.map((l) => l.folderId),
+  }));
 
   return NextResponse.json({
     class: {

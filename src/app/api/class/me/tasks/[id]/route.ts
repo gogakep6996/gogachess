@@ -62,28 +62,104 @@ export async function PATCH(
     data.engineLevel = Math.max(0, Math.min(20, Number(body.engineLevel)));
   }
   if (body.isPublished !== undefined) data.isPublished = Boolean(body.isPublished);
+  const removingHomework = body.isHomework === false;
   if (body.isHomework !== undefined) data.isHomework = Boolean(body.isHomework);
   if (body.position !== undefined) data.position = Number(body.position);
 
-  // Назначение папки домашнего задания. null = убрать из папки («Без папки»).
-  // Строку принимаем только если папка принадлежит тому же классу.
-  if (body.folderId !== undefined) {
-    if (body.folderId === null) {
-      data.folderId = null;
-    } else if (typeof body.folderId === 'string') {
-      const folder = await prisma.homeworkFolder.findUnique({
-        where: { id: body.folderId },
-        select: { classId: true },
-      });
-      if (!folder || folder.classId !== result.task.classId) {
-        return NextResponse.json({ error: 'folder not found' }, { status: 400 });
-      }
-      data.folderId = body.folderId;
+  // Членство задачи в папках ДЗ (многие-ко-многим). Способы задать новый набор:
+  //   • folderIds: string[] — авторитетный полный список папок;
+  //   • addFolderId / removeFolderId — точечно добавить/убрать одну папку.
+  // Все id проверяем на принадлежность классу. Если задачу убирают из ДЗ
+  // (isHomework=false) — очищаем все папки.
+  let folderIdsToSet: string[] | undefined;
+  if (Array.isArray(body.folderIds)) {
+    folderIdsToSet = Array.from(
+      new Set(body.folderIds.filter((x): x is string => typeof x === 'string')),
+    );
+  } else if (typeof body.addFolderId === 'string' || typeof body.removeFolderId === 'string') {
+    const current = await prisma.homeworkFolderTask.findMany({
+      where: { taskId: id },
+      select: { folderId: true },
+    });
+    const set = new Set(current.map((l) => l.folderId));
+    if (typeof body.addFolderId === 'string') set.add(body.addFolderId);
+    if (typeof body.removeFolderId === 'string') set.delete(body.removeFolderId);
+    folderIdsToSet = Array.from(set);
+  }
+  if (removingHomework) folderIdsToSet = [];
+
+  if (folderIdsToSet && folderIdsToSet.length > 0) {
+    const valid = await prisma.homeworkFolder.findMany({
+      where: { id: { in: folderIdsToSet }, classId: result.task.classId },
+      select: { id: true },
+    });
+    if (valid.length !== folderIdsToSet.length) {
+      return NextResponse.json({ error: 'folder not found' }, { status: 400 });
+    }
+  }
+
+  // Членство в папках «Моей библиотеки» (LibraryFolderTask) — отдельный набор,
+  // не связанный с папками ДЗ. Способы те же: libraryFolderIds / add / remove.
+  let libFolderIdsToSet: string[] | undefined;
+  if (Array.isArray(body.libraryFolderIds)) {
+    libFolderIdsToSet = Array.from(
+      new Set(body.libraryFolderIds.filter((x): x is string => typeof x === 'string')),
+    );
+  } else if (
+    typeof body.addLibraryFolderId === 'string' ||
+    typeof body.removeLibraryFolderId === 'string'
+  ) {
+    const current = await prisma.libraryFolderTask.findMany({
+      where: { taskId: id },
+      select: { folderId: true },
+    });
+    const set = new Set(current.map((l) => l.folderId));
+    if (typeof body.addLibraryFolderId === 'string') set.add(body.addLibraryFolderId);
+    if (typeof body.removeLibraryFolderId === 'string') set.delete(body.removeLibraryFolderId);
+    libFolderIdsToSet = Array.from(set);
+  }
+
+  if (libFolderIdsToSet && libFolderIdsToSet.length > 0) {
+    const valid = await prisma.libraryFolder.findMany({
+      where: { id: { in: libFolderIdsToSet }, classId: result.task.classId },
+      select: { id: true },
+    });
+    if (valid.length !== libFolderIdsToSet.length) {
+      return NextResponse.json({ error: 'library folder not found' }, { status: 400 });
     }
   }
 
   const updated = await prisma.task.update({ where: { id }, data });
-  return NextResponse.json({ task: updated });
+
+  if (folderIdsToSet !== undefined) {
+    await prisma.homeworkFolderTask.deleteMany({ where: { taskId: id } });
+    if (folderIdsToSet.length > 0) {
+      await prisma.homeworkFolderTask.createMany({
+        data: folderIdsToSet.map((folderId) => ({ taskId: id, folderId })),
+      });
+    }
+  }
+
+  if (libFolderIdsToSet !== undefined) {
+    await prisma.libraryFolderTask.deleteMany({ where: { taskId: id } });
+    if (libFolderIdsToSet.length > 0) {
+      await prisma.libraryFolderTask.createMany({
+        data: libFolderIdsToSet.map((folderId) => ({ taskId: id, folderId })),
+      });
+    }
+  }
+
+  const [links, libLinks] = await Promise.all([
+    prisma.homeworkFolderTask.findMany({ where: { taskId: id }, select: { folderId: true } }),
+    prisma.libraryFolderTask.findMany({ where: { taskId: id }, select: { folderId: true } }),
+  ]);
+  return NextResponse.json({
+    task: {
+      ...updated,
+      folderIds: links.map((l) => l.folderId),
+      libraryFolderIds: libLinks.map((l) => l.folderId),
+    },
+  });
 }
 
 export async function DELETE(

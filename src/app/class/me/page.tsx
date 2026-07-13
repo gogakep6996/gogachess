@@ -38,16 +38,29 @@ export default async function ClassMePage() {
   }
 
   const cls = existing ?? (await ensureClassForUser(auth.sub));
-  const [tasks, folders] = await Promise.all([
+  const [taskRows, folders, libraryFolders] = await Promise.all([
     prisma.task.findMany({
       where: { classId: cls.id },
       orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+      include: {
+        folderLinks: { select: { folderId: true } },
+        libraryFolderLinks: { select: { folderId: true } },
+      },
     }),
     prisma.homeworkFolder.findMany({
       where: { classId: cls.id },
       orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
     }),
+    prisma.libraryFolder.findMany({
+      where: { classId: cls.id },
+      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+    }),
   ]);
+  const tasks = taskRows.map(({ folderLinks, libraryFolderLinks, ...t }) => ({
+    ...t,
+    folderIds: folderLinks.map((l) => l.folderId),
+    libraryFolderIds: libraryFolderLinks.map((l) => l.folderId),
+  }));
 
   return (
     // Контейнер как в /room/[code]: фиксированная высота на десктопе, чтобы
@@ -71,6 +84,7 @@ export default async function ClassMePage() {
         }}
         initialTasks={tasks}
         initialFolders={folders}
+        initialLibraryFolders={libraryFolders}
       />
     </div>
   );

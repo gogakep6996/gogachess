@@ -50,6 +50,8 @@ interface CreateBody {
   timeControl: string;
   durationMin: number;
   startsAt: string;
+  /** Турнир группы сообщества — покажется в разделе «Турниры» группы. */
+  groupId?: string;
 }
 
 export async function POST(request: Request) {
@@ -80,8 +82,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Неверная дата старта' }, { status: 400 });
   }
 
+  // Турнир для группы сообщества может создавать только её админ.
+  let groupId: string | null = null;
+  if (body.groupId) {
+    const group = await prisma.group.findUnique({
+      where: { id: body.groupId },
+      select: { ownerId: true },
+    });
+    if (!group) return NextResponse.json({ error: 'Группа не найдена' }, { status: 404 });
+    if (group.ownerId !== guard.userId) {
+      return NextResponse.json(
+        { error: 'Турнир группы создаёт только её админ' },
+        { status: 403 },
+      );
+    }
+    groupId = body.groupId;
+  }
+
   const t = await prisma.tournament.create({
-    data: { name, timeControl, durationMin, startsAt, ownerId: guard.userId },
+    data: { name, timeControl, durationMin, startsAt, ownerId: guard.userId, groupId },
   });
   return NextResponse.json({ id: t.id });
 }

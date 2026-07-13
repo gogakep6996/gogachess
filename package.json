@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch server/index.ts",
+    "dev": "cross-env NODE_OPTIONS=--max-old-space-size=4096 tsx watch server/index.ts",
     "build": "cross-env NODE_ENV=production next build",
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "lint": "next lint",

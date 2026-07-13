@@ -18,6 +18,7 @@ interface Props {
   initialClass: ClassDto;
   initialTasks: TaskDto[];
   initialFolders: FolderDto[];
+  initialLibraryFolders: FolderDto[];
 }
 
 type Tab = 'tasks' | 'lesson' | 'homework';
@@ -28,10 +29,12 @@ export function ClassMeClient({
   initialClass,
   initialTasks,
   initialFolders,
+  initialLibraryFolders,
 }: Props) {
   const [cls] = useState<ClassDto>(initialClass);
   const [tasks, setTasks] = useState<TaskDto[]>(initialTasks);
   const [folders, setFolders] = useState<FolderDto[]>(initialFolders);
+  const [libraryFolders, setLibraryFolders] = useState<FolderDto[]>(initialLibraryFolders);
   const [tab, setTab] = useState<Tab>('lesson');
   // Вторжение учителя в личную доску ученика. Когда задано — рендерим
   // full-screen RoomClient (учитель = owner student-board комнаты, видит весь
@@ -107,36 +110,36 @@ export function ClassMeClient({
       return (
         <div className="flex min-h-0 flex-1 flex-col">
           <div
-            className={`flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-0.5 text-[11px] font-semibold leading-tight ${
+            className={`relative flex shrink-0 items-stretch justify-center gap-2 px-3 py-0.5 text-[11px] font-semibold leading-tight ${
               broadcasting
                 ? 'border-b border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200'
                 : 'border-b border-stone-200 bg-stone-50 text-stone-700 dark:border-stone-700 dark:bg-stone-800/40 dark:text-stone-200'
             }`}
           >
-            <span>
+            <span className="pointer-events-none absolute left-3 top-1/2 hidden -translate-y-1/2 lg:block">
               {broadcasting
                 ? '🔴 Идёт трансляция — все ученики видят эту доску'
                 : '👀 Моя доска (видна только вам)'}
             </span>
-            <div className="flex flex-wrap items-center gap-1">
+            <div className="flex items-stretch gap-2">
               {broadcasting ? (
                 <button
                   onClick={() => toggleBroadcast(false)}
-                  className="rounded border border-stone-300 bg-paper px-1.5 py-px text-[10px] font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
+                  className="flex items-center rounded-md border border-stone-300 bg-paper px-4 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
                 >
                   ⏸ Остановить трансляцию
                 </button>
               ) : (
                 <button
                   onClick={() => toggleBroadcast(true)}
-                  className="rounded bg-emerald-500 px-1.5 py-px text-[10px] font-semibold text-white hover:bg-emerald-600"
+                  className="flex items-center rounded-md bg-emerald-500 px-4 text-sm font-semibold text-white hover:bg-emerald-600"
                 >
                   📡 Транслировать ученикам
                 </button>
               )}
               <button
                 onClick={stopDemo}
-                className="rounded border border-red-300 bg-red-50 px-1.5 py-px text-[10px] font-semibold text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300"
+                className="flex items-center rounded-md border border-red-300 bg-red-50 px-4 text-sm font-semibold text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300"
               >
                 ← Урок
               </button>
@@ -218,7 +221,13 @@ export function ClassMeClient({
               onFoldersChange={setFolders}
             />
           ) : (
-            <TasksLibrary cls={cls} tasks={tasks} onTasksChange={setTasks} />
+            <TasksLibrary
+              cls={cls}
+              tasks={tasks}
+              libraryFolders={libraryFolders}
+              onTasksChange={setTasks}
+              onLibraryFoldersChange={setLibraryFolders}
+            />
           )}
         </main>
 

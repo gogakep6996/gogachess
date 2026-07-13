@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import {
@@ -110,6 +111,19 @@ export function AccountMenu({
   // ---- Уведомления ----
   const [notifications, setNotifications] = useState<NotificationDto[]>([]);
   const [unread, setUnread] = useState(0);
+
+  // ---- Сообщения и друзья: счётчики для бейджей ----
+  const [social, setSocial] = useState({ unreadDms: 0, pendingFriends: 0 });
+  useEffect(() => {
+    fetch('/api/social/summary')
+      .then((r) => (r.ok ? (r.json() as Promise<{ unreadDms: number; pendingFriends: number }>) : null))
+      .then((d) => {
+        if (d) setSocial(d);
+      })
+      .catch(() => {
+        /* не критично */
+      });
+  }, []);
 
   const loadNotifications = useCallback(async (markRead: boolean) => {
     try {
@@ -240,11 +254,15 @@ export function AccountMenu({
       >
         <span className="relative grid h-8 w-8 place-items-center rounded-full bg-brand-500 text-sm font-semibold text-white shadow-soft">
           {initial}
-          {(unread > 0 || emailMissing || emailUnverified) && (
+          {(unread > 0 ||
+            emailMissing ||
+            emailUnverified ||
+            social.unreadDms > 0 ||
+            social.pendingFriends > 0) && (
             <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-red-500 dark:border-stone-900" />
           )}
         </span>
-        <span className="hidden max-w-[10rem] truncate text-sm text-stone-700 dark:text-stone-200 sm:inline">
+        <span className="hidden max-w-[10rem] truncate text-sm font-bold text-stone-700 dark:text-stone-200 sm:inline">
           {user.displayName}
         </span>
         <svg
@@ -277,6 +295,34 @@ export function AccountMenu({
                 {user.email ?? user.phone ?? 'без контактов'}
               </div>
             </div>
+          </div>
+
+          {/* Быстрые разделы: сообщения и друзья */}
+          <div className="grid shrink-0 grid-cols-2 gap-1.5 border-b border-stone-200/70 px-3 py-2 dark:border-stone-800/70">
+            <Link
+              href="/messages"
+              onClick={() => setOpen(false)}
+              className="relative flex items-center justify-center gap-1.5 rounded-xl border border-stone-300/70 px-2 py-2 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-100/70 dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-800/60"
+            >
+              ✉ Сообщения
+              {social.unreadDms > 0 && (
+                <span className="grid h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                  {social.unreadDms > 99 ? '99+' : social.unreadDms}
+                </span>
+              )}
+            </Link>
+            <Link
+              href="/friends"
+              onClick={() => setOpen(false)}
+              className="relative flex items-center justify-center gap-1.5 rounded-xl border border-stone-300/70 px-2 py-2 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-100/70 dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-800/60"
+            >
+              👥 Друзья
+              {social.pendingFriends > 0 && (
+                <span className="grid h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                  {social.pendingFriends}
+                </span>
+              )}
+            </Link>
           </div>
 
           {/* Секции-аккордеон (скроллится при нехватке места) */}

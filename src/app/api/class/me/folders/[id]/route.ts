@@ -45,7 +45,8 @@ export async function PATCH(
 }
 
 // DELETE /api/class/me/folders/[id] — удалить папку.
-// Задачи не удаляются: folderId у них обнуляется (onDelete: SetNull в схеме).
+// Задачи не удаляются: связи задача↔папка (HomeworkFolderTask) убираются
+// каскадом (onDelete: Cascade), и такие задачи становятся «Без папки».
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },

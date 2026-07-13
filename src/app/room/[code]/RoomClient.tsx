@@ -152,9 +152,35 @@ export function RoomClient({
    *  Это сам урок и сервисные комнаты раздела «Класс»: трансляция учителя и личные доски учеников. */
   const isLessonLike =
     roomKind === 'lesson' || roomKind === 'class-demo' || roomKind === 'student-board';
+  /** Доска ученика в классе (личная доска задачи). Владелец такой комнаты — учитель. */
+  const isStudentBoard = roomKind === 'student-board';
   /** Ученик-наблюдатель за трансляцией учителя — в class-demo он не должен «отменять ход»,
    *  чтобы не отбрасывать ход назад на доске у всех. */
   const isStudentInBroadcast = !isOwner && roomKind === 'class-demo';
+  /** Присутствует ли учитель (владелец) прямо сейчас за этой доской. На доске
+   *  ученика это означает «учитель зашёл за доску» → режим совместного разбора. */
+  const ownerPresent = useMemo(
+    () => participants.some((p) => p.userId === room.ownerId),
+    [participants, room.ownerId],
+  );
+  /** Разбор на доске ученика: учитель зашёл за доску. В этом режиме и ученик, и
+   *  учитель могут перематывать историю и ветвиться (но не за цвет движка). */
+  const reviewByTeacher = isStudentBoard && ownerPresent;
+  /** Цвет ученика (человека) на доске задачи. Приходит с сервера для student-board;
+   *  как запас — из studentTaskMode. Движок играет противоположным цветом. */
+  const boardHumanColor: 'w' | 'b' | null =
+    state?.humanColor ?? studentTaskMode?.humanColor ?? null;
+  /** Кто «ведёт» общую перемотку (транслирует просматриваемый узел в комнату):
+   *  на доске ученика — и учитель, и ученик (только когда учитель зашёл, режим
+   *  разбора); в lesson/class-demo — только учитель. */
+  const canDriveNav = isStudentBoard ? reviewByTeacher : isOwner && isLessonLike;
+  /** Кто «следует» за общей перемоткой: на доске ученика во время разбора — оба
+   *  (видят навигацию друг друга); в остальных комнатах — ученики за учителем.
+   *  Пока ученик решает задачу один (учителя нет) — листает историю локально. */
+  const followsRemoteNav = isStudentBoard ? reviewByTeacher : !isOwner;
+  /** Кнопка «Отменить ход». Скрываем её ученику на доске задачи (student-board):
+   *  во время задачи ученик не откатывает ходы — это делает только учитель. */
+  const canUndo = isLessonLike && !isStudentInBroadcast && !(isStudentBoard && !isOwner);
   /** Может ли пользователь рисовать стрелки/выделять клетки. По требованию —
    *  ученикам в любых классных комнатах рисование отключаем (видеть стрелки учителя
    *  они продолжают, изменять не могут). */
@@ -222,7 +248,22 @@ export function RoomClient({
   const [pastGamesOpen, setPastGamesOpen] = useState(false);
 
   // Переворот доски (чёрные снизу). Локально для каждого пользователя.
-  const [flipped, setFlipped] = useState(false);
+  // Ученик в режиме задачи (домашка/раздача) должен сразу видеть доску со
+  // своей стороны — как на мини-доске карточки (та повёрнута по sideToPlay).
+  // Поэтому стартовую ориентацию берём из его цвета: играет за чёрных → флип.
+  const [flipped, setFlipped] = useState<boolean>(
+    () => studentTaskMode?.humanColor === 'b',
+  );
+  // Если «человеческая» сторона приходит с сервера позже (раздача на уроке),
+  // один раз доворачиваем доску под неё. Ручной переворот после этого сохраняется.
+  const autoOrientedRef = useRef(false);
+  useEffect(() => {
+    if (isOwner || !studentTaskMode) return;
+    if (autoOrientedRef.current) return;
+    if (boardHumanColor === null) return;
+    autoOrientedRef.current = true;
+    setFlipped(boardHumanColor === 'b');
+  }, [isOwner, studentTaskMode, boardHumanColor]);
 
   // viewIdx ∈ [-1 .. history.length-1]; -1 = стартовая позиция, history.length-1 = текущая.
   const [viewIdx, setViewIdx] = useState<number>(-1);
@@ -279,6 +320,16 @@ export function RoomClient({
     if (followTreeRef.current) setViewNodeId(currentNodeId);
   }, [treeMode, isEditing, currentNodeId]);
 
+  // Просматриваемый узел удалили из дерева (отмена хода вырезает поддерево) —
+  // возвращаемся к живой позиции, иначе viewNodeId навсегда останется битым.
+  useEffect(() => {
+    if (!treeMode || viewNodeId === null) return;
+    if (!nodeMap.has(viewNodeId)) {
+      followTreeRef.current = true;
+      setViewNodeId(currentNodeId);
+    }
+  }, [treeMode, viewNodeId, nodeMap, currentNodeId]);
+
   useEffect(() => {
     if (treeMode && isEditing) {
       followTreeRef.current = true;
@@ -286,9 +337,10 @@ export function RoomClient({
     }
   }, [treeMode, isEditing, currentNodeId]);
 
-  // Ученики следуют за узлом, который показывает учитель (перемотка веток).
+  // Следуем за узлом, который показывает «ведущий» перемотки. На доске ученика
+  // во время разбора это взаимно: и ученик, и учитель видят навигацию друг друга.
   useEffect(() => {
-    if (!treeMode || isOwner || isEditing) return;
+    if (!treeMode || isEditing || !followsRemoteNav) return;
     if (remoteViewNodeId === null) {
       followTreeRef.current = true;
       setViewNodeId(currentNodeId);
@@ -296,18 +348,32 @@ export function RoomClient({
       followTreeRef.current = false;
       setViewNodeId(remoteViewNodeId);
     }
-  }, [treeMode, isOwner, isEditing, remoteViewNodeId, currentNodeId]);
+  }, [treeMode, isEditing, followsRemoteNav, remoteViewNodeId, currentNodeId]);
 
   const selectTreeNode = useCallback(
     (id: string | null) => {
       setViewNodeId(id);
       followTreeRef.current = id === currentNodeId;
-      if (isOwner && isLessonLike) {
+      if (canDriveNav) {
         setHistoryViewNode(id === currentNodeId ? null : id);
       }
     },
-    [currentNodeId, isOwner, isLessonLike, setHistoryViewNode],
+    [currentNodeId, canDriveNav, setHistoryViewNode],
   );
+
+  // Учитель ушёл с доски ученика (был за доской → вышел). Возвращаем ученика к
+  // «живой» позиции: иначе он остаётся прикреплён к узлу, который показывал
+  // учитель во время разбора, и не может продолжить игру (req: «после перемотки
+  // учителя ученик снова может ходить»).
+  const prevOwnerPresentRef = useRef(ownerPresent);
+  useEffect(() => {
+    const was = prevOwnerPresentRef.current;
+    prevOwnerPresentRef.current = ownerPresent;
+    if (isStudentBoard && !isOwner && was && !ownerPresent) {
+      followTreeRef.current = true;
+      setViewNodeId(currentNodeId);
+    }
+  }, [isStudentBoard, isOwner, ownerPresent, currentNodeId]);
 
   const treePrev = useCallback(() => {
     if (viewNodeId === null) return;
@@ -345,7 +411,12 @@ export function RoomClient({
   const viewFen = treeMode
     ? viewNode
       ? viewNode.fen
-      : startFen
+      : viewNodeId !== null
+        ? // Узел удалён из дерева (отмена хода), а viewNodeId ещё не успел
+          // синхронизироваться — показываем живую позицию, НЕ стартовую.
+          // Иначе доска на кадр «прыгает» на начало партии и дёргаются фигуры.
+          fen
+        : startFen
     : viewIdx === -1
       ? startFen
       : history[viewIdx]?.fen ?? fen;
@@ -451,9 +522,12 @@ export function RoomClient({
     }
   }
 
-  // Ветвление «в прошлом» (новая ветка/вариант) разрешаем учителю и ученику на
-  // его СОБСТВЕННОЙ доске задачи. Наблюдателю трансляции — только актуальная позиция.
-  const canBranchPast = treeMode && (isOwner || roomKind === 'student-board');
+  // Ветвление «в прошлом» (новая ветка/вариант):
+  //   • доска ученика (student-board) — только когда учитель зашёл за доску
+  //     (разбор). Пока ученик решает задачу сам — историю можно листать, но
+  //     свернуть в другую ветку нельзя (только просмотр);
+  //   • lesson / class-demo — только владелец-учитель.
+  const canBranchPast = isStudentBoard ? reviewByTeacher : treeMode && isOwner;
   const canMove =
     !isEditing && connected && !movesBlockedForMe && (canBranchPast || !isViewingPast);
   const displayFen = isEditing
@@ -501,6 +575,11 @@ export function RoomClient({
   // серверный флаг. Учительский локальный vsComp остаётся только для его собственной
   // «Моей доски» (class-demo, isOwner=true).
   const engineEnabledByServer = state?.engineEnabled ?? true;
+  /** Движок-соперник активен на этой доске задачи (играет за цвет, противоположный
+   *  ученику). Тогда ни ученику, ни зашедшему учителю нельзя ходить за цвет движка —
+   *  доску ограничиваем цветом ученика (см. sideLock ниже). Если учитель выключил
+   *  движок кнопкой — играем вручную любым цветом. */
+  const engineActiveHere = isStudentBoard && engineEnabledByServer && !!boardHumanColor;
   useEffect(() => {
     if (isOwner) return;
     const shouldBeOn = !!studentTaskMode && engineEnabledByServer;
@@ -860,11 +939,19 @@ export function RoomClient({
                 isEditing={isEditing}
                 canEdit={canEditNow}
                 allowIllegal={!vsComp && mode.allowIllegal}
-                sideLock={vsComp ? null : mode.sideLock}
+                sideLock={
+                  engineActiveHere
+                    ? boardHumanColor // движок включён → ходить можно только цветом ученика
+                    : vsComp
+                      ? null
+                      : mode.sideLock
+                }
                 canStartAnySide={
-                  vsComp
-                    ? vsComp.humanColor === null
-                    : !mode.allowIllegal && mode.sideLock === null && freshSegment
+                  engineActiveHere
+                    ? false // за движок ходить нельзя, «любой стороной» здесь недопустимо
+                    : vsComp
+                      ? vsComp.humanColor === null
+                      : !mode.allowIllegal && mode.sideLock === null && freshSegment
                 }
                 onPromotionRequest={handlePromotionRequest}
                 onMove={commitMove}
@@ -935,7 +1022,7 @@ export function RoomClient({
                         ? `${viewPly}/${totalPly}`
                         : `ход ${totalPly}`}
                   </div>
-                  {isLessonLike && !isStudentInBroadcast && (
+                  {canUndo && (
                     <button
                       type="button"
                       onClick={undoMove}
@@ -987,7 +1074,7 @@ export function RoomClient({
                 totalPly={totalPly}
               />
             </div>
-            {isLessonLike && !isStudentInBroadcast && (
+            {canUndo && (
               <UndoButton onClick={undoMove} disabled={history.length === 0 || isEditing} />
             )}
             {!isOwner && studentTaskMode && (
@@ -1034,7 +1121,7 @@ export function RoomClient({
             >
               ⇅ Перевернуть
             </button>
-            {isLessonLike && !isStudentInBroadcast && (
+            {canUndo && (
               <UndoButton onClick={undoMove} disabled={history.length === 0 || isEditing} />
             )}
             {!isOwner && studentTaskMode && (

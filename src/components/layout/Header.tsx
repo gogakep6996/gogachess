@@ -59,12 +59,12 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200/60 bg-surface/70 backdrop-blur-md dark:border-stone-800/60 dark:bg-surface-dark/70">
-      <div className="flex w-full items-center justify-between px-2 py-3 sm:px-3 lg:pl-4 lg:pr-5">
-        <Link href="/" className="flex items-center gap-3 font-display">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-500 text-white shadow-soft">
+      <div className="flex w-full items-center justify-between px-2 py-1.5 sm:px-3 lg:pl-4 lg:pr-5">
+        <Link href="/" className="flex items-center gap-2.5 font-display">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-500 text-white shadow-soft">
             <svg
               viewBox="0 0 45 45"
-              className="h-[26px] w-[26px] text-white"
+              className="h-[20px] w-[20px] text-white"
               aria-hidden
               xmlns="http://www.w3.org/2000/svg"
             >
@@ -74,15 +74,18 @@ export function Header() {
               />
             </svg>
           </span>
-          <span className="text-2xl font-semibold leading-none tracking-tight sm:text-[1.65rem]">gogachess</span>
+          <span className="text-xl font-semibold leading-none tracking-tight sm:text-[1.4rem]">gogachess</span>
         </Link>
 
         <nav className="flex items-center gap-3">
-          <Link href="/rooms" className="hidden text-sm text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
+          <Link href="/rooms" className="hidden text-sm font-bold text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
             Комнаты
           </Link>
-          <Link href="/class" className="hidden text-sm text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
+          <Link href="/class" className="hidden text-sm font-bold text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
             Класс
+          </Link>
+          <Link href="/community" className="hidden text-sm font-bold text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
+            Сообщество
           </Link>
           <ThemeToggle />
           {user ? (

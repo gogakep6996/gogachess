@@ -106,6 +106,11 @@ interface RoomRuntime {
   /** Сила движка (Stockfish Skill Level 0..20). Для student-board берётся из
    *  задачи (Task.engineLevel). 20 = полная сила. */
   engineLevel: number;
+  /** Цвет «человека» на доске задачи (сторона ученика). Для student-board
+   *  берётся из задачи (Task.sideToPlay). Движок играет противоположным цветом.
+   *  Используется, чтобы и ученику, и зашедшему учителю нельзя было ходить за
+   *  цвет движка. null для прочих комнат. */
+  humanColor: 'w' | 'b' | null;
   /** Учитель запретил ученикам ходить на этой доске (трансляция/урок). */
   studentMovesLocked: boolean;
   /** Единственный ученик (userId), которому разрешено ходить при блокировке. */
@@ -409,6 +414,7 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     result: room.result,
     engineEnabled: room.engineEnabled,
     engineLevel: room.engineLevel,
+    humanColor: room.humanColor ?? null,
     studentMovesLocked: room.studentMovesLocked,
     allowedMoverUserId: room.allowedMoverUserId,
     firstMoveDeadlineAt: room.firstMoveDeadlineAt,
@@ -464,12 +470,16 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
   // Для доски ученика берём силу движка из задачи, которую раздал учитель
   // (TaskSession уникально связана с этой комнатой через roomId). Иначе — полная сила.
   let engineLevel = 20;
+  let humanColor: 'w' | 'b' | null = null;
   if (dbRoom.kind === 'student-board') {
     const ts = await prisma.taskSession.findUnique({
       where: { roomId: dbRoom.id },
-      include: { task: { select: { engineLevel: true } } },
+      include: { task: { select: { engineLevel: true, sideToPlay: true } } },
     });
-    if (ts?.task) engineLevel = ts.task.engineLevel;
+    if (ts?.task) {
+      engineLevel = ts.task.engineLevel;
+      humanColor = ts.task.sideToPlay === 'b' ? 'b' : 'w';
+    }
   }
   const runtime: RoomRuntime = {
     code: dbRoom.code,
@@ -503,6 +513,7 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     result: null,
     engineEnabled: true,
     engineLevel,
+    humanColor,
     studentMovesLocked: false,
     allowedMoverUserId: null,
     // Турнирная партия, в которой ещё не сыграно 2 полухода → запускаем 20-сек дедлайн
@@ -1030,6 +1041,7 @@ app.prepare().then(() => {
         result: null,
         engineEnabled: false,
         engineLevel: 20,
+        humanColor: null,
         studentMovesLocked: false,
         allowedMoverUserId: null,
         // У белых есть 20 секунд на первый ход с момента создания партии.
@@ -1660,8 +1672,10 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      // Только владелец комнаты управляет перемоткой урока.
-      if (runtime.ownerId !== userId) return;
+      // Перемотку урока обычно ведёт владелец. Исключение — доска ученика
+      // (student-board): там перемотку транслирует и учитель, и сам ученик
+      // (в комнате только они двое), чтобы каждый видел навигацию другого.
+      if (runtime.ownerId !== userId && runtime.kind !== 'student-board') return;
       // Перемотка работает во всех учебных комнатах: lesson, классовая трансляция и
       // личная доска ученика (учитель пришёл за доску и листает разбор).
       if (
@@ -1692,7 +1706,9 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      if (runtime.ownerId !== userId) return;
+      // На доске ученика перемотку веток ведут оба (учитель и ученик); в
+      // остальных учебных комнатах — только владелец.
+      if (runtime.ownerId !== userId && runtime.kind !== 'student-board') return;
       if (!isTreeRoom(runtime.kind)) return;
       let next: string | null = null;
       if (typeof nodeIdRaw === 'string') {
@@ -2048,6 +2064,7 @@ app.prepare().then(() => {
           result: null,
           engineEnabled: false,
           engineLevel: 20,
+          humanColor: null,
           studentMovesLocked: false,
           allowedMoverUserId: null,
           // Правило 20 секунд — только для турнирных партий, casual без него.
@@ -2415,6 +2432,14 @@ app.prepare().then(() => {
           (p) => p.userId === runtime.ownerId,
         );
         if (!ownerStillHere) {
+          // Сбрасываем «общую перемотку», чтобы ученик не остался прикреплён к
+          // позиции, на которой учитель листал разбор, и мог продолжить играть.
+          if (runtime.historyViewNodeId !== null || runtime.historyViewIdx !== null) {
+            runtime.historyViewNodeId = null;
+            runtime.historyViewIdx = null;
+            io.to(code).emit(SocketEvents.HistoryViewNode, null);
+            io.to(code).emit(SocketEvents.HistoryView, null);
+          }
           if (runtime.reviewBackup) {
             // Учитель разбирал прошлую партию → возвращаем ученику его «живую»
             // позицию (до захода учителя) и включённый движок: он продолжает игру.

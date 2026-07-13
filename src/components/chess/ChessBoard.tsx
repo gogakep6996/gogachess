@@ -216,6 +216,9 @@ export function ChessBoard({
     const fenForCompare = effectiveFen;
 
     let found: { from: Sq; to: Sq; captured: boolean } | null = null;
+    /** Ход найден как ЛЕГАЛЬНЫЙ вперёд (prev → curr). Если нет — это скачок
+     *  позиции назад (отмена хода / навигация по истории), а не настоящий ход. */
+    let legalForward = false;
     try {
       const probeBase = new Chess(prev);
       const moves = probeBase.moves({ verbose: true }) as Array<{
@@ -233,6 +236,7 @@ export function ChessBoard({
         }
         if (probe.fen() === fenForCompare) {
           found = { from: m.from as Sq, to: m.to as Sq, captured: !!m.captured };
+          legalForward = true;
           break;
         }
       }
@@ -286,6 +290,17 @@ export function ChessBoard({
 
     if (!found) return;
 
+    // Позиция «прыгнула» назад (отмена хода / загрузка истории): легального хода
+    // prev → curr не существует. Раньше эвристика-fallback придумывала «ход»
+    // (from/to по разнице досок) — из-за этого дёргалась случайная фигура и
+    // зелёным подсвечивался несуществующий ход. Теперь: только звук, без
+    // анимации и подсветки. Fallback оставляем для комнат с allowIllegal.
+    if (!legalForward && !allowIllegal) {
+      setLastMove(null);
+      if (!silent) playMoveSound();
+      return;
+    }
+
     let check = false;
     let mate = false;
     try {
@@ -307,7 +322,7 @@ export function ChessBoard({
       else if (found.captured) playCaptureSound();
       else playMoveSound();
     }
-  }, [effectiveFen, isEditing, silent]);
+  }, [effectiveFen, isEditing, silent, allowIllegal]);
 
   const orderedRanks = flipped ? [...RANKS].reverse() : RANKS;
   const orderedFiles = flipped ? [...FILES].reverse() : FILES;

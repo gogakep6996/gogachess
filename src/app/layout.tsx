@@ -83,6 +83,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  // Запрещает iOS-Safari «наезжать» зумом на поле ввода при фокусе (чат и т.п.).
+  // Пинч-зум пальцами при этом остаётся доступен (iOS 10+ игнорирует ограничение
+  // для жестов пользователя, но уважает его для авто-зума на инпутах).
+  maximumScale: 1,
   themeColor: '#c9c5b1',
 };
 

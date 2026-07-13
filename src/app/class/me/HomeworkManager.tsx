@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { MiniBoard } from '@/components/chess/MiniBoard';
 import { FolderIcon } from '@/components/ui/FolderIcon';
+import { FolderPicker } from '@/components/class/FolderPicker';
 import { STARTING_FEN } from '@/lib/socket-events';
 import type { FolderDto, TaskDto } from './TasksLibrary';
 import { HomeworkReport } from './HomeworkReport';
@@ -39,8 +40,11 @@ export function HomeworkManager({
     const map = new Map<string, number>();
     let none = 0;
     for (const t of homework) {
-      if (t.folderId) map.set(t.folderId, (map.get(t.folderId) ?? 0) + 1);
-      else none += 1;
+      if (t.folderIds.length) {
+        for (const fid of t.folderIds) map.set(fid, (map.get(fid) ?? 0) + 1);
+      } else {
+        none += 1;
+      }
     }
     return { map, none };
   }, [homework]);
@@ -78,23 +82,74 @@ export function HomeworkManager({
   }
 
   async function deleteFolder(f: FolderDto) {
-    if (!confirm(`Удалить папку «${f.name}»? Задания из неё не удалятся — станут «Без папки».`)) return;
+    if (!confirm(`Удалить папку «${f.name}»? Задания из неё не удалятся — останутся в других папках/«Без папки».`)) return;
     const res = await fetch(`/api/class/me/folders/${f.id}`, { method: 'DELETE' });
     if (res.ok) {
       onFoldersChange(folders.filter((x) => x.id !== f.id));
-      onTasksChange(tasks.map((t) => (t.folderId === f.id ? { ...t, folderId: null } : t)));
+      onTasksChange(
+        tasks.map((t) =>
+          t.folderIds.includes(f.id)
+            ? { ...t, folderIds: t.folderIds.filter((x) => x !== f.id) }
+            : t,
+        ),
+      );
       if (open === f.id) setOpen(undefined);
     }
   }
 
-  async function patchTask(t: TaskDto, body: Partial<Pick<TaskDto, 'folderId' | 'isHomework'>>) {
-    onTasksChange(tasks.map((x) => (x.id === t.id ? { ...x, ...body } : x)));
+  // Оптимистично меняем задачу и синхронизируем с сервером. optimistic — новое
+  // локальное состояние задачи, body — тело PATCH (сервер вернёт авторитетный набор).
+  async function patchTask(
+    t: TaskDto,
+    optimistic: Partial<TaskDto>,
+    body: Record<string, unknown>,
+  ) {
+    const prev = tasks;
+    onTasksChange(tasks.map((x) => (x.id === t.id ? { ...x, ...optimistic } : x)));
     const res = await fetch(`/api/class/me/tasks/${t.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) onTasksChange(tasks);
+    if (!res.ok) {
+      onTasksChange(prev);
+      return;
+    }
+    // Приводим folderIds к серверному ответу (на случай гонок).
+    try {
+      const data = (await res.json()) as { task?: TaskDto };
+      if (data.task) {
+        onTasksChange(
+          tasks.map((x) =>
+            x.id === t.id ? { ...x, ...optimistic, folderIds: data.task!.folderIds } : x,
+          ),
+        );
+      }
+    } catch {
+      /* ответ без тела — оставляем оптимистичное состояние */
+    }
+  }
+
+  /** Задача в папке folderId? */
+  function inFolderOf(t: TaskDto, folderId: string) {
+    return t.folderIds.includes(folderId);
+  }
+
+  /** Переключить принадлежность задачи папке (добавить/убрать). */
+  function toggleFolder(t: TaskDto, folderId: string) {
+    if (inFolderOf(t, folderId)) {
+      patchTask(
+        t,
+        { folderIds: t.folderIds.filter((f) => f !== folderId) },
+        { removeFolderId: folderId },
+      );
+    } else {
+      patchTask(
+        t,
+        { isHomework: true, folderIds: [...t.folderIds, folderId] },
+        { isHomework: true, addFolderId: folderId },
+      );
+    }
   }
 
   // ── Корень: список папок-блоков ──
@@ -167,12 +222,28 @@ export function HomeworkManager({
   // ── Внутри папки ──
   const folder = open === null ? null : folders.find((f) => f.id === open) ?? null;
   const folderName = folder ? folder.name : 'Без папки';
-  const inFolder = homework.filter((t) => (t.folderId ?? null) === (open ?? null));
-  // Кандидаты на добавление — всё, что ещё не в этой папке как ДЗ.
-  const candidates = tasks.filter((t) => !(t.isHomework && (t.folderId ?? null) === (open ?? null)));
+  const inFolder =
+    open === null
+      ? homework.filter((t) => t.folderIds.length === 0)
+      : homework.filter((t) => t.folderIds.includes(open));
+  // Кандидаты на добавление:
+  //   • в реальную папку — всё, что ещё не в ней (в т.ч. домашки из других папок);
+  //   • в «Без папки» — задачи, которые ещё не домашки (сделаем их домашкой без папки).
+  const candidates =
+    open === null
+      ? tasks.filter((t) => !t.isHomework)
+      : tasks.filter((t) => !t.folderIds.includes(open));
 
   function addToFolder(t: TaskDto) {
-    patchTask(t, { isHomework: true, folderId: open ?? null });
+    if (open === null) {
+      patchTask(t, { isHomework: true }, { isHomework: true });
+    } else {
+      patchTask(
+        t,
+        { isHomework: true, folderIds: [...t.folderIds, open] },
+        { isHomework: true, addFolderId: open },
+      );
+    }
   }
 
   return (
@@ -268,18 +339,11 @@ export function HomeworkManager({
                   </span>
                 </div>
 
-                <select
-                  value={t.folderId ?? ''}
-                  onChange={(e) => patchTask(t, { folderId: e.target.value || null })}
-                  className="w-full rounded-md border border-stone-300 bg-stone-50 px-1.5 py-1 text-xs text-stone-700 focus:border-brand-500 focus:outline-none dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
-                >
-                  <option value="">Без папки</option>
-                  {folders.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.name}
-                    </option>
-                  ))}
-                </select>
+                <FolderPicker
+                  selectedIds={t.folderIds}
+                  folders={folders}
+                  onToggle={(fid) => toggleFolder(t, fid)}
+                />
 
                 <div className="mt-auto flex items-center gap-1">
                   <button
@@ -288,13 +352,25 @@ export function HomeworkManager({
                   >
                     📊 Отчёт
                   </button>
-                  <button
-                    onClick={() => patchTask(t, { isHomework: false })}
-                    title="Убрать из домашних заданий"
-                    className="rounded-md border border-stone-300 px-1.5 py-1 text-[11px] text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-                  >
-                    Убрать
-                  </button>
+                  {open === null ? (
+                    <button
+                      onClick={() =>
+                        patchTask(t, { isHomework: false, folderIds: [] }, { isHomework: false })
+                      }
+                      title="Убрать из домашних заданий"
+                      className="rounded-md border border-stone-300 px-1.5 py-1 text-[11px] text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+                    >
+                      Убрать
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => toggleFolder(t, open)}
+                      title="Убрать из этой папки"
+                      className="rounded-md border border-stone-300 px-1.5 py-1 text-[11px] text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+                    >
+                      Из папки
+                    </button>
+                  )}
                 </div>
               </li>
             );

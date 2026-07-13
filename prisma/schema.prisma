@@ -36,6 +36,15 @@ model User {
   taskAttempts        TaskAttempt[]
   authTokens          AuthToken[]
   notifications       Notification[]
+
+  ownedGroups         Group[]                @relation("GroupOwner")
+  groupMemberships    GroupMember[]
+  groupJoinRequests   GroupJoinRequest[]
+  groupMessages       GroupMessage[]
+  sentDms             DirectMessage[]        @relation("DmFrom")
+  receivedDms         DirectMessage[]        @relation("DmTo")
+  friendRequestsSent     Friendship[]        @relation("FriendRequester")
+  friendRequestsReceived Friendship[]        @relation("FriendAddressee")
 }
 
 /// Уведомление пользователя — показывается в выпадающем меню аккаунта.
@@ -120,11 +129,17 @@ model Tournament {
   status      String   @default("scheduled")
   ownerId     String
   owner       User     @relation("TournamentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Турнир группы сообщества (null = обычный публичный турнир).
+  /// Показывается в разделе «Турниры» на странице группы.
+  groupId     String?
+  group       Group?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
 
   players     TournamentPlayer[]
   matches     TournamentMatch[]
   rooms       Room[]
+
+  @@index([groupId, startsAt])
 }
 
 model TournamentPlayer {
@@ -180,6 +195,7 @@ model Class {
 
   tasks           Task[]
   homeworkFolders HomeworkFolder[]
+  libraryFolders  LibraryFolder[]
 }
 
 /// Папка для домашних заданий внутри класса — учитель раскладывает по ним ДЗ,
@@ -194,9 +210,54 @@ model HomeworkFolder {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tasks     Task[]
+  /// Связи с задачами: одна задача может лежать сразу в нескольких папках.
+  taskLinks HomeworkFolderTask[]
 
   @@index([classId, position])
+}
+
+/// Связь «задача ↔ папка ДЗ» (многие-ко-многим). Позволяет положить одну и ту
+/// же домашнюю задачу в несколько папок одновременно.
+model HomeworkFolderTask {
+  folderId  String
+  folder    HomeworkFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  taskId    String
+  task      Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@id([folderId, taskId])
+  @@index([taskId])
+}
+
+/// Папка в «Моей библиотеке» — организационная, ТОЛЬКО для наведения порядка в
+/// позициях учителя. НЕ пересекается с папками ДЗ (HomeworkFolder): это другой
+/// набор папок и другая связь. Ученики её не видят.
+model LibraryFolder {
+  id        String   @id @default(cuid())
+  classId   String
+  class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  name      String
+  /// Порядок папок в списке.
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Связи с задачами: одна задача может лежать сразу в нескольких папках.
+  taskLinks LibraryFolderTask[]
+
+  @@index([classId, position])
+}
+
+/// Связь «задача ↔ папка библиотеки» (многие-ко-многим).
+model LibraryFolderTask {
+  folderId  String
+  folder    LibraryFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  taskId    String
+  task      Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+
+  @@id([folderId, taskId])
+  @@index([taskId])
 }
 
 /// Учебная задача (позиция-заготовка) в библиотеке учителя.
@@ -204,10 +265,6 @@ model Task {
   id          String   @id @default(cuid())
   classId     String
   class       Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
-  /// Папка домашнего задания. null = задача не разложена по папкам («Без папки»).
-  /// При удалении папки задача остаётся, folderId просто обнуляется (SetNull).
-  folderId    String?
-  folder      HomeworkFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
   title       String
   description String?
   fen         String
@@ -233,9 +290,12 @@ model Task {
 
   sessions    TaskSession[]
   attempts    TaskAttempt[]
+  /// Папки ДЗ, в которых лежит задача (может быть несколько).
+  folderLinks HomeworkFolderTask[]
+  /// Папки «Моей библиотеки» (организационные, отдельные от ДЗ).
+  libraryFolderLinks LibraryFolderTask[]
 
   @@index([classId, position])
-  @@index([folderId])
 }
 
 /// Живая доска ученика по задаче. Уникальна по (taskId, userId, context) —
@@ -292,4 +352,113 @@ model TaskAttempt {
   @@index([taskId, userId])
   @@index([taskId, status])
   @@index([userId])
+}
+
+// ============================== СООБЩЕСТВО ==============================
+
+/// Группа сообщества (например «Школа №29»). Создатель = админ.
+/// Ученики вступают по инвайт-ссылке или подают заявку из общего списка.
+model Group {
+  id          String   @id @default(cuid())
+  name        String
+  country     String
+  city        String
+  /// Описание внутри группы — редактирует админ.
+  description String?
+  ownerId     String
+  owner       User     @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Секрет инвайт-ссылки: /community/join/<inviteCode> — вступление без заявки.
+  inviteCode  String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     GroupMember[]
+  requests    GroupJoinRequest[]
+  chat        GroupMessage[]
+  tournaments Tournament[]
+
+  @@index([country, city])
+  @@index([ownerId])
+}
+
+/// Участник группы. Владелец группы тоже имеет запись (role='admin') —
+/// так список участников и счётчики считаются одним запросом.
+model GroupMember {
+  id       String   @id @default(cuid())
+  groupId  String
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 'admin' | 'member'
+  role     String   @default("member")
+  joinedAt DateTime @default(now())
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+/// Заявка на вступление (из общего списка групп). Одна активная на пару
+/// группа+пользователь; при повторной подаче старая отклонённая перезаписывается.
+model GroupJoinRequest {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 'pending' | 'approved' | 'rejected'
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, userId])
+  @@index([groupId, status])
+}
+
+/// Сообщение в чате группы.
+model GroupMessage {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([groupId, createdAt])
+}
+
+/// Личное сообщение пользователь → пользователь (раздел «Сообщения» в профиле).
+/// Основной сценарий: админ одной группы пишет админу другой (договориться о турнире).
+model DirectMessage {
+  id        String    @id @default(cuid())
+  fromId    String
+  from      User      @relation("DmFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  toId      String
+  to        User      @relation("DmTo", fields: [toId], references: [id], onDelete: Cascade)
+  content   String
+  /// null = получатель ещё не читал.
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([toId, readAt])
+  @@index([fromId, toId, createdAt])
+  @@index([toId, fromId, createdAt])
+}
+
+/// Дружба/заявка в друзья. requester отправил, addressee принимает или отклоняет.
+/// Пара хранится один раз (в любом направлении) — уникальность проверяет код.
+model Friendship {
+  id          String    @id @default(cuid())
+  requesterId String
+  requester   User      @relation("FriendRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addresseeId String
+  addressee   User      @relation("FriendAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  /// 'pending' | 'accepted' | 'rejected'
+  status      String    @default("pending")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId, status])
+  @@index([requesterId, status])
 }

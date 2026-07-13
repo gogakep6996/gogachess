@@ -86,6 +86,25 @@ export async function POST(
     },
   });
 
+  // Описание задачи (если учитель его заполнил) показываем ученику в чате
+  // домашки — как сообщение от учителя. Появляется ТОЛЬКО здесь: комната
+  // домашки пересоздаётся при каждом «Решать», поэтому дублей не будет, а в
+  // уроке/библиотеке описание нигде не отображается.
+  const description = (task.description ?? '').trim();
+  if (description) {
+    try {
+      await prisma.message.create({
+        data: {
+          roomId: room.id,
+          userId: cls.ownerId,
+          content: description.slice(0, 1000),
+        },
+      });
+    } catch (e) {
+      console.error('homework description message failed:', e);
+    }
+  }
+
   if (existing) {
     await prisma.taskSession.update({
       where: { id: existing.id },

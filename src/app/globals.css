@@ -19,6 +19,17 @@ body {
   font-family: var(--font-sans), 'Inter', system-ui, -apple-system, sans-serif;
 }
 
+/* iOS Safari авто-зумит страницу при фокусе на поле ввода со шрифтом < 16px
+   (из-за этого «прыгал масштаб» в чате и на поиске). На тач-устройствах
+   держим у полей ввода минимум 16px — зум не срабатывает. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Фоновый градиент с лёгкой текстурой */
 body::before {
   content: '';
