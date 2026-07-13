@@ -237,7 +237,7 @@ export function HomeworkManager({
   function addToFolder(t: TaskDto) {
     if (open === null) {
       patchTask(t, { isHomework: true }, { isHomework: true });
-    } else {
+    } else if (open) {
       patchTask(
         t,
         { isHomework: true, folderIds: [...t.folderIds, open] },
@@ -364,7 +364,9 @@ export function HomeworkManager({
                     </button>
                   ) : (
                     <button
-                      onClick={() => toggleFolder(t, open)}
+                      onClick={() => {
+                        if (open) toggleFolder(t, open);
+                      }}
                       title="Убрать из этой папки"
                       className="rounded-md border border-stone-300 px-1.5 py-1 text-[11px] text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
                     >

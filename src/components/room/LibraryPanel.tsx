@@ -98,9 +98,11 @@ export function LibraryPanel({
     const vf = folders
       .filter((f) => (counts.get(f.id) ?? 0) > 0)
       .map((f) => ({ ...f, count: counts.get(f.id) ?? 0 }));
-    const sel = selectedFolder
-      ? list.filter((t) => t.libraryFolderIds?.includes(selectedFolder))
-      : [];
+    let sel: LibraryTask[] = [];
+    if (selectedFolder) {
+      const sfid = selectedFolder;
+      sel = list.filter((t) => t.libraryFolderIds?.includes(sfid));
+    }
     return { visibleFolders: vf, folderless: none, selectedTasks: sel };
   }, [tasks, folders, selectedFolder]);
 

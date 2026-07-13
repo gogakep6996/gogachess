@@ -124,15 +124,17 @@ export function TasksLibrary({
   const openFolderObj = openFolder
     ? libraryFolders.find((f) => f.id === openFolder) ?? null
     : null;
-  const openFolderTasks = useMemo(
-    () => (openFolder ? filteredTasks.filter((t) => libIds(t).includes(openFolder)) : []),
-    [filteredTasks, openFolder],
-  );
+  const openFolderTasks = useMemo(() => {
+    if (!openFolder) return [];
+    const fid = openFolder;
+    return filteredTasks.filter((t) => libIds(t).includes(fid));
+  }, [filteredTasks, openFolder]);
   // Позиции, которых ещё нет в открытой папке — их можно добавить через «+».
-  const addableTasks = useMemo(
-    () => (openFolder ? tasks.filter((t) => !libIds(t).includes(openFolder)) : []),
-    [tasks, openFolder],
-  );
+  const addableTasks = useMemo(() => {
+    if (!openFolder) return [];
+    const fid = openFolder;
+    return tasks.filter((t) => !libIds(t).includes(fid));
+  }, [tasks, openFolder]);
 
   async function createFolder() {
     const name = newFolderName.trim();
@@ -451,7 +453,9 @@ export function TasksLibrary({
                   {addableTasks.map((t) => (
                     <li key={t.id}>
                       <button
-                        onClick={() => toggleTaskFolder(t, openFolder)}
+                        onClick={() => {
+                          if (openFolder) toggleTaskFolder(t, openFolder);
+                        }}
                         className="group flex w-full flex-col items-center gap-1 rounded-lg border border-stone-200 bg-paper p-2 shadow-sm transition-shadow hover:shadow-md hover:ring-1 hover:ring-brand-300 dark:border-stone-700 dark:bg-stone-900"
                         title={`Добавить «${t.title}» в папку`}
                       >
