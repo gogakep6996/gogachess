@@ -6,7 +6,7 @@ import { CONSENT_EVENT, getConsent, setConsent } from '@/lib/consent';
 
 /**
  * Нижний баннер согласия на cookie. Показывается, пока выбор не сделан.
- *  • «Принять» — разрешает аналитические cookie (включает Метрику/GA через AnalyticsGate);
+ *  • «Принять» — разрешает аналитические cookie (включает Метрику через AnalyticsGate);
  *  • «Только необходимые» — отклоняет аналитику, сайт работает на технических cookie.
  */
 export function CookieConsent() {
@@ -25,8 +25,8 @@ export function CookieConsent() {
     <div className="fixed inset-x-0 bottom-0 z-[120] p-3 sm:p-4">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 rounded-2xl border border-stone-300/80 bg-paper/95 p-4 shadow-xl backdrop-blur-md dark:border-stone-700/80 dark:bg-stone-900/95 sm:flex-row sm:items-center">
         <p className="flex-1 text-sm leading-snug text-stone-700 dark:text-stone-300">
-          Мы используем cookie и сервисы аналитики (Яндекс.Метрика, Google Analytics),
-          чтобы сайт работал и становился удобнее. Подробнее — в{' '}
+          Мы используем cookie и Яндекс.Метрику, чтобы сайт работал и становился
+          удобнее. Подробнее — в{' '}
           <Link href="/privacy" className="font-medium text-brand-600 underline-offset-2 hover:underline dark:text-brand-400">
             Политике обработки персональных данных
           </Link>

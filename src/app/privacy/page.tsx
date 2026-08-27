@@ -88,19 +88,12 @@ export default function PrivacyPage() {
               подключаются <strong>только после вашего согласия</strong> через баннер
               cookie.
             </p>
-            <p>Для анализа использования Сайта применяются сторонние сервисы:</p>
+            <p>Для анализа использования Сайта применяется сторонний сервис:</p>
             <ul className="list-disc space-y-1 pl-5">
               <li>
                 <strong>Яндекс.Метрика</strong> (ООО «ЯНДЕКС»). Политика:{' '}
                 <a className="text-brand-600 underline-offset-2 hover:underline dark:text-brand-400" href="https://yandex.ru/legal/confidential/" target="_blank" rel="noopener noreferrer">
                   yandex.ru/legal/confidential
-                </a>
-                .
-              </li>
-              <li>
-                <strong>Google Analytics</strong> (Google LLC). Политика:{' '}
-                <a className="text-brand-600 underline-offset-2 hover:underline dark:text-brand-400" href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">
-                  policies.google.com/privacy
                 </a>
                 .
               </li>
@@ -116,14 +109,14 @@ export default function PrivacyPage() {
           <Section n="6" title="Передача данных третьим лицам">
             <p>
               Оператор не продаёт персональные данные. Данные могут передаваться
-              указанным выше сервисам веб-аналитики в объёме, необходимом для их
+              указанному выше сервису веб-аналитики в объёме, необходимом для его
               работы, а также по требованию уполномоченных государственных органов
               в случаях, предусмотренных законодательством РФ.
             </p>
             <p>
-              При использовании Google Analytics возможна трансграничная передача
-              обезличенных данных. Если это для вас неприемлемо — выберите «Только
-              необходимые» в баннере cookie.
+              Трансграничная передача данных не осуществляется: серверы
+              используемого сервиса аналитики расположены на территории Российской
+              Федерации.
             </p>
           </Section>
 

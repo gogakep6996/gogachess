@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
 interface FriendDto {
@@ -102,8 +101,7 @@ export function FriendsClient() {
         <h2 className="mb-2 text-sm font-semibold">Мои друзья ({data.friends.length})</h2>
         {data.friends.length === 0 ? (
           <p className="py-6 text-center text-sm leading-relaxed text-stone-400">
-            Пока нет друзей. Нажмите на ник участника в группе сообщества —
-            там есть кнопка «Добавить в друзья».
+            Пока нет друзей.
           </p>
         ) : (
           <ul className="divide-y divide-stone-200/70 dark:divide-stone-700/50">
@@ -114,9 +112,6 @@ export function FriendsClient() {
                   <span className="text-sm font-medium">{f.name}</span>
                 </div>
                 <div className="flex gap-1.5">
-                  <Link href={`/messages?to=${f.userId}`} className="btn-outline !py-1.5 text-xs">
-                    ✉ Написать
-                  </Link>
                   <button
                     onClick={() => remove(f.id, `Удалить ${f.name} из друзей?`)}
                     className="btn-ghost !py-1.5 text-xs text-stone-400 hover:text-red-600"

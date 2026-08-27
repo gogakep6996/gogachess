@@ -37,12 +37,6 @@ model User {
   authTokens          AuthToken[]
   notifications       Notification[]
 
-  ownedGroups         Group[]                @relation("GroupOwner")
-  groupMemberships    GroupMember[]
-  groupJoinRequests   GroupJoinRequest[]
-  groupMessages       GroupMessage[]
-  sentDms             DirectMessage[]        @relation("DmFrom")
-  receivedDms         DirectMessage[]        @relation("DmTo")
   friendRequestsSent     Friendship[]        @relation("FriendRequester")
   friendRequestsReceived Friendship[]        @relation("FriendAddressee")
 }
@@ -129,17 +123,13 @@ model Tournament {
   status      String   @default("scheduled")
   ownerId     String
   owner       User     @relation("TournamentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  /// Турнир группы сообщества (null = обычный публичный турнир).
-  /// Показывается в разделе «Турниры» на странице группы.
-  groupId     String?
-  group       Group?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
 
   players     TournamentPlayer[]
   matches     TournamentMatch[]
   rooms       Room[]
 
-  @@index([groupId, startsAt])
+  @@index([startsAt])
 }
 
 model TournamentPlayer {
@@ -354,96 +344,12 @@ model TaskAttempt {
   @@index([userId])
 }
 
-// ============================== СООБЩЕСТВО ==============================
-
-/// Группа сообщества (например «Школа №29»). Создатель = админ.
-/// Ученики вступают по инвайт-ссылке или подают заявку из общего списка.
-model Group {
-  id          String   @id @default(cuid())
-  name        String
-  country     String
-  city        String
-  /// Описание внутри группы — редактирует админ.
-  description String?
-  ownerId     String
-  owner       User     @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  /// Секрет инвайт-ссылки: /community/join/<inviteCode> — вступление без заявки.
-  inviteCode  String   @unique
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  members     GroupMember[]
-  requests    GroupJoinRequest[]
-  chat        GroupMessage[]
-  tournaments Tournament[]
-
-  @@index([country, city])
-  @@index([ownerId])
-}
-
-/// Участник группы. Владелец группы тоже имеет запись (role='admin') —
-/// так список участников и счётчики считаются одним запросом.
-model GroupMember {
-  id       String   @id @default(cuid())
-  groupId  String
-  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  userId   String
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /// 'admin' | 'member'
-  role     String   @default("member")
-  joinedAt DateTime @default(now())
-
-  @@unique([groupId, userId])
-  @@index([userId])
-}
-
-/// Заявка на вступление (из общего списка групп). Одна активная на пару
-/// группа+пользователь; при повторной подаче старая отклонённая перезаписывается.
-model GroupJoinRequest {
-  id        String   @id @default(cuid())
-  groupId   String
-  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /// 'pending' | 'approved' | 'rejected'
-  status    String   @default("pending")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([groupId, userId])
-  @@index([groupId, status])
-}
-
-/// Сообщение в чате группы.
-model GroupMessage {
-  id        String   @id @default(cuid())
-  groupId   String
-  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  content   String
-  createdAt DateTime @default(now())
-
-  @@index([groupId, createdAt])
-}
-
-/// Личное сообщение пользователь → пользователь (раздел «Сообщения» в профиле).
-/// Основной сценарий: админ одной группы пишет админу другой (договориться о турнире).
-model DirectMessage {
-  id        String    @id @default(cuid())
-  fromId    String
-  from      User      @relation("DmFrom", fields: [fromId], references: [id], onDelete: Cascade)
-  toId      String
-  to        User      @relation("DmTo", fields: [toId], references: [id], onDelete: Cascade)
-  content   String
-  /// null = получатель ещё не читал.
-  readAt    DateTime?
-  createdAt DateTime  @default(now())
-
-  @@index([toId, readAt])
-  @@index([fromId, toId, createdAt])
-  @@index([toId, fromId, createdAt])
-}
+// ============================== СВЯЗИ МЕЖДУ ЛЮДЬМИ ==============================
+//
+// Сообщества (группы, их чат и заявки) и личная переписка между пользователями
+// убраны намеренно: платформа даёт общение только внутри урока, где есть учитель.
+// Не возвращайте их без отдельного решения — вместе с перепиской между детьми
+// появляются обязанности по модерации и бессрочное хранение чужих сообщений.
 
 /// Дружба/заявка в друзья. requester отправил, addressee принимает или отклоняет.
 /// Пара хранится один раз (в любом направлении) — уникальность проверяет код.
