@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Header } from '@/components/layout/Header';
+import { CaptchaWidget, CAPTCHA_CANCELLED, type CaptchaHandle } from '@/components/auth/CaptchaWidget';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,16 +12,30 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const captchaRef = useRef<CaptchaHandle>(null);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
+      // Капча невидимая: обычный пользователь ничего не увидит, задание получат
+      // только подозрительные запросы. Без настроенных ключей вернётся пустая строка.
+      let captchaToken = '';
+      try {
+        captchaToken = (await captchaRef.current?.execute()) ?? '';
+      } catch (err) {
+        if (err instanceof Error && err.message === CAPTCHA_CANCELLED) {
+          setError('Проверка «я не бот» не пройдена. Попробуйте ещё раз.');
+          return;
+        }
+        throw err;
+      }
+
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ identifier, password, captchaToken }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
@@ -64,6 +79,8 @@ export default function LoginPage() {
                 required
               />
             </Field>
+
+            <CaptchaWidget ref={captchaRef} invisible />
 
             {error && (
               <p className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">

@@ -3,12 +3,14 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { Header } from '@/components/layout/Header';
+import { CaptchaWidget } from '@/components/auth/CaptchaWidget';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState('');
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -18,7 +20,7 @@ export default function ForgotPasswordPage() {
       const res = await fetch('/api/auth/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, captchaToken }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
@@ -58,6 +60,8 @@ export default function ForgotPasswordPage() {
                     required
                   />
                 </label>
+
+                <CaptchaWidget onToken={setCaptchaToken} />
 
                 {error && (
                   <p className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">

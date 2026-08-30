@@ -2,9 +2,12 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { sendPasswordResetEmail } from '@/lib/email/flows';
 import { checkLimit, getClientIp } from '@/lib/rate-limit';
+import { verifyCaptcha } from '@/lib/captcha';
 
 interface Body {
   email: string;
+  /** Токен Yandex SmartCaptcha (если капча настроена). */
+  captchaToken?: string;
 }
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -36,6 +39,12 @@ export async function POST(request: Request) {
   const email = (body.email || '').trim().toLowerCase();
   if (!email || !EMAIL_RX.test(email)) {
     return NextResponse.json({ error: 'Введите корректный email' }, { status: 400 });
+  }
+
+  // Без капчи форму можно использовать как рассылку писем на чужие адреса.
+  const captchaOk = await verifyCaptcha(body.captchaToken, ip);
+  if (!captchaOk) {
+    return NextResponse.json({ error: 'Не удалось пройти проверку «я не бот»' }, { status: 400 });
   }
 
   const user = await prisma.user.findUnique({ where: { email } });
