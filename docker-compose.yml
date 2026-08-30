@@ -37,7 +37,15 @@ services:
       retries: 20
 
   app:
-    build: .
+    build:
+      context: .
+      # NEXT_PUBLIC_* нужны именно на сборке: Next вшивает их в клиентский код.
+      # Поменять такой ключ можно только пересборкой (`up -d --build`) —
+      # перезапуск контейнера ничего не изменит.
+      args:
+        NEXT_PUBLIC_SMARTCAPTCHA_CLIENT_KEY: ${NEXT_PUBLIC_SMARTCAPTCHA_CLIENT_KEY:-}
+        # Пусто = используется встроенный резервный STUN из useAudioRoom.ts.
+        NEXT_PUBLIC_ICE_SERVERS: ${NEXT_PUBLIC_ICE_SERVERS:-}
     restart: unless-stopped
     depends_on:
       db:
@@ -69,10 +77,15 @@ services:
       # Email'ы администраторов (через запятую) — кому доступна страница /admin/users
       # со списком зарегистрированных аккаунтов. Пусто = страница недоступна никому (404).
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      # ВНИМАНИЕ: NEXT_PUBLIC_ICE_SERVERS оставлен как fallback, если сервер не вернёт ICE-сервера
-      # через socket-событие 'audio:get-ice-servers'. Основной путь — динамические HMAC-creds
+      # Серверный ключ капчи читается при запуске, поэтому он здесь, а его
+      # клиентская пара — в build args выше. Задавать их нужно только вместе:
+      # с одним серверным ключом бэкенд начнёт требовать токен, а виджет без
+      # клиентского ключа его не выдаст — вход и регистрация сломаются у всех.
+      SMARTCAPTCHA_SERVER_KEY: ${SMARTCAPTCHA_SERVER_KEY:-}
+      # NEXT_PUBLIC_ICE_SERVERS переехал в build args: в рантайме Next его уже
+      # не читает. Это резервный список ICE-серверов, если сервер не ответит на
+      # 'audio:get-ice-servers'. Основной путь — динамические HMAC-creds
       # для собственного coturn (см. ниже сервис `turn`).
-      NEXT_PUBLIC_ICE_SERVERS: ${NEXT_PUBLIC_ICE_SERVERS:-[{"urls":"stun:stun.l.google.com:19302"}]}
       # Параметры собственного TURN — используются сервером для генерации коротких credentials.
       TURN_SECRET: ${TURN_SECRET:-}
       TURN_REALM: ${TURN_REALM:-}
