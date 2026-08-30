@@ -8,9 +8,12 @@ interface Props {
   fen?: string;
   size?: number;
   flipped?: boolean;
+  /** Растянуть доску на ширину родителя (квадрат через aspect-square)
+   *  вместо фиксированного размера в px. */
+  fluid?: boolean;
 }
 
-export function MiniBoard({ fen = STARTING_FEN, size = 140, flipped = false }: Props) {
+export function MiniBoard({ fen = STARTING_FEN, size = 140, flipped = false, fluid = false }: Props) {
   let board: (PieceCode | null)[][];
   try {
     board = parseFen(fen).board;
@@ -21,8 +24,8 @@ export function MiniBoard({ fen = STARTING_FEN, size = 140, flipped = false }: P
 
   return (
     <div
-      className="grid overflow-hidden"
-      style={{ width: size, height: size, gridTemplateColumns: 'repeat(8, 1fr)', gridTemplateRows: 'repeat(8, 1fr)' }}
+      className={fluid ? 'grid aspect-square w-full grid-cols-8 grid-rows-8 overflow-hidden' : 'grid overflow-hidden'}
+      style={fluid ? undefined : { width: size, height: size, gridTemplateColumns: 'repeat(8, 1fr)', gridTemplateRows: 'repeat(8, 1fr)' }}
     >
       {rows.map((row, ri) =>
         row.map((cell, ci) => {

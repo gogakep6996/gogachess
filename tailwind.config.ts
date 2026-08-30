@@ -15,8 +15,24 @@ const config: Config = {
           selected: '#bcd07b',
           danger: '#d96c6c',
         },
-        // Бренд — тёплый янтарь поверх кофейного фона
+        // Бренд — глубокий «шахматный» зелёный: цвет доски, спокойствия и
+        // концентрации. Насыщенность приглушена, чтобы сочетаться с тёплыми
+        // нейтралами фона. Белый текст на brand-500/600 проходит WCAG AA.
         brand: {
+          50: '#eef6f1',
+          100: '#d6ebdf',
+          200: '#aed6c2',
+          300: '#7dbb9e',
+          400: '#4b9d77',
+          500: '#2b7f5c',
+          600: '#226848',
+          700: '#1c533b',
+          800: '#174231',
+          900: '#123528',
+        },
+        // Янтарный акцент — преемственность со старым брендом (#c97a1d).
+        // Только для мелких акцентов: бейджи, подсветка, редкие CTA.
+        accent: {
           50: '#fdf7ee',
           100: '#f8e9cf',
           200: '#f0d09b',
@@ -28,36 +44,37 @@ const config: Config = {
           800: '#5f3613',
           900: '#3e240e',
         },
+        // Фон страницы: тёплая «бумажная» основа. Тёмная тема — глубокий
+        // зеленовато-графитовый (не чёрный).
         surface: {
-          light: '#d4d0bd',
-          DEFAULT: '#c9c5b1',
-          dark: '#161310',
-          deeper: '#0c0a08',
+          light: '#f4f3ee',
+          DEFAULT: '#eeece5',
+          dark: '#131815',
+          deeper: '#0c100d',
         },
-        // «Бумага» — тёплый кремовый фон карточек/панелей. Заметно светлее фона,
-        // но не голый белый — блоки мягко «всплывают» над песочным фоном.
+        // Карточки/панели: чистый белый поверх тёплого фона — блоки мягко
+        // «всплывают». В тёмной теме — приподнятый зелено-графитовый.
         paper: {
-          DEFAULT: '#f6edda',
-          dark: '#1d1813',
+          DEFAULT: '#ffffff',
+          dark: '#1b221e',
         },
       },
       fontFamily: {
         // Единый шрифт на весь сайт (текст + заголовки) — переменная задаётся
-        // next/font в layout.tsx. `display` — тот же шрифт: раньше здесь стоял
-        // Playfair Display, но он нигде не подключался файлом и в браузере
-        // молча падал на грубый системный Georgia serif.
-        sans: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
-        display: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
+        // next/font в layout.tsx (Onest, полная кириллица).
+        sans: ['var(--font-sans)', 'system-ui', 'sans-serif'],
+        display: ['var(--font-sans)', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
-        soft: '0 10px 30px -12px rgba(60, 35, 10, 0.25)',
-        glow: '0 0 0 1px rgba(201, 122, 29, 0.35), 0 12px 30px -10px rgba(201, 122, 29, 0.45)',
+        // Тени тонированы под оттенок фона/акцента, без чисто-чёрных.
+        soft: '0 10px 30px -14px rgba(35, 48, 40, 0.18)',
+        glow: '0 0 0 1px rgba(43, 127, 92, 0.30), 0 12px 30px -10px rgba(43, 127, 92, 0.35)',
       },
       backgroundImage: {
         'wood-grain':
-          'radial-gradient(at 30% 20%, #f7e7c5 0, transparent 50%), radial-gradient(at 80% 80%, #d6b07c 0, transparent 55%)',
+          'radial-gradient(at 30% 20%, #f7f5ec 0, transparent 50%), radial-gradient(at 80% 80%, #d9e2d3 0, transparent 55%)',
         'night-grain':
-          'radial-gradient(at 30% 20%, #2a2218 0, transparent 50%), radial-gradient(at 80% 80%, #1b140d 0, transparent 55%)',
+          'radial-gradient(at 30% 20%, #1c241f 0, transparent 50%), radial-gradient(at 80% 80%, #121814 0, transparent 55%)',
       },
       animation: {
         'fade-in': 'fadeIn 0.25s ease-out',
@@ -74,8 +91,8 @@ const config: Config = {
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         pulseRing: {
-          '0%': { boxShadow: '0 0 0 0 rgba(34,197,94,0.55)' },
-          '100%': { boxShadow: '0 0 0 12px rgba(34,197,94,0)' },
+          '0%': { boxShadow: '0 0 0 0 rgba(43,127,92,0.55)' },
+          '100%': { boxShadow: '0 0 0 12px rgba(43,127,92,0)' },
         },
       },
     },

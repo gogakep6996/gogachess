@@ -2,6 +2,10 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { CaretRight, Lock, MagnifyingGlass } from '@phosphor-icons/react';
+import { EmptyState, SURFACE } from '@/components/class/ui';
+import { StatusChip } from '@/components/room/ui';
+import { cn } from '@/lib/utils';
 
 interface ClassDto {
   slug: string;
@@ -36,51 +40,75 @@ export function ClassSearch({ initialClasses }: { initialClasses: ClassDto[] }) 
 
   return (
     <>
-      <div className="mb-5">
+      <label className="relative mb-4 block">
+        <MagnifyingGlass
+          size={16}
+          weight="bold"
+          aria-hidden
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"
+        />
         <input
           type="search"
-          placeholder="Найти учителя по имени или адресу класса…"
+          placeholder="Найти учителя по имени или адресу класса"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          className="w-full rounded-lg border border-stone-300 bg-paper px-4 py-2.5 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-stone-700 dark:bg-stone-900"
+          aria-label="Поиск класса"
+          className="h-11 w-full rounded-2xl border-0 bg-white/90 pl-10 pr-4 text-[14px] text-stone-800 shadow-[0_1px_2px_rgba(35,48,40,0.04),0_12px_28px_-22px_rgba(35,48,40,0.45)] outline-none ring-1 ring-inset ring-stone-900/[0.07] transition placeholder:text-stone-400 focus:ring-2 focus:ring-brand-500/50 dark:bg-stone-900/70 dark:text-stone-100 dark:ring-white/[0.08]"
         />
-      </div>
+      </label>
 
       {classes.length === 0 ? (
-        <div className="card text-sm text-stone-500">
-          {loading ? 'Ищем…' : 'Ничего не найдено. Попробуйте другой запрос.'}
-        </div>
+        <EmptyState
+          icon={MagnifyingGlass}
+          title={loading ? 'Ищем…' : 'Ничего не нашлось'}
+          hint={loading ? undefined : 'Попробуйте другое имя учителя или адрес класса.'}
+        />
       ) : (
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
           {classes.map((c) => (
             <li key={c.slug}>
               <Link
                 href={`/class/${c.slug}`}
-                className="card block transition-shadow hover:shadow-md"
+                className={cn(
+                  'group flex items-center gap-3 p-3 transition-all duration-150',
+                  'hover:-translate-y-0.5 hover:bg-brand-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45',
+                  'dark:hover:bg-brand-950/40',
+                  SURFACE,
+                )}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-base font-semibold">
+                <span
+                  aria-hidden
+                  className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-600/10 text-[15px] font-bold text-brand-700 transition-colors duration-150 group-hover:bg-brand-600 group-hover:text-white dark:bg-brand-400/15 dark:text-brand-300"
+                >
+                  {(c.name || c.ownerName).slice(0, 1).toUpperCase()}
+                </span>
+
+                <span className="min-w-0 flex-1 leading-tight">
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-[14px] font-semibold text-stone-800 dark:text-stone-100">
                       {c.name || `Класс — ${c.ownerName}`}
-                    </div>
-                    <div className="mt-1 truncate text-xs text-stone-500">
-                      Учитель: {c.ownerName} · /class/{c.slug}
-                    </div>
-                  </div>
-                  {c.hasAccessCode && (
-                    <span
-                      title="Закрытый класс — нужен код"
-                      className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                    >
-                      код
                     </span>
-                  )}
-                </div>
-                <div className="mt-3 text-xs text-stone-500">
-                  {c.tasksCount === 0
-                    ? 'Пока без задач'
-                    : `${c.tasksCount} ${plural(c.tasksCount, 'задача', 'задачи', 'задач')}`}
-                </div>
+                    {c.hasAccessCode && (
+                      <StatusChip tone="amber">
+                        <Lock size={10} weight="bold" aria-hidden />
+                        код
+                      </StatusChip>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[11px] text-stone-500 dark:text-stone-400">
+                    {c.ownerName} ·{' '}
+                    {c.tasksCount === 0
+                      ? 'пока без задач'
+                      : `${c.tasksCount} ${plural(c.tasksCount, 'задача', 'задачи', 'задач')}`}
+                  </span>
+                </span>
+
+                <CaretRight
+                  size={14}
+                  weight="bold"
+                  aria-hidden
+                  className="shrink-0 text-stone-300 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-brand-600 dark:text-stone-600"
+                />
               </Link>
             </li>
           ))}

@@ -2,9 +2,23 @@
 
 import { useMemo, useState } from 'react';
 import { Chess } from 'chess.js';
+import {
+  ArrowCounterClockwise,
+  CaretDown,
+  CheckCircle,
+  CloudArrowUp,
+  Eraser,
+  FloppyDisk,
+  NotePencil,
+  Warning,
+  X,
+} from '@phosphor-icons/react';
 import { ChessBoard } from '@/components/chess/ChessBoard';
+import { SectionHead, SURFACE } from '@/components/class/ui';
+import { FieldLabel, StatusChip, ToolButton } from '@/components/room/ui';
 import { STARTING_FEN } from '@/lib/socket-events';
 import { setSideToMove, sideToMove as fenSideToMove } from '@/lib/fen';
+import { cn } from '@/lib/utils';
 import type { TaskDto } from './TasksLibrary';
 
 interface Props {
@@ -13,25 +27,30 @@ interface Props {
   onSave: (task: TaskDto) => void;
 }
 
+/** Общий вид полей ввода редактора. */
+const FIELD =
+  'w-full rounded-xl border-0 bg-stone-900/[0.05] px-2.5 text-[13px] text-stone-800 outline-none ' +
+  'ring-1 ring-inset ring-transparent transition placeholder:text-stone-400 ' +
+  'focus:bg-white focus:ring-brand-500/50 dark:bg-white/[0.07] dark:text-stone-100 dark:focus:bg-stone-800';
+
 export function TaskEditor({ task, onCancel, onSave }: Props) {
   const [title, setTitle] = useState(task?.title ?? '');
   const [description, setDescription] = useState(task?.description ?? '');
   const [fen, setFen] = useState(task?.fen ?? STARTING_FEN);
-  // sideToPlay — это то, ЗА КОГО играет ученик. И одновременно «чей ход» в FEN —
-  // мы синхронизируем эти два значения. Любая смена обновляет parts[1] в FEN.
+  // sideToPlay — за кого играет ученик, и одновременно «чей ход» в FEN:
+  // держим эти два значения синхронными, любая смена правит parts[1].
   const initialSide: 'w' | 'b' = (task?.sideToPlay as 'w' | 'b') ?? 'w';
   const [sideToPlay, setSideToPlay] = useState<'w' | 'b'>(initialSide);
   const [difficulty, setDifficulty] = useState(task?.difficulty ?? 'medium');
   const [category, setCategory] = useState(task?.category ?? '');
   const [goal, setGoal] = useState(task?.goal ?? 'mate');
   const [engineLevel, setEngineLevel] = useState(task?.engineLevel ?? 10);
-  // Новая позиция по умолчанию идёт в библиотеку как черновик —
-  // учитель потом одной кнопкой опубликует её для учеников.
+  // Новая позиция по умолчанию идёт в библиотеку черновиком — учитель потом
+  // опубликует её одной кнопкой.
   const [isPublished, setIsPublished] = useState(task?.isPublished ?? false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showFenField, setShowFenField] = useState(false);
-  const [showPgnField, setShowPgnField] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [pgnText, setPgnText] = useState('');
   const [pgnError, setPgnError] = useState<string | null>(null);
 
@@ -44,15 +63,13 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
     }
   }, [fen]);
 
-  // Меняется ли FEN при перетаскивании фигур — синхронизируем «чей ход»
-  // из FEN в наш sideToPlay (на случай, если редактор сам поменял парта 2).
+  // Перетаскивание фигур меняет FEN — подтягиваем «чей ход» обратно в состояние.
   function handleEditFen(nextFen: string) {
     setFen(nextFen);
     const s = fenSideToMove(nextFen);
     if (s === 'w' || s === 'b') setSideToPlay(s);
   }
 
-  // Переключатель «За кого играет ученик» (= чей ход) — правим FEN.
   function changeSide(s: 'w' | 'b') {
     setSideToPlay(s);
     setFen((prev) => setSideToMove(prev, s));
@@ -67,8 +84,8 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
     setSideToPlay('w');
   }
 
-  // Разбираем PGN и выставляем КОНЕЧНУЮ позицию партии в редактор.
-  // Поддерживается обычный PGN (1. e4 e5 …), в т.ч. с заголовком [FEN "…"].
+  // Разбираем PGN и ставим в редактор КОНЕЧНУЮ позицию партии.
+  // Поддерживается обычный PGN (1. e4 e5 …), в том числе с заголовком [FEN "…"].
   function applyPgn() {
     const text = pgnText.trim();
     if (!text) {
@@ -84,7 +101,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
       if (s === 'w' || s === 'b') setSideToPlay(s);
       setPgnError(null);
     } catch {
-      setPgnError('Не удалось разобрать PGN — проверьте формат записи ходов');
+      setPgnError('Не удалось разобрать PGN — проверьте запись ходов');
     }
   }
 
@@ -94,7 +111,7 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
       return;
     }
     if (!fenValid) {
-      setError('FEN-позиция некорректна (chess.js не принимает)');
+      setError('Позиция не по правилам — исправьте расстановку');
       return;
     }
     setError(null);
@@ -129,14 +146,34 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
   }
 
   return (
-    <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-[minmax(360px,440px)_minmax(0,520px)]">
-      {/* Левая колонка: интерактивная доска-редактор */}
-      <div className="card flex flex-col items-center gap-3">
-        <div className="w-full text-xs font-semibold text-stone-500">
-          Расставьте позицию: возьмите фигуру из палитры и перетащите на клетку.
-          Чтобы убрать — перетащите фигуру за пределы доски.
-        </div>
-        <div className="mx-auto w-full" style={{ maxWidth: 380 }}>
+    <div className="flex flex-col gap-3">
+      <SectionHead
+        title={task ? 'Редактирование позиции' : 'Новая позиция'}
+        hint="Расставьте фигуры перетаскиванием, задайте условия и сохраните."
+      >
+        <ToolButton icon={X} size="md" onClick={onCancel}>
+          Отмена
+        </ToolButton>
+        <ToolButton
+          icon={isPublished ? CloudArrowUp : FloppyDisk}
+          tone="primary"
+          size="md"
+          disabled={saving}
+          onClick={save}
+        >
+          {saving
+            ? 'Сохраняем…'
+            : task
+              ? 'Сохранить'
+              : isPublished
+                ? 'Создать и опубликовать'
+                : 'Сохранить в библиотеку'}
+        </ToolButton>
+      </SectionHead>
+
+      <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
+        {/* ── Доска-редактор ── */}
+        <div className={cn('flex flex-col gap-2.5 p-2.5', SURFACE)}>
           <ChessBoard
             fen={fen}
             canMove={false}
@@ -145,211 +182,206 @@ export function TaskEditor({ task, onCancel, onSave }: Props) {
             flipped={sideToPlay === 'b'}
             onEditFen={handleEditFen}
           />
-        </div>
-        <div className="flex w-full flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex gap-1.5">
-            <button onClick={resetToStarting} className="btn-ghost text-xs">
-              ↺ Стартовая
-            </button>
-            <button onClick={clearBoard} className="btn-ghost text-xs">
-              ✕ Очистить
-            </button>
-          </div>
-          <span className={fenValid ? 'text-stone-500' : 'text-red-600'}>
-            {fenValid ? 'позиция валидна' : 'позиция вне правил'}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowFenField((v) => !v)}
-          className="self-start text-[11px] text-brand-600 hover:underline"
-        >
-          {showFenField ? 'Скрыть FEN' : 'Показать / вставить FEN вручную'}
-        </button>
-        {showFenField && (
-          <textarea
-            value={fen}
-            onChange={(e) => handleEditFen(e.target.value)}
-            rows={2}
-            className="w-full resize-none rounded border border-stone-300 bg-paper px-2 py-1 font-mono text-[11px] dark:border-stone-700 dark:bg-stone-900"
-          />
-        )}
 
-        <button
-          type="button"
-          onClick={() => setShowPgnField((v) => !v)}
-          className="self-start text-[11px] text-brand-600 hover:underline"
-        >
-          {showPgnField ? 'Скрыть PGN' : 'Вставить PGN (партию/ходы)'}
-        </button>
-        {showPgnField && (
-          <div className="w-full space-y-1.5">
-            <textarea
-              value={pgnText}
-              onChange={(e) => setPgnText(e.target.value)}
-              rows={3}
-              placeholder={'1. e4 e5 2. Nf3 Nc6 3. Bb5 …\nможно с заголовками [FEN "…"]'}
-              className="w-full resize-none rounded border border-stone-300 bg-paper px-2 py-1 font-mono text-[11px] dark:border-stone-700 dark:bg-stone-900"
-            />
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={applyPgn} className="btn-ghost text-xs">
-                Загрузить позицию из PGN
-              </button>
-              <span className="text-[11px] text-stone-500">
-                Возьмём позицию после последнего хода.
-              </span>
-            </div>
-            {pgnError && <div className="text-[11px] text-red-600">{pgnError}</div>}
-          </div>
-        )}
-      </div>
-
-      {/* Правая колонка: метаданные задачи */}
-      <div className="card grid gap-3 text-sm">
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-stone-500">Название</label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            maxLength={120}
-            placeholder="Например: Мат слоном и конём"
-            className="w-full rounded border border-stone-300 bg-paper px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-stone-500">
-            Описание (необязательно)
-          </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            maxLength={1000}
-            rows={2}
-            placeholder="Что должен сделать ученик и за что обращать внимание?"
-            className="w-full resize-none rounded border border-stone-300 bg-paper px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Field label="Ученик играет за">
-            <select
-              value={sideToPlay}
-              onChange={(e) => changeSide(e.target.value as 'w' | 'b')}
-              className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
-            >
-              <option value="w">Белых</option>
-              <option value="b">Чёрных</option>
-            </select>
-          </Field>
-          <Field label="Сложность">
-            <select
-              value={difficulty}
-              onChange={(e) => setDifficulty(e.target.value)}
-              className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
-            >
-              <option value="easy">Легко</option>
-              <option value="medium">Средне</option>
-              <option value="hard">Сложно</option>
-            </select>
-          </Field>
-          <Field label="Цель">
-            <select
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
-            >
-              <option value="mate">Поставить мат</option>
-              <option value="win-material">Выиграть материал</option>
-              <option value="custom">Свободная цель</option>
-            </select>
-          </Field>
-          <Field label="Сила движка">
-            <input
-              type="number"
-              min={0}
-              max={20}
-              value={engineLevel}
-              onChange={(e) => setEngineLevel(Number(e.target.value))}
-              className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-900"
-            />
-          </Field>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-stone-500">
-            Категория (тэг)
-          </label>
-          <input
-            type="text"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            maxLength={40}
-            placeholder="эндшпиль, тактика, мат в 2…"
-            className="w-full rounded border border-stone-300 bg-paper px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900"
-          />
-        </div>
-
-        <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-800/40">
-          <div className="mb-1 text-xs font-semibold text-stone-500">Что делать после сохранения</div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setIsPublished(false)}
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-                !isPublished
-                  ? 'bg-amber-500 text-white'
-                  : 'bg-paper text-stone-600 ring-1 ring-stone-300 hover:bg-stone-50 dark:bg-stone-900 dark:text-stone-300 dark:ring-stone-700'
-              }`}
-            >
-              📝 В библиотеку (черновик)
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsPublished(true)}
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-                isPublished
-                  ? 'bg-emerald-500 text-white'
-                  : 'bg-paper text-stone-600 ring-1 ring-stone-300 hover:bg-stone-50 dark:bg-stone-900 dark:text-stone-300 dark:ring-stone-700'
-              }`}
-            >
-              🟢 Опубликовать ученикам
-            </button>
-          </div>
-          <p className="mt-1 text-[11px] text-stone-500">
-            {isPublished
-              ? 'Эта позиция появится у учеников в каталоге класса.'
-              : 'Позиция будет видна только вам — на вкладке «Черновики». Опубликовать сможете позже одним кликом.'}
+          <p className="text-[11px] leading-snug text-stone-500 dark:text-stone-400">
+            Перетащите фигуру из палитры на клетку. Чтобы убрать — вытащите её за пределы доски.
           </p>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <ToolButton icon={ArrowCounterClockwise} onClick={resetToStarting}>
+              Стартовая
+            </ToolButton>
+            <ToolButton icon={Eraser} onClick={clearBoard}>
+              Очистить
+            </ToolButton>
+            <span className="ml-auto">
+              {fenValid ? (
+                <StatusChip tone="brand">
+                  <CheckCircle size={11} weight="fill" aria-hidden />
+                  позиция верна
+                </StatusChip>
+              ) : (
+                <StatusChip tone="red">
+                  <Warning size={11} weight="fill" aria-hidden />
+                  вне правил
+                </StatusChip>
+              )}
+            </span>
+          </div>
+
+          <div className="border-t border-stone-900/[0.06] pt-2 dark:border-white/[0.07]">
+            <button
+              type="button"
+              onClick={() => setImportOpen((v) => !v)}
+              aria-expanded={importOpen}
+              className="flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-[11px] font-semibold text-stone-500 transition-colors duration-150 hover:text-stone-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45 dark:text-stone-400 dark:hover:text-stone-100"
+            >
+              <CaretDown
+                size={12}
+                weight="bold"
+                aria-hidden
+                className={cn('transition-transform duration-150', importOpen && 'rotate-180')}
+              />
+              Ввести FEN или загрузить PGN
+            </button>
+
+            {importOpen && (
+              <div className="mt-2 space-y-2.5">
+                <label className="block">
+                  <FieldLabel>FEN</FieldLabel>
+                  <textarea
+                    value={fen}
+                    onChange={(e) => handleEditFen(e.target.value)}
+                    rows={2}
+                    spellCheck={false}
+                    className={cn(FIELD, 'resize-none py-1.5 font-mono text-[11px]')}
+                  />
+                </label>
+                <label className="block">
+                  <FieldLabel>PGN — возьмём позицию после последнего хода</FieldLabel>
+                  <textarea
+                    value={pgnText}
+                    onChange={(e) => setPgnText(e.target.value)}
+                    rows={3}
+                    spellCheck={false}
+                    placeholder={'1. e4 e5 2. Nf3 Nc6 3. Bb5 …'}
+                    className={cn(FIELD, 'resize-none py-1.5 font-mono text-[11px]')}
+                  />
+                </label>
+                <ToolButton icon={NotePencil} onClick={applyPgn}>
+                  Загрузить позицию из PGN
+                </ToolButton>
+                {pgnError && (
+                  <p className="flex items-center gap-1.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+                    <Warning size={12} weight="bold" aria-hidden />
+                    {pgnError}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        {error && <div className="text-xs text-red-600">{error}</div>}
+        {/* ── Условия задачи ── */}
+        <div className={cn('flex flex-col gap-3 p-3', SURFACE)}>
+          <label className="block">
+            <FieldLabel>Название</FieldLabel>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              maxLength={120}
+              placeholder="Например: мат слоном и конём"
+              className={cn(FIELD, 'h-9')}
+            />
+          </label>
 
-        <div className="flex gap-2">
-          <button onClick={save} disabled={saving} className="btn-primary text-sm">
-            {saving
-              ? 'Сохраняю…'
-              : task
-                ? 'Сохранить изменения'
-                : isPublished
-                  ? 'Создать и опубликовать'
-                  : 'Сохранить в библиотеку'}
-          </button>
-          <button onClick={onCancel} className="btn-ghost text-sm">
-            Отмена
-          </button>
+          <label className="block">
+            <FieldLabel>Описание (необязательно)</FieldLabel>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={1000}
+              rows={2}
+              placeholder="Что должен сделать ученик и на что обратить внимание"
+              className={cn(FIELD, 'resize-none py-2')}
+            />
+          </label>
+
+          <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+            <label className="block">
+              <FieldLabel>Ученик играет за</FieldLabel>
+              <select
+                value={sideToPlay}
+                onChange={(e) => changeSide(e.target.value as 'w' | 'b')}
+                className={cn(FIELD, 'h-9')}
+              >
+                <option value="w">Белых</option>
+                <option value="b">Чёрных</option>
+              </select>
+            </label>
+            <label className="block">
+              <FieldLabel>Сложность</FieldLabel>
+              <select
+                value={difficulty}
+                onChange={(e) => setDifficulty(e.target.value)}
+                className={cn(FIELD, 'h-9')}
+              >
+                <option value="easy">Легко</option>
+                <option value="medium">Средне</option>
+                <option value="hard">Сложно</option>
+              </select>
+            </label>
+            <label className="block">
+              <FieldLabel>Цель</FieldLabel>
+              <select
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                className={cn(FIELD, 'h-9')}
+              >
+                <option value="mate">Поставить мат</option>
+                <option value="win-material">Выиграть материал</option>
+                <option value="custom">Свободная цель</option>
+              </select>
+            </label>
+            <label className="block">
+              <FieldLabel>Сила движка</FieldLabel>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                value={engineLevel}
+                onChange={(e) => setEngineLevel(Number(e.target.value))}
+                className={cn(FIELD, 'h-9 tabular-nums')}
+              />
+            </label>
+          </div>
+
+          <label className="block">
+            <FieldLabel>Категория</FieldLabel>
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              maxLength={40}
+              placeholder="эндшпиль, тактика, мат в 2"
+              className={cn(FIELD, 'h-9')}
+            />
+          </label>
+
+          <div className="rounded-xl bg-stone-900/[0.04] p-2.5 dark:bg-white/[0.05]">
+            <FieldLabel>После сохранения</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              <ToolButton
+                icon={NotePencil}
+                active={!isPublished}
+                onClick={() => setIsPublished(false)}
+              >
+                Оставить черновиком
+              </ToolButton>
+              <ToolButton
+                icon={CloudArrowUp}
+                active={isPublished}
+                onClick={() => setIsPublished(true)}
+              >
+                Опубликовать ученикам
+              </ToolButton>
+            </div>
+            <p className="mt-2 text-[11px] leading-snug text-stone-500 dark:text-stone-400">
+              {isPublished
+                ? 'Позицию можно будет раздать классу на уроке и добавить в домашние задания.'
+                : 'Позицию увидите только вы. Опубликовать можно позже одной кнопкой.'}
+            </p>
+          </div>
+
+          {error && (
+            <p className="flex items-center gap-1.5 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900">
+              <Warning size={14} weight="bold" aria-hidden />
+              {error}
+            </p>
+          )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="mb-1 block text-xs font-semibold text-stone-500">{label}</label>
-      {children}
     </div>
   );
 }

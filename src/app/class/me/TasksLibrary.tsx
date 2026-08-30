@@ -1,10 +1,32 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import {
+  ArrowUUpLeft,
+  CaretLeft,
+  Check,
+  CloudArrowUp,
+  Folder,
+  FolderPlus,
+  House,
+  PencilSimple,
+  Plus,
+  Trash,
+  X,
+} from '@phosphor-icons/react';
 import { MiniBoard } from '@/components/chess/MiniBoard';
-import { FolderTile } from '@/components/ui/FolderTile';
 import { FolderPicker } from '@/components/class/FolderPicker';
+import {
+  BoardCard,
+  BoardGrid,
+  EmptyState,
+  FolderTile,
+  SectionHead,
+  SURFACE,
+} from '@/components/class/ui';
+import { IconButton, Segmented, StatusChip, ToolButton } from '@/components/room/ui';
 import { STARTING_FEN } from '@/lib/socket-events';
+import { cn } from '@/lib/utils';
 import { TaskEditor } from './TaskEditor';
 import type { ClassDto } from './ClassSettings';
 
@@ -39,10 +61,10 @@ export interface FolderDto {
   updatedAt: string | Date;
 }
 
-const DIFFICULTY_LABEL: Record<string, { label: string; tone: string }> = {
-  easy: { label: 'легко', tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
-  medium: { label: 'средне', tone: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' },
-  hard: { label: 'сложно', tone: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' },
+const DIFFICULTY_LABEL: Record<string, { label: string; tone: 'brand' | 'amber' | 'red' }> = {
+  easy: { label: 'легко', tone: 'brand' },
+  medium: { label: 'средне', tone: 'amber' },
+  hard: { label: 'сложно', tone: 'red' },
 };
 
 const GOAL_LABEL: Record<string, string> = {
@@ -73,7 +95,7 @@ export function TasksLibrary({
   const [creatingFolder, setCreatingFolder] = useState(false);
   // Плитка «+» превратилась в поле ввода названия новой папки.
   const [addingFolder, setAddingFolder] = useState(false);
-  // Внутри папки открыт список позиций для добавления (по кнопке «+»).
+  // Внутри папки открыт список позиций для добавления.
   const [showAdder, setShowAdder] = useState(false);
 
   // Папки «Моей библиотеки» у задачи (поле может отсутствовать в публичных данных).
@@ -93,8 +115,7 @@ export function TasksLibrary({
     return tasks;
   }, [tasks, filter]);
 
-  // Раскладка по библиотечным папкам (с учётом активного фильтра): счётчики,
-  // позиции без папки и содержимое открытой папки.
+  // Раскладка по библиотечным папкам (с учётом активного фильтра).
   const folderCounts = useMemo(() => {
     const map = new Map<string, number>();
     for (const t of filteredTasks) {
@@ -102,12 +123,13 @@ export function TasksLibrary({
     }
     return map;
   }, [filteredTasks]);
+
   // Список «Без папки» делаем «залипающим»: пересчитываем набор задач только
   // при навигации (смена фильтра, вход/выход из папки, добавление/удаление
   // задач) — но НЕ при простановке галочек в папки. Иначе задача мгновенно
   // «улетает» из списка после первой галочки, и её нельзя разложить сразу в
-  // несколько папок. Галочка теперь просто «копирует» задачу в папку, а сама
-  // она остаётся в «Без папки» до следующей навигации.
+  // несколько папок. Галочка просто «копирует» задачу в папку, а сама она
+  // остаётся в «Без папки» до следующей навигации.
   const [folderlessIds, setFolderlessIds] = useState<string[]>(() =>
     tasks.filter((t) => (t.libraryFolderIds ?? []).length === 0).map((t) => t.id),
   );
@@ -117,19 +139,21 @@ export function TasksLibrary({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, openFolder, tasks.length]);
+
   const folderlessTasks = useMemo(() => {
     const idSet = new Set(folderlessIds);
     return filteredTasks.filter((t) => idSet.has(t.id));
   }, [filteredTasks, folderlessIds]);
-  const openFolderObj = openFolder
-    ? libraryFolders.find((f) => f.id === openFolder) ?? null
-    : null;
+
+  const openFolderObj = openFolder ? libraryFolders.find((f) => f.id === openFolder) ?? null : null;
+
   const openFolderTasks = useMemo(() => {
     if (!openFolder) return [];
     const fid = openFolder;
     return filteredTasks.filter((t) => libIds(t).includes(fid));
   }, [filteredTasks, openFolder]);
-  // Позиции, которых ещё нет в открытой папке — их можно добавить через «+».
+
+  // Позиции, которых ещё нет в открытой папке.
   const addableTasks = useMemo(() => {
     if (!openFolder) return [];
     const fid = openFolder;
@@ -227,17 +251,16 @@ export function TasksLibrary({
       body: JSON.stringify({ isPublished: next }),
     });
     if (!res.ok) {
-      // Откатываем при ошибке.
       onTasksChange(tasks.map((x) => (x.id === t.id ? { ...x, isPublished: !next } : x)));
     }
   }
 
-  // «+» на карточке — добавить задачу в домашние (ученики решают её сами на
-  // главной странице класса). Повторное нажатие убирает из домашек.
+  // Добавить задачу в домашние (ученики решают её сами на главной класса).
+  // Повторное нажатие убирает из домашек.
   async function toggleHomework(t: TaskDto) {
     const next = !t.isHomework;
-    // Снятие с ДЗ очищает и папки (сервер делает то же) — иначе задача «вернётся»
-    // в старые папки при повторном включении.
+    // Снятие с ДЗ очищает и папки (сервер делает то же) — иначе задача
+    // «вернётся» в старые папки при повторном включении.
     onTasksChange(
       tasks.map((x) =>
         x.id === t.id ? { ...x, isHomework: next, folderIds: next ? x.folderIds : [] } : x,
@@ -260,8 +283,8 @@ export function TasksLibrary({
     const inFolder = !!openFolder;
     const filed = libIds(t).length > 0;
     // Контекстное удаление: внутри папки — убрать только из неё; в «Без папки»
-    // у разложенной задачи — просто спрятать из временного списка; удалить
-    // задачу целиком можно только когда она не лежит ни в одной папке.
+    // у разложенной задачи — спрятать из временного списка; удалить задачу
+    // целиком можно только когда она не лежит ни в одной папке.
     const removeMode: 'unlinkFolder' | 'hideFolderless' | 'delete' = inFolder
       ? 'unlinkFolder'
       : filed
@@ -282,90 +305,79 @@ export function TasksLibrary({
         remove(t.id);
       }
     };
+
     return (
-      <li
+      <BoardCard
         key={t.id}
-        className={`group flex flex-col gap-1.5 rounded-xl border border-stone-200 bg-paper p-2 shadow-sm transition-shadow hover:shadow-md dark:border-stone-700 dark:bg-stone-900 ${
-          t.isHomework
-            ? 'ring-2 ring-brand-400/70 dark:ring-brand-500/60'
-            : t.isPublished
-              ? ''
-              : 'ring-1 ring-amber-200/60 dark:ring-amber-800/40'
-        }`}
-      >
-        <div className="flex justify-center">
-          <MiniBoard fen={t.fen || STARTING_FEN} size={140} flipped={t.sideToPlay === 'b'} />
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="truncate text-sm font-semibold leading-tight">{t.title}</span>
-          {t.isHomework && (
-            <span className="ml-auto shrink-0 rounded bg-brand-500 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
-              ДЗ
-            </span>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-1 text-[10px] uppercase">
-          <span className={`rounded px-1 py-0.5 font-semibold ${diff.tone}`}>{diff.label}</span>
-          {t.category && (
-            <span className="rounded bg-brand-100 px-1 py-0.5 font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
-              {t.category}
-            </span>
-          )}
-          <span className="text-stone-400">·</span>
-          <span className="text-stone-500 lowercase">{GOAL_LABEL[t.goal] ?? t.goal}</span>
-          <button
-            onClick={() => toggleHomework(t)}
-            title={t.isHomework ? 'Убрать из домашних заданий' : 'Добавить в домашние задания'}
-            className={`ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-base leading-none transition-colors ${
-              t.isHomework
-                ? 'border-brand-500 bg-brand-500 text-white hover:bg-brand-600'
-                : 'border-stone-300 text-stone-500 hover:border-brand-400 hover:text-brand-600 dark:border-stone-600 dark:text-stone-300'
-            }`}
-          >
-            {t.isHomework ? '✓' : '+'}
-          </button>
-        </div>
-        {libraryFolders.length > 0 && (
-          <FolderPicker
-            selectedIds={libIds(t)}
-            folders={libraryFolders}
-            onToggle={(fid) => toggleTaskFolder(t, fid)}
-          />
-        )}
-        <div className="mt-auto flex items-center gap-1">
-          <button
-            onClick={() => togglePublish(t)}
-            title={t.isPublished ? 'Снять с публикации' : 'Опубликовать ученикам'}
-            className={`flex-1 rounded-md px-1.5 py-1 text-[11px] font-semibold transition-colors ${
-              t.isPublished
-                ? 'border border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/30'
-                : 'bg-emerald-500 text-white hover:bg-emerald-600'
-            }`}
-          >
-            {t.isPublished ? '⤓ В черновики' : '↑ Опубликовать'}
-          </button>
-          <button
-            onClick={() => setEditingId(t.id)}
-            title="Редактировать"
-            className="rounded-md border border-stone-300 px-1.5 py-1 text-[11px] text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-          >
-            ✎
-          </button>
-          <button
-            onClick={onCardRemove}
-            title={
-              removeMode === 'unlinkFolder'
-                ? 'Убрать из этой папки (задача останется в библиотеке)'
-                : removeMode === 'hideFolderless'
-                  ? 'Убрать из «Без папки» (задача уже разложена по папкам)'
-                  : 'Удалить задачу полностью'
-            }
-            className="rounded-md border border-red-300 px-1.5 py-1 text-[11px] text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/30"
-          >
-            {removeMode === 'delete' ? '🗑' : '✕'}
-          </button>
-        </div>
-      </li>
+        active={t.isHomework}
+        board={<MiniBoard fen={t.fen || STARTING_FEN} fluid flipped={t.sideToPlay === 'b'} />}
+        badge={
+          <>
+            <StatusChip tone={diff.tone}>{diff.label}</StatusChip>
+            {!t.isPublished && <StatusChip tone="neutral">черновик</StatusChip>}
+          </>
+        }
+        title={t.title}
+        meta={
+          <>
+            <span className="truncate">{GOAL_LABEL[t.goal] ?? t.goal}</span>
+            {t.category && <span className="truncate">· {t.category}</span>}
+          </>
+        }
+        actions={
+          <div className="flex gap-0.5 rounded-lg bg-white/90 p-0.5 shadow-sm ring-1 ring-stone-900/10 backdrop-blur dark:bg-stone-800/90 dark:ring-white/15">
+            <IconButton
+              icon={PencilSimple}
+              label="Редактировать позицию"
+              onClick={() => setEditingId(t.id)}
+            />
+            <IconButton
+              icon={removeMode === 'delete' ? Trash : X}
+              label={
+                removeMode === 'unlinkFolder'
+                  ? 'Убрать из этой папки — позиция останется в библиотеке'
+                  : removeMode === 'hideFolderless'
+                    ? 'Убрать из «Без папки» — позиция уже разложена по папкам'
+                    : 'Удалить позицию совсем'
+              }
+              tone={removeMode === 'delete' ? 'danger' : 'quiet'}
+              onClick={onCardRemove}
+            />
+          </div>
+        }
+        footer={
+          <>
+            <div className="flex items-center gap-1">
+              <FolderPicker
+                className="min-w-0 flex-1"
+                selectedIds={libIds(t)}
+                folders={libraryFolders}
+                onToggle={(fid) => toggleTaskFolder(t, fid)}
+              />
+              <IconButton
+                icon={t.isHomework ? Check : House}
+                label={t.isHomework ? 'Убрать из домашних заданий' : 'Добавить в домашние задания'}
+                active={t.isHomework}
+                className="!h-7 !w-7 shrink-0"
+                onClick={() => toggleHomework(t)}
+              />
+            </div>
+            <ToolButton
+              icon={t.isPublished ? ArrowUUpLeft : CloudArrowUp}
+              tone={t.isPublished ? 'neutral' : 'primary'}
+              block
+              onClick={() => togglePublish(t)}
+              title={
+                t.isPublished
+                  ? 'Снять с публикации — ученики перестанут видеть позицию'
+                  : 'Опубликовать — позицию можно будет раздать классу'
+              }
+            >
+              {t.isPublished ? 'В черновики' : 'Опубликовать'}
+            </ToolButton>
+          </>
+        }
+      />
     );
   };
 
@@ -381,241 +393,218 @@ export function TasksLibrary({
   }
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold">Моя библиотека позиций</h2>
-          <p className="mt-0.5 text-xs text-stone-500">
-            Сохраняйте сюда любые позиции — черновики остаются только у вас. Когда готовы —
-            одним кликом «Опубликовать», и задача появится у учеников в каталоге.
-          </p>
-        </div>
-        <button onClick={() => setEditingId('new')} className="btn-primary text-sm">
-          + Новая позиция
-        </button>
-      </div>
+    <div className="flex flex-col gap-3">
+      <SectionHead
+        title="Библиотека позиций"
+        hint="Черновики видите только вы. Опубликованную позицию можно раздать классу на уроке."
+      >
+        <ToolButton icon={Plus} tone="primary" size="md" onClick={() => setEditingId('new')}>
+          Новая позиция
+        </ToolButton>
+      </SectionHead>
 
-      <div className="mb-4 flex flex-wrap gap-1">
-        <FilterTab active={filter === 'all'} onClick={() => setFilter('all')}>
-          Все · {counts.all}
-        </FilterTab>
-        <FilterTab active={filter === 'published'} onClick={() => setFilter('published')}>
-          🟢 Опубликовано · {counts.published}
-        </FilterTab>
-        <FilterTab active={filter === 'drafts'} onClick={() => setFilter('drafts')}>
-          📝 Черновики · {counts.drafts}
-        </FilterTab>
-        <FilterTab active={filter === 'homework'} onClick={() => setFilter('homework')}>
-          📚 Домашние задания · {counts.homework}
-        </FilterTab>
-      </div>
+      <Segmented
+        ariaLabel="Фильтр позиций"
+        className="sm:max-w-xl"
+        value={filter}
+        onChange={setFilter}
+        options={[
+          { id: 'all', label: `Все · ${counts.all}` },
+          { id: 'published', label: `Опубликованы · ${counts.published}` },
+          { id: 'drafts', label: `Черновики · ${counts.drafts}` },
+          { id: 'homework', label: `Домашние · ${counts.homework}` },
+        ]}
+      />
 
       {openFolder ? (
         // ── Внутри папки ──
-        <div>
-          <div className="mb-3 flex items-center gap-2">
-            <button
+        <div className="flex flex-col gap-2.5">
+          <SectionHead title={openFolderObj?.name ?? 'Папка'} count={openFolderTasks.length}>
+            <ToolButton
+              icon={Plus}
+              tone={showAdder ? 'primary' : 'neutral'}
+              active={showAdder}
+              onClick={() => setShowAdder((v) => !v)}
+            >
+              Добавить позиции
+            </ToolButton>
+            <ToolButton
+              icon={CaretLeft}
               onClick={() => {
                 setOpenFolder(null);
                 setShowAdder(false);
               }}
-              className="flex items-center gap-1 rounded-full border border-stone-300/70 px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
             >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Папки
-            </button>
-            <h3 className="text-base font-semibold">
-              {openFolderObj?.name ?? 'Папка'}{' '}
-              <span className="text-sm font-normal text-stone-400">· {openFolderTasks.length}</span>
-            </h3>
-          </div>
+              Все папки
+            </ToolButton>
+          </SectionHead>
 
-          {/* Список позиций для добавления в папку (по кнопке «+»). */}
           {showAdder && (
-            <div className="mb-3 rounded-xl border border-brand-300 bg-brand-50/60 p-2.5 dark:border-brand-800 dark:bg-brand-900/20">
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="text-xs font-semibold text-stone-600 dark:text-stone-300">
-                  Выберите позиции — они добавятся в папку
+            <div
+              className={cn(
+                'p-2.5',
+                'bg-brand-50/80 ring-brand-600/15 dark:bg-brand-950/40 dark:ring-brand-400/20',
+                SURFACE,
+              )}
+            >
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[12px] font-semibold text-brand-800 dark:text-brand-100">
+                  Нажмите на позицию — она добавится в папку
                 </span>
-                <button
-                  onClick={() => setShowAdder(false)}
-                  className="rounded-md px-2 py-0.5 text-xs text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800"
-                >
+                <ToolButton icon={Check} onClick={() => setShowAdder(false)}>
                   Готово
-                </button>
+                </ToolButton>
               </div>
               {addableTasks.length === 0 ? (
-                <div className="py-1 text-xs text-stone-500">Все позиции уже в этой папке.</div>
+                <p className="py-2 text-center text-[12px] text-stone-500 dark:text-stone-400">
+                  Все позиции уже в этой папке.
+                </p>
               ) : (
-                <ul className="grid max-h-[560px] grid-cols-2 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {addableTasks.map((t) => (
-                    <li key={t.id}>
-                      <button
+                <div className="max-h-[34rem] overflow-y-auto overscroll-contain pr-0.5">
+                  <BoardGrid min="9rem">
+                    {addableTasks.map((t) => (
+                      <BoardCard
+                        key={t.id}
+                        board={
+                          <MiniBoard
+                            fen={t.fen || STARTING_FEN}
+                            fluid
+                            flipped={t.sideToPlay === 'b'}
+                          />
+                        }
+                        title={t.title}
+                        tooltip={`Добавить «${t.title}» в папку`}
                         onClick={() => {
                           if (openFolder) toggleTaskFolder(t, openFolder);
                         }}
-                        className="group flex w-full flex-col items-center gap-1 rounded-lg border border-stone-200 bg-paper p-2 shadow-sm transition-shadow hover:shadow-md hover:ring-1 hover:ring-brand-300 dark:border-stone-700 dark:bg-stone-900"
-                        title={`Добавить «${t.title}» в папку`}
-                      >
-                        <MiniBoard fen={t.fen || STARTING_FEN} size={168} flipped={t.sideToPlay === 'b'} />
-                        <span className="flex w-full items-center gap-1">
-                          <span className="min-w-0 flex-1 truncate text-xs font-semibold leading-tight text-stone-700 dark:text-stone-200">
-                            {t.title}
-                          </span>
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-500 text-sm leading-none text-white">
-                            +
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                      />
+                    ))}
+                  </BoardGrid>
+                </div>
               )}
             </div>
           )}
 
-          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {/* Плитка «+» — всегда первой: открывает список позиций для добавления. */}
-            <li>
-              <button
-                type="button"
-                onClick={() => setShowAdder((v) => !v)}
-                className={`flex h-full min-h-[196px] w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-3 transition-colors ${
-                  showAdder
-                    ? 'border-brand-400 text-brand-500'
-                    : 'border-stone-300 text-stone-400 hover:border-brand-400 hover:text-brand-500 dark:border-stone-700'
-                }`}
-              >
-                <span className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-current text-2xl leading-none">
-                  +
-                </span>
-                <span className="text-sm font-semibold">Добавить позицию</span>
-              </button>
-            </li>
-            {openFolderTasks.map(renderCard)}
-          </ul>
+          {openFolderTasks.length === 0 ? (
+            <EmptyState
+              icon={Folder}
+              title="В папке пока пусто"
+              hint="Нажмите «Добавить позиции» и выберите, что сюда положить."
+            />
+          ) : (
+            <BoardGrid min="13rem">{openFolderTasks.map(renderCard)}</BoardGrid>
+          )}
         </div>
       ) : (
         <>
           {/* ── Папки ── */}
-          <h3 className="mb-3 text-sm font-semibold text-stone-600 dark:text-stone-300">Папки</h3>
-          <ul className="mb-6 grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {/* Плитка «+» — всегда первой: создать папку (клик → ввод названия). */}
-            <li>
-              {addingFolder ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    createFolder();
-                  }}
-                  className="flex h-full min-h-[132px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-brand-400 p-3"
-                >
-                  <input
-                    autoFocus
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') {
-                        setAddingFolder(false);
-                        setNewFolderName('');
-                      }
-                    }}
-                    placeholder="Название папки"
-                    maxLength={60}
-                    className="w-full rounded-lg border border-stone-300 bg-paper px-2 py-1.5 text-center text-sm focus:border-brand-500 focus:outline-none dark:border-stone-700 dark:bg-stone-900"
-                  />
-                  <div className="flex gap-1">
-                    <button
-                      type="submit"
-                      disabled={!newFolderName.trim() || creatingFolder}
-                      className="btn-primary rounded-lg px-3 py-1 text-xs disabled:opacity-50"
-                    >
-                      Создать
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAddingFolder(false);
-                        setNewFolderName('');
-                      }}
-                      className="rounded-lg border border-stone-300 px-2 py-1 text-xs text-stone-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800"
-                    >
-                      Отмена
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setAddingFolder(true)}
-                  className="flex h-full min-h-[132px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-stone-300 p-3 text-stone-400 transition-colors hover:border-brand-400 hover:text-brand-500 dark:border-stone-700"
-                >
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-current text-2xl leading-none">
-                    +
-                  </span>
-                  <span className="text-sm font-semibold">Новая папка</span>
-                </button>
+          <div className="flex flex-col gap-2.5">
+            <SectionHead title="Папки" count={libraryFolders.length}>
+              {!addingFolder && (
+                <ToolButton icon={FolderPlus} onClick={() => setAddingFolder(true)}>
+                  Новая папка
+                </ToolButton>
               )}
-            </li>
-            {libraryFolders.map((f) => (
-              <li key={f.id}>
-                <FolderTile
-                  name={f.name}
-                  count={folderCounts.get(f.id) ?? 0}
-                  onOpen={() => {
-                    setOpenFolder(f.id);
-                    setShowAdder(false);
-                  }}
-                  onRename={() => renameFolder(f)}
-                  onDelete={() => deleteFolder(f)}
-                />
-              </li>
-            ))}
-          </ul>
+            </SectionHead>
 
-          {/* ── Позиции без папки (следуют ниже папок) ── */}
-          <h3 className="mb-2 text-sm font-semibold text-stone-600 dark:text-stone-300">
-            Без папки <span className="font-normal text-stone-400">· {folderlessTasks.length}</span>
-          </h3>
-          {folderlessTasks.length === 0 ? (
-            <div className="card text-sm text-stone-500">
-              {tasks.length === 0
-                ? 'Пока нет ни одной позиции. Создайте первую — она сохранится в библиотеку.'
-                : 'Все позиции этого фильтра разложены по папкам.'}
-            </div>
-          ) : (
-            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {folderlessTasks.map(renderCard)}
-            </ul>
-          )}
+            {addingFolder && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  createFolder();
+                }}
+                className={cn('flex items-center gap-1.5 p-2', SURFACE)}
+              >
+                <input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setAddingFolder(false);
+                      setNewFolderName('');
+                    }
+                  }}
+                  placeholder="Название папки"
+                  aria-label="Название папки"
+                  maxLength={60}
+                  className="h-8 min-w-0 flex-1 rounded-xl border-0 bg-stone-900/[0.05] px-2.5 text-[12px] text-stone-800 outline-none ring-1 ring-inset ring-transparent transition placeholder:text-stone-400 focus:bg-white focus:ring-brand-500/50 dark:bg-white/[0.07] dark:text-stone-100 dark:focus:bg-stone-800"
+                />
+                <ToolButton
+                  type="submit"
+                  tone="primary"
+                  disabled={!newFolderName.trim() || creatingFolder}
+                >
+                  Создать
+                </ToolButton>
+                <ToolButton
+                  onClick={() => {
+                    setAddingFolder(false);
+                    setNewFolderName('');
+                  }}
+                >
+                  Отмена
+                </ToolButton>
+              </form>
+            )}
+
+            {libraryFolders.length > 0 && (
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {libraryFolders.map((f) => (
+                  <FolderTile
+                    key={f.id}
+                    icon={Folder}
+                    name={f.name}
+                    count={folderCounts.get(f.id) ?? 0}
+                    onClick={() => {
+                      setOpenFolder(f.id);
+                      setShowAdder(false);
+                    }}
+                  >
+                    <IconButton
+                      icon={PencilSimple}
+                      label="Переименовать папку"
+                      className="!h-7 !w-7"
+                      onClick={() => renameFolder(f)}
+                    />
+                    <IconButton
+                      icon={Trash}
+                      label="Удалить папку"
+                      tone="danger"
+                      className="!h-7 !w-7"
+                      onClick={() => deleteFolder(f)}
+                    />
+                  </FolderTile>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Позиции без папки ── */}
+          <div className="flex flex-col gap-2.5">
+            <SectionHead title="Без папки" count={folderlessTasks.length} />
+            {folderlessTasks.length === 0 ? (
+              <EmptyState
+                icon={Folder}
+                title={tasks.length === 0 ? 'Библиотека пуста' : 'Всё разложено по папкам'}
+                hint={
+                  tasks.length === 0
+                    ? 'Создайте первую позицию — она сохранится сюда.'
+                    : 'В этом фильтре не осталось позиций вне папок.'
+                }
+              >
+                {tasks.length === 0 && (
+                  <ToolButton icon={Plus} tone="primary" onClick={() => setEditingId('new')}>
+                    Новая позиция
+                  </ToolButton>
+                )}
+              </EmptyState>
+            ) : (
+              <BoardGrid min="13rem">{folderlessTasks.map(renderCard)}</BoardGrid>
+            )}
+          </div>
         </>
       )}
     </div>
-  );
-}
-
-function FilterTab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-        active
-          ? 'bg-brand-500 text-white'
-          : 'bg-stone-100 text-stone-600 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700'
-      }`}
-    >
-      {children}
-    </button>
   );
 }

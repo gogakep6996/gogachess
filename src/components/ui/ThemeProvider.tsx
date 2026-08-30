@@ -20,8 +20,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const stored = (typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null) as Theme | null;
-    const initial: Theme =
-      stored ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    // По умолчанию всегда светлая тема; тёмная — только по явному выбору.
+    const initial: Theme = stored ?? 'light';
     applyTheme(initial);
     setThemeState(initial);
     setMounted(true);

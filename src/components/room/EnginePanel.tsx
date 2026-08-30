@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Lightning, Stop } from '@phosphor-icons/react';
 import { useStockfish } from '@/hooks/useStockfish';
+import { cn } from '@/lib/utils';
+import { FieldLabel, StatusChip, SwitchRow, ToolButton } from './ui';
 
 interface Props {
   fen: string;
@@ -92,145 +95,107 @@ export function EnginePanel({
 
   if (room) {
     return (
-      <div className="w-full rounded-xl border border-stone-200/80 bg-paper/90 p-2.5 shadow-sm dark:border-stone-700/70 dark:bg-stone-900/65">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <span className="grid h-5 w-5 place-items-center rounded-md bg-brand-500 text-[10px] font-bold text-white shadow-sm">
-              SF
-            </span>
-            <span className="text-xs font-semibold text-stone-700 dark:text-stone-200">Движок</span>
-          </div>
-          <span
-            className={
-              ready
-                ? 'shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                : 'shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[9px] font-medium text-stone-500 dark:bg-stone-800 dark:text-stone-400'
+      <div className="flex w-full flex-col gap-2">
+        {/* Главный переключатель: движок играет за соперника. */}
+        {showPlayVsComputer && onTogglePlayVsComputer && (
+          <SwitchRow
+            label={
+              vsComputerActive
+                ? vsComputerThinking
+                  ? 'Соперник думает'
+                  : 'Движок играет за соперника'
+                : 'Движок не играет'
             }
-          >
-            {ready ? '● готов' : '○ грузим'}
-          </span>
-        </div>
+            hint={
+              vsComputerActive
+                ? 'Отвечает за противоположную сторону'
+                : 'Включите, чтобы движок делал ответные ходы'
+            }
+            checked={vsComputerActive}
+            onChange={onTogglePlayVsComputer}
+          />
+        )}
 
         <label className="block">
-          <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-stone-500">Уровень</span>
+          <FieldLabel>Уровень соперника</FieldLabel>
           {skillLocked ? (
             <div
-              className="mb-2 w-full rounded-md border border-brand-300/70 bg-brand-50 px-1.5 py-1 text-[11px] font-semibold text-brand-700 dark:border-brand-700/60 dark:bg-brand-900/30 dark:text-brand-200"
+              className="flex h-8 items-center rounded-xl bg-brand-50 px-2.5 text-[12px] font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
               title="Сложность задана в задаче и не меняется"
             >
-              {skillLabel(skill)} (+{skill}) · из задачи
+              {skillLabel(skill)} · из задачи
             </div>
           ) : (
             <select
-              className="mb-2 w-full rounded-md border border-stone-300/70 bg-paper px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-600 dark:bg-stone-950 dark:text-stone-100"
+              className="h-8 w-full rounded-xl border-0 bg-stone-900/[0.05] px-2 text-[12px] font-semibold text-stone-700 outline-none ring-1 ring-inset ring-transparent transition focus:bg-white focus:ring-brand-500/50 dark:bg-white/[0.07] dark:text-stone-100 dark:focus:bg-stone-800"
               value={skill}
               onChange={(e) => setSkillState(Number(e.target.value))}
             >
               {SKILL_LEVELS.map((l) => (
                 <option key={l.value} value={l.value}>
-                  {l.label} (+{l.value})
+                  {l.label}
                 </option>
               ))}
             </select>
           )}
         </label>
 
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => analyse(fen, { depth: 15, movetime: 800 })}
-            disabled={!ready || thinking}
-            className="flex-1 rounded-md bg-brand-500 px-2 py-1 text-[11px] font-medium leading-none text-white hover:bg-brand-600 disabled:opacity-50"
-          >
-            {thinking ? '…' : 'Анализ'}
-          </button>
-          {thinking && (
-            <button
-              type="button"
-              onClick={stop}
-              className="rounded-md border border-stone-400/70 px-1.5 py-1 text-[11px] dark:border-stone-600"
-              title="Стоп"
+        <div>
+          <FieldLabel>Разбор позиции</FieldLabel>
+          <div className="flex gap-1.5">
+            <ToolButton
+              icon={Lightning}
+              tone="neutral"
+              block
+              disabled={!ready || thinking}
+              onClick={() => analyse(fen, { depth: 15, movetime: 800 })}
             >
-              ⧁
-            </button>
-          )}
+              {thinking ? 'Считаю…' : 'Оценить'}
+            </ToolButton>
+            {thinking && (
+              <ToolButton icon={Stop} tone="quiet" onClick={stop} aria-label="Остановить расчёт">
+                Стоп
+              </ToolButton>
+            )}
+          </div>
         </div>
 
-        <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-[11px] text-stone-600 dark:text-stone-400">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 rounded-xl bg-stone-900/[0.04] px-2.5 py-2 text-[12px] dark:bg-white/[0.05]">
+          <dt className="text-stone-500 dark:text-stone-400">Оценка</dt>
+          <dd className="text-right font-semibold tabular-nums text-stone-800 dark:text-stone-100">
+            {evalText}
+          </dd>
+          <dt className="text-stone-500 dark:text-stone-400">Глубина</dt>
+          <dd className="text-right tabular-nums text-stone-700 dark:text-stone-200">
+            {evaluation.depth || '-'}
+          </dd>
+          <dt className="text-stone-500 dark:text-stone-400">Лучший ход</dt>
+          <dd className="truncate text-right font-semibold text-stone-800 dark:text-stone-100">
+            {bestUci ?? '-'}
+          </dd>
+        </dl>
+
+        <label className="flex cursor-pointer items-center gap-2 px-0.5 text-[12px] text-stone-600 dark:text-stone-300">
           <input
             type="checkbox"
             checked={autoAnalyse}
             onChange={(e) => setAutoAnalyse(e.target.checked)}
-            className="h-3 w-3 shrink-0 rounded border-stone-300 text-brand-500"
+            className="h-3.5 w-3.5 shrink-0 rounded border-stone-300 text-brand-600 focus:ring-brand-500/50 dark:border-stone-600 dark:bg-stone-800"
           />
-          авто-анализ
+          Считать после каждого хода
         </label>
 
-        <div className="mt-2 rounded-md bg-stone-50 px-2 py-1.5 text-[11px] leading-tight text-stone-700 dark:bg-stone-800/60 dark:text-stone-300">
-          <div className="flex justify-between gap-1">
-            <span className="text-stone-500">Оценка</span>
-            <span className="font-semibold">{evalText}</span>
-          </div>
-          <div className="mt-0.5 flex justify-between gap-1">
-            <span className="text-stone-500">Глубина</span>
-            <span className="font-mono">{evaluation.depth || '—'}</span>
-          </div>
-          <div className="mt-0.5 flex justify-between gap-1">
-            <span className="text-stone-500">Ход</span>
-            <span className="truncate font-mono">{bestUci ?? '—'}</span>
-          </div>
-        </div>
-
         {onSuggest && bestUci && (
-          <button
-            type="button"
-            onClick={suggest}
-            className="mt-2 w-full rounded-md border border-stone-400/60 py-1 text-[11px] hover:bg-stone-100 dark:border-stone-600 dark:hover:bg-stone-800"
-          >
+          <ToolButton tone="neutral" block onClick={suggest}>
             Сделать ход {bestUci}
-          </button>
+          </ToolButton>
         )}
 
-        {showPlayVsComputer && onTogglePlayVsComputer && (
-          <button
-            type="button"
-            onClick={onTogglePlayVsComputer}
-            title={
-              vsComputerActive
-                ? 'Сейчас за противоположную сторону играет движок. Нажмите, чтобы выключить.'
-                : 'Включить игру против компьютера. Движок будет автоматически делать ответные ходы.'
-            }
-            className={
-              vsComputerActive
-                ? 'mt-2 flex w-full items-center justify-between gap-1.5 rounded-md border border-emerald-500/70 bg-emerald-500/15 px-2 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-500/25 dark:text-emerald-300'
-                : 'mt-2 flex w-full items-center justify-between gap-1.5 rounded-md border border-stone-300/70 bg-stone-100 px-2 py-1.5 text-[11px] font-semibold text-stone-700 hover:bg-stone-200 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700'
-            }
-          >
-            <span className="flex items-center gap-1.5">
-              <span
-                className={
-                  vsComputerActive
-                    ? 'inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-500'
-                    : 'inline-block h-2 w-2 shrink-0 rounded-full bg-stone-400'
-                }
-              />
-              {vsComputerActive
-                ? vsComputerThinking
-                  ? 'Движок ВКЛ · думает…'
-                  : 'Движок ВКЛ'
-                : 'Движок ВЫКЛ'}
-            </span>
-            <span
-              className={
-                vsComputerActive
-                  ? 'rounded bg-emerald-600/80 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white'
-                  : 'rounded bg-brand-500 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white'
-              }
-            >
-              {vsComputerActive ? 'Выключить' : 'Включить'}
-            </span>
-          </button>
-        )}
+        <div className="flex justify-end">
+          <StatusChip tone={ready ? 'brand' : 'neutral'} live={thinking}>
+            {ready ? 'Stockfish готов' : 'Stockfish загружается'}
+          </StatusChip>
+        </div>
       </div>
     );
   }
@@ -310,7 +275,7 @@ export function EnginePanel({
 }
 
 function formatEval(e: { score: number | null; scoreType: 'cp' | 'mate' | null }): string {
-  if (e.score === null || e.scoreType === null) return '—';
+  if (e.score === null || e.scoreType === null) return '-';
   if (e.scoreType === 'mate') {
     const sign = e.score > 0 ? '+' : '';
     return `мат ${sign}${e.score}`;

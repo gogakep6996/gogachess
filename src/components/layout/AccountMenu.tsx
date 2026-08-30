@@ -112,7 +112,7 @@ export function AccountMenu({
   const [notifications, setNotifications] = useState<NotificationDto[]>([]);
   const [unread, setUnread] = useState(0);
 
-  // ---- Друзья: счётчик входящих заявок для бейджа ----
+  // ---- Сообщения и друзья: счётчики для бейджей ----
   const [social, setSocial] = useState({ pendingFriends: 0 });
   useEffect(() => {
     fetch('/api/social/summary')

@@ -1,9 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, CaretRight, Check, X } from '@phosphor-icons/react';
 import { MiniBoard } from '@/components/chess/MiniBoard';
 import { MoveNav } from '@/components/tournament/MoveNav';
+import { FieldLabel, IconButton, StatusChip } from '@/components/room/ui';
 import { STARTING_FEN, type MoveHistoryEntry } from '@/lib/socket-events';
+import { cn } from '@/lib/utils';
 import type { TaskDto } from './TasksLibrary';
 
 interface ReportRow {
@@ -46,7 +49,7 @@ function fmt(iso: string | null): string {
 export function HomeworkReport({ task, onClose }: { task: TaskDto; onClose: () => void }) {
   const flipped = task.sideToPlay === 'b';
 
-  // Навигация: список учеников → просмотр попыток ученика (доска + переключатель).
+  // Навигация: список учеников → попытки одного ученика (доска + ходы).
   const [student, setStudent] = useState<{ userId: string; name: string } | null>(null);
 
   // ── Уровень 1: сводка по ученикам ──
@@ -74,6 +77,16 @@ export function HomeworkReport({ task, onClose }: { task: TaskDto; onClose: () =
       cancelled = true;
     };
   }, [task.id]);
+
+  // Закрытие по Escape: модалка перекрывает всю страницу, из неё нужен выход
+  // без мыши.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   // ── Уровень 2: попытки выбранного ученика ──
   const [attempts, setAttempts] = useState<AttemptRow[]>([]);
@@ -105,53 +118,46 @@ export function HomeworkReport({ task, onClose }: { task: TaskDto; onClose: () =
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/50 p-4 backdrop-blur-sm"
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Отчёт по заданию: ${task.title}`}
     >
       <div
-        className={`flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-stone-200 bg-paper shadow-xl dark:border-stone-700 dark:bg-stone-900 ${
-          student ? 'max-w-3xl' : 'max-w-2xl'
-        }`}
+        className={cn(
+          'flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-stone-900/10 dark:bg-stone-900 dark:ring-white/10',
+          student ? 'max-w-3xl' : 'max-w-2xl',
+        )}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-stone-200 px-4 py-3 dark:border-stone-700">
-          <div className="flex items-start gap-2">
-            {student && (
-              <button
-                onClick={() => setStudent(null)}
-                className="mt-0.5 rounded-md border border-stone-300 px-2 py-0.5 text-sm text-stone-600 hover:bg-stone-100 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-                title="Назад к ученикам"
-              >
-                ←
-              </button>
-            )}
-            <div>
-              <div className="text-xs font-semibold uppercase text-stone-500">
-                {student ? task.title : 'Отчёт по заданию'}
-              </div>
-              <h3 className="text-base font-semibold leading-tight">
-                {student ? student.name : task.title}
-              </h3>
+        <header className="flex shrink-0 items-center gap-2 border-b border-stone-900/[0.07] px-3 py-2.5 dark:border-white/[0.08]">
+          {student && (
+            <IconButton
+              icon={ArrowLeft}
+              label="Назад к списку учеников"
+              onClick={() => setStudent(null)}
+            />
+          )}
+          <div className="min-w-0 flex-1 leading-tight">
+            <div className="truncate text-[11px] font-medium text-stone-500 dark:text-stone-400">
+              {student ? task.title : 'Отчёт по заданию'}
             </div>
+            <h3 className="truncate text-[14px] font-semibold text-stone-800 dark:text-stone-100">
+              {student ? student.name : task.title}
+            </h3>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-md border border-stone-300 px-2 py-1 text-sm text-stone-600 hover:bg-stone-100 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-          >
-            ✕
-          </button>
-        </div>
+          <IconButton icon={X} label="Закрыть отчёт" onClick={onClose} />
+        </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {student ? (
             attemptsLoading ? (
-              <div className="py-8 text-center text-sm text-stone-500">Загрузка…</div>
+              <Message>Загружаем попытки…</Message>
             ) : attemptsError ? (
-              <div className="py-8 text-center text-sm text-red-600">{attemptsError}</div>
+              <Message tone="error">{attemptsError}</Message>
             ) : attempts.length === 0 ? (
-              <div className="py-8 text-center text-sm text-stone-500">
-                У ученика ещё нет попыток.
-              </div>
+              <Message>У ученика ещё нет попыток.</Message>
             ) : (
               <StudentReplayView attempts={attempts} flipped={flipped} />
             )
@@ -169,7 +175,28 @@ export function HomeworkReport({ task, onClose }: { task: TaskDto; onClose: () =
   );
 }
 
-/** Доска слева + переключатель попыток и список ходов справа. */
+function Message({
+  tone = 'neutral',
+  children,
+}: {
+  tone?: 'neutral' | 'error';
+  children: React.ReactNode;
+}) {
+  return (
+    <p
+      className={cn(
+        'py-10 text-center text-[13px]',
+        tone === 'error'
+          ? 'text-red-600 dark:text-red-400'
+          : 'text-stone-500 dark:text-stone-400',
+      )}
+    >
+      {children}
+    </p>
+  );
+}
+
+/** Доска слева, попытки и ходы справа. */
 function StudentReplayView({ attempts, flipped }: { attempts: AttemptRow[]; flipped: boolean }) {
   const [selId, setSelId] = useState<string>(attempts[0]?.id ?? '');
   const [viewIdx, setViewIdx] = useState<number | null>(null);
@@ -179,7 +206,7 @@ function StudentReplayView({ attempts, flipped }: { attempts: AttemptRow[]; flip
     [attempts, selId],
   );
 
-  // При переключении попытки — возвращаемся к финальной позиции.
+  // При переключении попытки возвращаемся к финальной позиции.
   useEffect(() => {
     setViewIdx(null);
   }, [selId]);
@@ -195,50 +222,60 @@ function StudentReplayView({ attempts, flipped }: { attempts: AttemptRow[]; flip
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-      <MiniBoard fen={viewedFen} size={300} flipped={flipped} />
+      <div className="overflow-hidden rounded-xl ring-1 ring-stone-900/10 dark:ring-white/10">
+        <MiniBoard fen={viewedFen} size={300} flipped={flipped} />
+      </div>
 
-      <div className="flex w-full flex-col gap-2 sm:w-64">
-        {/* Переключатель попыток */}
-        <div className="flex flex-wrap gap-1">
-          {attempts.map((a) => {
-            const active = a.id === selId;
-            const solved = a.status === 'solved';
-            return (
-              <button
-                key={a.id}
-                onClick={() => setSelId(a.id)}
-                title={`Попытка ${a.index}${solved ? ' — решено' : ''}`}
-                className={`flex h-8 min-w-8 items-center justify-center gap-0.5 rounded-lg border px-2 text-sm font-semibold transition-colors ${
-                  active
-                    ? 'border-brand-500 bg-brand-500 text-white'
-                    : solved
-                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                      : 'border-stone-300 bg-paper text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800'
-                }`}
-              >
-                {a.index}
-                {solved && <span className="text-xs">✓</span>}
-              </button>
-            );
-          })}
+      <div className="flex w-full flex-col gap-2.5 sm:w-64">
+        <div>
+          <FieldLabel>Попытка</FieldLabel>
+          <div className="flex flex-wrap gap-1">
+            {attempts.map((a) => {
+              const active = a.id === selId;
+              const solved = a.status === 'solved';
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => setSelId(a.id)}
+                  title={`Попытка ${a.index}${solved ? ' — решено' : ''}`}
+                  className={cn(
+                    'flex h-8 min-w-8 items-center justify-center gap-0.5 rounded-lg px-2 text-[13px] font-semibold tabular-nums transition-colors duration-150',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45',
+                    active
+                      ? 'bg-brand-600 text-white'
+                      : solved
+                        ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300'
+                        : 'bg-stone-900/[0.05] text-stone-600 hover:bg-stone-900/[0.09] dark:bg-white/[0.07] dark:text-stone-300 dark:hover:bg-white/[0.12]',
+                  )}
+                >
+                  {a.index}
+                  {solved && <Check size={11} weight="bold" aria-hidden />}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {selected && (
-          <div className="text-xs text-stone-500">
-            Попытка {selected.index} ·{' '}
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-stone-500 dark:text-stone-400">
             {selected.status === 'solved' ? (
-              <span className="font-semibold text-emerald-600 dark:text-emerald-400">решено ✓</span>
+              <StatusChip tone="brand">
+                <Check size={11} weight="bold" aria-hidden />
+                решено
+              </StatusChip>
             ) : (
-              'не решено'
-            )}{' '}
-            · {moves.length} ходов · {fmt(selected.startedAt)}
+              <StatusChip tone="neutral">не решено</StatusChip>
+            )}
+            <span className="tabular-nums">{moves.length} ходов</span>
+            <span className="tabular-nums">{fmt(selected.startedAt)}</span>
           </div>
         )}
 
         {moves.length === 0 ? (
-          <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-500 dark:border-stone-700 dark:bg-stone-800/40">
+          <p className="rounded-xl bg-stone-900/[0.04] px-3 py-2 text-[12px] text-stone-500 dark:bg-white/[0.05] dark:text-stone-400">
             В этой попытке нет ходов.
-          </div>
+          </p>
         ) : (
           <MoveNav history={moves} viewIdx={viewIdx} onSelect={setViewIdx} />
         )}
@@ -258,63 +295,76 @@ function StudentsTable({
   data: ReportData | null;
   onOpen: (row: { userId: string; name: string }) => void;
 }) {
-  if (loading) return <div className="py-8 text-center text-sm text-stone-500">Загрузка…</div>;
-  if (error) return <div className="py-8 text-center text-sm text-red-600">{error}</div>;
+  if (loading) return <Message>Загружаем отчёт…</Message>;
+  if (error) return <Message tone="error">{error}</Message>;
   if (!data || data.rows.length === 0) {
-    return <div className="py-8 text-center text-sm text-stone-500">Задачу ещё никто не решал.</div>;
+    return <Message>Задание ещё никто не решал.</Message>;
   }
+
   return (
     <>
-      <div className="mb-3 flex flex-wrap gap-2 text-xs">
-        <Stat label="Учеников решало" value={data.totals.students} />
-        <Stat label="Решили" value={data.totals.solvedStudents} />
-        <Stat label="Всего попыток" value={data.totals.attempts} />
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[12px] text-stone-500 dark:text-stone-400">
+        <span className="tabular-nums">
+          решало{' '}
+          <span className="font-semibold text-stone-700 dark:text-stone-200">
+            {data.totals.students}
+          </span>
+        </span>
+        <span className="tabular-nums">
+          решили{' '}
+          <span className="font-semibold text-stone-700 dark:text-stone-200">
+            {data.totals.solvedStudents}
+          </span>
+        </span>
+        <span className="tabular-nums">
+          попыток{' '}
+          <span className="font-semibold text-stone-700 dark:text-stone-200">
+            {data.totals.attempts}
+          </span>
+        </span>
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-stone-200 text-left text-xs uppercase text-stone-500 dark:border-stone-700">
-            <th className="py-2 pr-2 font-semibold">Ученик</th>
-            <th className="py-2 px-2 text-center font-semibold">Попыток</th>
-            <th className="py-2 px-2 text-center font-semibold">Решил</th>
-            <th className="py-2 pl-2 font-semibold">Последнее решение</th>
-            <th className="py-2 pl-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {data.rows.map((r) => (
-            <tr
-              key={r.userId}
-              className="cursor-pointer border-b border-stone-100 last:border-0 hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-800/40"
-              onClick={() => onOpen({ userId: r.userId, name: r.name })}
-            >
-              <td className="py-2 pr-2 font-medium">{r.name}</td>
-              <td className="py-2 px-2 text-center tabular-nums">{r.attempts}</td>
-              <td className="py-2 px-2 text-center tabular-nums">
-                {r.solves > 0 ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                    ✓ {r.solves}
-                  </span>
-                ) : (
-                  <span className="text-stone-400">0</span>
-                )}
-              </td>
-              <td className="py-2 pl-2 tabular-nums text-stone-500">{fmt(r.lastSolvedAt)}</td>
-              <td className="py-2 pl-2 text-right text-xs font-semibold text-brand-600 dark:text-brand-300">
-                Смотреть →
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </>
-  );
-}
 
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-lg bg-stone-100 px-3 py-1.5 dark:bg-stone-800">
-      <span className="font-semibold tabular-nums">{value}</span>{' '}
-      <span className="text-stone-500">{label}</span>
-    </div>
+      <ul className="space-y-1">
+        {data.rows.map((r) => (
+          <li key={r.userId}>
+            <button
+              type="button"
+              onClick={() => onOpen({ userId: r.userId, name: r.name })}
+              className="flex w-full items-center gap-2.5 rounded-xl bg-stone-900/[0.03] px-2.5 py-2 text-left transition-colors duration-150 hover:bg-stone-900/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45 dark:bg-white/[0.04] dark:hover:bg-white/[0.08]"
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  'grid h-8 w-8 shrink-0 place-items-center rounded-xl text-[12px] font-bold text-white',
+                  r.solves > 0 ? 'bg-brand-600' : 'bg-stone-400 dark:bg-stone-600',
+                )}
+              >
+                {r.name.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="min-w-0 flex-1 leading-tight">
+                <span className="block truncate text-[13px] font-semibold text-stone-800 dark:text-stone-100">
+                  {r.name}
+                </span>
+                <span className="block truncate text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                  попыток: {r.attempts} · последнее решение: {fmt(r.lastSolvedAt)}
+                </span>
+              </span>
+              {r.solves > 0 && (
+                <StatusChip tone="brand">
+                  <Check size={11} weight="bold" aria-hidden />
+                  {r.solves}
+                </StatusChip>
+              )}
+              <CaretRight
+                size={14}
+                weight="bold"
+                aria-hidden
+                className="shrink-0 text-stone-300 dark:text-stone-600"
+              />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }

@@ -39,7 +39,9 @@ export interface PieceTheme {
 
 export const BOARD_THEME_KEY = 'gogachess-board-theme';
 export const PIECE_THEME_KEY = 'gogachess-piece-theme';
-export const DEFAULT_BOARD_THEME = 'classic';
+// Дефолт — «Изумруд»: зелёная доска в единой палитре с зелёным акцентом UI.
+// У пользователей с сохранённой темой в localStorage останется их выбор.
+export const DEFAULT_BOARD_THEME = 'emerald';
 export const DEFAULT_PIECE_THEME = 'neo';
 
 export const BOARD_THEMES: BoardTheme[] = [

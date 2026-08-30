@@ -2,6 +2,10 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { EnvelopeSimple, PaperPlaneTilt } from '@phosphor-icons/react';
+import { SURFACE } from '@/components/class/ui';
+import { ToolButton } from '@/components/room/ui';
+import { cn } from '@/lib/utils';
 
 /**
  * Заглушка для /class/me, когда у пользователя ещё нет класса и email
@@ -32,45 +36,55 @@ export function ClassMeLockedView({ email }: { email: string | null }) {
   }
 
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-4 px-6 py-12">
-      <div className="card">
-        <h1 className="font-display text-2xl">Подтвердите email, чтобы создать класс</h1>
-        <p className="mt-2 text-sm text-stone-600 dark:text-stone-400">
-          Чтобы исключить ботов и защитить ваших учеников, создание класса доступно
-          только после подтверждения почты.
+    <main className="mx-auto flex w-full max-w-xl flex-col px-6 py-12">
+      <div className={cn('p-6', SURFACE)}>
+        <span
+          aria-hidden
+          className="grid h-10 w-10 place-items-center rounded-2xl bg-amber-500/15 text-amber-700 dark:text-amber-300"
+        >
+          <EnvelopeSimple size={20} weight="bold" />
+        </span>
+        <h1 className="mt-3 text-[21px] font-semibold leading-tight tracking-tight text-stone-900 dark:text-stone-50">
+          Подтвердите почту, чтобы создать класс
+        </h1>
+        <p className="mt-2 text-[14px] leading-relaxed text-stone-600 dark:text-stone-400">
+          Так мы отсекаем ботов и защищаем ваших будущих учеников.
         </p>
         {email ? (
-          <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-            Мы отправили ссылку на <b>{email}</b>. Откройте письмо и нажмите кнопку
-            «Подтвердить email».
+          <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2.5 text-[13px] leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-900">
+            Ссылка отправлена на <b>{email}</b>. Откройте письмо и нажмите «Подтвердить email».
           </p>
         ) : (
-          <p className="mt-3 rounded-md bg-red-100 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">
-            У вашего аккаунта не указан email. Добавьте его, чтобы продолжить.
+          <p className="mt-4 rounded-xl bg-red-50 px-3 py-2.5 text-[13px] leading-relaxed text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900">
+            У вашего аккаунта нет почты. Добавьте её, чтобы продолжить.
           </p>
         )}
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
           {email && (
-            <button
-              type="button"
+            <ToolButton
+              icon={PaperPlaneTilt}
+              tone="primary"
+              size="md"
               onClick={resend}
               disabled={status === 'sending' || status === 'sent'}
-              className="btn-primary text-sm"
             >
               {status === 'sending'
                 ? 'Отправляем…'
                 : status === 'sent'
                   ? 'Отправлено'
                   : 'Отправить письмо ещё раз'}
-            </button>
+            </ToolButton>
           )}
-          <Link href="/rooms" className="text-sm text-brand-600 hover:underline">
-            ← Вернуться в кабинет
+          <Link
+            href="/rooms"
+            className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300"
+          >
+            Вернуться в кабинет
           </Link>
         </div>
         {message && (
-          <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">{message}</p>
+          <p className="mt-3 text-[12px] text-stone-500 dark:text-stone-400">{message}</p>
         )}
       </div>
     </main>

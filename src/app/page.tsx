@@ -1,6 +1,17 @@
 import Link from 'next/link';
+import {
+  ArrowRight,
+  ChalkboardTeacher,
+  Microphone,
+  Robot,
+  ShieldCheck,
+} from '@phosphor-icons/react/dist/ssr';
 import { Header } from '@/components/layout/Header';
+import { MiniBoard } from '@/components/chess/MiniBoard';
 import { getCurrentUser } from '@/lib/auth';
+
+// Позиция для живой доски в hero: итальянская партия, узнаваемое начало.
+const HERO_FEN = 'r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4';
 
 export default async function HomePage() {
   const user = await getCurrentUser();
@@ -8,157 +19,233 @@ export default async function HomePage() {
   return (
     <>
       <Header />
-      <main className="mx-auto max-w-6xl px-6 pb-16 pt-10">
-        <section className="mb-10 space-y-3 text-center">
-          <span className="badge bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200">
-            gogachess
-          </span>
-          <h1 className="font-display text-4xl font-semibold leading-tight text-stone-800 dark:text-stone-200 md:text-5xl">
-            <span className="text-brand-600 dark:text-brand-400">Шахматы</span>{' '}
-            <span>gogachess</span>
-            {' — это удобство'}
-          </h1>
-          <p className="mx-auto max-w-2xl text-stone-600 dark:text-stone-300">
-            Играйте с друзьями, проводите уроки, устраивайте турниры и учитесь
-            прямо в браузере. Без сторонних платформ.
+      <main className="mx-auto max-w-6xl px-5 pb-20 sm:px-6">
+
+        {/* ── Hero: слева сообщение и действия, справа — настоящая доска ── */}
+        <section className="grid items-center gap-10 pt-10 sm:pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14">
+          <div>
+            <span className="badge bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200">
+              Платформа для шахматных уроков
+            </span>
+            <h1 className="mt-4 font-display text-4xl font-bold leading-[1.08] tracking-tight text-stone-900 sm:text-5xl dark:text-stone-50">
+              Шахматы для <span className="text-brand-600 dark:text-brand-300">уроков</span>, игры и турниров
+            </h1>
+            <p className="mt-4 max-w-[52ch] text-base leading-relaxed text-stone-600 sm:text-lg dark:text-stone-300">
+              Играйте с друзьями, проводите занятия с классом и разбирайте
+              позиции с движком — прямо в браузере, без сторонних программ.
+            </p>
+            <div className="mt-7 flex flex-wrap items-center gap-3">
+              <Link
+                href={user ? '/play' : '/login?next=/play'}
+                className="btn-primary group px-5 py-3 text-base"
+              >
+                Играть онлайн
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-white/20 transition-transform duration-200 group-hover:translate-x-0.5">
+                  <ArrowRight size={14} weight="bold" aria-hidden />
+                </span>
+              </Link>
+              <Link
+                href={user ? '/class' : '/login?next=/class'}
+                className="btn-outline px-5 py-3 text-base"
+              >
+                Создать класс
+              </Link>
+            </div>
+          </div>
+
+          {/* Настоящая мини-доска продукта в «двойной рамке»: внешняя подложка +
+              внутреннее ядро, как стеклянная пластина в лотке. */}
+          <div className="relative mx-auto w-full max-w-[420px]">
+            <div
+              aria-hidden
+              className="absolute -inset-6 -z-10 rounded-[2.5rem] bg-[radial-gradient(closest-side,rgba(43,127,92,0.14),transparent)]"
+            />
+            <div className="rounded-[2rem] bg-stone-900/[.04] p-2.5 ring-1 ring-stone-900/5 dark:bg-white/[.05] dark:ring-white/10">
+              <div className="overflow-hidden rounded-[calc(2rem-0.625rem)] shadow-[inset_0_1px_1px_rgba(255,255,255,0.4)]">
+                <MiniBoard fen={HERO_FEN} fluid />
+              </div>
+            </div>
+            <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-stone-200/80 bg-paper px-4 py-1.5 text-xs font-medium text-stone-600 shadow-soft dark:border-stone-700 dark:bg-paper-dark dark:text-stone-300">
+              Живая доска урока — ходы видны всем сразу
+            </div>
+          </div>
+        </section>
+
+        {/* ── Разделы сайта: асимметричная bento-сетка вместо ровных плиток ── */}
+        <section className="mt-20 sm:mt-24">
+          <h2 className="font-display text-2xl font-bold tracking-tight text-stone-900 sm:text-3xl dark:text-stone-50">
+            Всё для занятий и игры
+          </h2>
+          <p className="mt-2 max-w-[60ch] text-stone-600 dark:text-stone-400">
+            Семь разделов: от быстрой партии до группового урока с голосовой связью.
           </p>
+
+          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+            <Tile
+              href={user ? '/play' : '/login?next=/play'}
+              title="Играть онлайн"
+              text="Быстрая партия со случайным соперником в выбранном таймере."
+              icon={<IconKnight />}
+              className="lg:col-span-3"
+              featured
+            />
+            <Tile
+              href={user ? '/rooms' : '/login?next=/rooms'}
+              title="Создать комнату"
+              text="Открыть приватный или публичный класс для урока."
+              icon={<IconRook />}
+              className="lg:col-span-3"
+            />
+            <Tile
+              href={user ? '/tournaments' : '/login?next=/tournaments'}
+              title="Турниры"
+              text="Арена со свободным подбором, таблицей и трансляцией всех партий."
+              icon={<IconTrophy />}
+              className="lg:col-span-2"
+            />
+            <Tile
+              href="/learn"
+              title="Обучение"
+              text="Тактические задачи: маты, эндшпили, вилки и связки."
+              icon={<IconBook />}
+              className="lg:col-span-2"
+              badge="Новое"
+            />
+            <Tile
+              href={user ? '/class' : '/login?next=/class'}
+              title="Класс"
+              text="Групповые уроки: задачи учителя, личные доски учеников, разбор и трансляция."
+              icon={<IconGraduation />}
+              className="lg:col-span-2"
+              tone="accent"
+            />
+            <Tile
+              href="/fun"
+              title="Развлекательные шахматы"
+              text="Армия Света против армии Тьмы: сказочные фигуры, битвы и магия — детям точно понравится!"
+              icon={<IconSword />}
+              className="lg:col-span-6"
+              badge="Новое"
+            />
+          </div>
         </section>
 
-        <section className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          <Tile
-            href={user ? '/play' : '/login?next=/play'}
-            title="Играть онлайн"
-            text="Быстрая партия со случайным соперником в выбранном таймере."
-            icon={<IconKnight />}
-            tone="amber"
-          />
-          <Tile
-            href={user ? '/rooms' : '/login?next=/rooms'}
-            title="Создать комнату"
-            text="Открыть приватный или публичный класс для урока."
-            icon={<IconRook />}
-            tone="emerald"
-          />
-          <Tile
-            href={user ? '/tournaments' : '/login?next=/tournaments'}
-            title="Турниры"
-            text="Арена со свободным подбором, таблицей и трансляцией всех партий."
-            icon={<IconTrophy />}
-            tone="violet"
-          />
-          <Tile
-            href="/learn"
-            title="Обучение"
-            text="Тактические задачи: маты, эндшпили, вилки и связки."
-            icon={<IconBook />}
-            tone="sky"
-            badge="Новое"
-          />
+        {/* ── Возможности платформы: без карточек, чистые колонки с иконками ── */}
+        <section className="mt-20 sm:mt-24">
+          <h2 className="font-display text-2xl font-bold tracking-tight text-stone-900 sm:text-3xl dark:text-stone-50">
+            Почему удобно учить и учиться
+          </h2>
+          <div className="mt-8 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
+            <Feature
+              title="Живая доска"
+              text="Учитель ведёт урок, ученики видят перетаскивание каждой фигуры в реальном времени."
+              icon={<ChalkboardTeacher size={26} weight="duotone" />}
+            />
+            <Feature
+              title="Чистое аудио"
+              text="WebRTC peer-to-peer прямо в браузере. Никаких Zoom — только ваша комната."
+              icon={<Microphone size={26} weight="duotone" />}
+            />
+            <Feature
+              title="Движок Stockfish"
+              text="Сыграйте партию против ИИ или попросите движок проанализировать позицию."
+              icon={<Robot size={26} weight="duotone" />}
+            />
+            <Feature
+              title="Управление классом"
+              text="Учитель видит участников, может выключить микрофон одному или сразу всем."
+              icon={<ShieldCheck size={26} weight="duotone" />}
+            />
+          </div>
         </section>
 
-        <section className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          <Tile
-            href={user ? '/class' : '/login?next=/class'}
-            title="Класс"
-            text="Групповые уроки: задачи учителя, личные доски учеников, разбор и трансляция."
-            icon={<IconGraduation />}
-            tone="rose"
-          />
-        </section>
-
-        <section className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          <Feature
-            title="Живая доска"
-            text="Учитель ведёт урок, ученики видят перетаскивание каждой фигуры в реальном времени."
-            icon="♞"
-          />
-          <Feature
-            title="Чистое аудио"
-            text="WebRTC peer-to-peer прямо в браузере. Никаких Zoom — только ваша комната."
-            icon="🎙"
-          />
-          <Feature
-            title="Движок Stockfish"
-            text="Сыграйте партию против ИИ или попросите движок проанализировать позицию."
-            icon="🤖"
-          />
-          <Feature
-            title="Управление классом"
-            text="Учитель видит участников, может выключить микрофон одному или сразу всем."
-            icon="🛡"
-          />
-        </section>
-
-        <footer className="mt-16 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-stone-300/60 pt-6 text-center text-sm text-stone-500 dark:border-stone-700/60 dark:text-stone-400">
-          <Link href="/privacy" className="hover:text-brand-600 hover:underline dark:hover:text-brand-400">
-            Политика обработки персональных данных
-          </Link>
-          <Link href="/terms" className="hover:text-brand-600 hover:underline dark:hover:text-brand-400">
-            Пользовательское соглашение
-          </Link>
+        <footer className="mt-20 flex flex-wrap items-center justify-between gap-3 border-t border-stone-300/50 pt-6 text-sm text-stone-500 dark:border-stone-700/60 dark:text-stone-400">
+          <span>gogachess — шахматы для обучения</span>
+          <span className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <Link href="/privacy" className="transition-colors hover:text-brand-600 dark:hover:text-brand-300">
+              Политика обработки персональных данных
+            </Link>
+            <Link href="/terms" className="transition-colors hover:text-brand-600 dark:hover:text-brand-300">
+              Пользовательское соглашение
+            </Link>
+          </span>
         </footer>
       </main>
     </>
   );
 }
 
-type Tone = 'amber' | 'emerald' | 'violet' | 'sky' | 'rose';
-
-const TONE_BG: Record<Tone, string> = {
-  amber: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
-  emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
-  violet: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200',
-  sky: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200',
-  rose: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200',
-};
-
 function Tile({
   href,
   title,
   text,
   icon,
-  tone,
   badge,
+  featured = false,
+  tone,
+  className = '',
 }: {
   href: string;
   title: string;
   text: string;
   icon: React.ReactNode;
-  tone: Tone;
   badge?: string;
+  /** Выделенная плитка: мягкий зелёный градиент вместо белого фона. */
+  featured?: boolean;
+  /** Янтарная подложка иконки (акцент-вариация для ритма сетки). */
+  tone?: 'accent';
+  className?: string;
 }) {
   return (
-    <Link href={href} className="tile group">
+    <Link
+      href={href}
+      className={`tile group flex flex-col ${className} ${
+        featured
+          ? '!border-brand-200/70 bg-gradient-to-br from-brand-50 via-paper to-paper dark:!border-brand-800/60 dark:from-brand-900/30 dark:via-paper-dark dark:to-paper-dark'
+          : ''
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
-        <div className={`grid h-12 w-12 place-items-center rounded-2xl ${TONE_BG[tone]} shadow-soft`}>{icon}</div>
+        <div
+          className={`grid h-12 w-12 place-items-center rounded-2xl shadow-soft ${
+            featured
+              ? 'bg-brand-500 text-white'
+              : tone === 'accent'
+                ? 'bg-accent-100 text-accent-700 dark:bg-accent-900/40 dark:text-accent-200'
+                : 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+          }`}
+        >
+          {icon}
+        </div>
         {badge && (
-          <span className="badge bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+          <span className="badge bg-accent-100 text-accent-700 dark:bg-accent-900/40 dark:text-accent-200">
             {badge}
           </span>
         )}
       </div>
-      <h3 className="mt-5 text-lg font-semibold">{title}</h3>
-      <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">{text}</p>
-      <div className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-brand-600 transition-transform group-hover:translate-x-0.5 dark:text-brand-300">
-        Открыть <span aria-hidden>→</span>
+      <h3 className="mt-5 text-lg font-semibold tracking-tight">{title}</h3>
+      <p className="mt-1 text-sm leading-relaxed text-stone-600 dark:text-stone-400">{text}</p>
+      <div className="mt-auto pt-5">
+        <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 dark:text-brand-300">
+          Открыть
+          <ArrowRight size={15} weight="bold" aria-hidden className="transition-transform duration-200 group-hover:translate-x-0.5" />
+        </span>
       </div>
     </Link>
   );
 }
 
-function Feature({ title, text, icon }: { title: string; text: string; icon: string }) {
-  // Информационный блок (не ссылка): без фона/тени, чтобы визуально не выглядел
-  // как кликабельная плитка. Иконка без подложки — просто акцент.
+function Feature({ title, text, icon }: { title: string; text: string; icon: React.ReactNode }) {
   return (
-    <div className="cursor-default select-none">
-      <div className="mb-3 text-2xl text-brand-600/80 dark:text-brand-300/80">{icon}</div>
-      <h3 className="text-lg font-semibold">{title}</h3>
-      <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">{text}</p>
+    <div className="border-t-2 border-brand-500/25 pt-5 dark:border-brand-400/20">
+      <div className="mb-3 text-brand-600 dark:text-brand-300">{icon}</div>
+      <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
+      <p className="mt-1.5 text-sm leading-relaxed text-stone-600 dark:text-stone-400">{text}</p>
     </div>
   );
 }
 
-/* Иконки */
+/* Шахматные иконки разделов */
 function IconKnight() {
   return (
     <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>
@@ -191,6 +278,13 @@ function IconGraduation() {
   return (
     <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>
       <path d="M12 2 1 8l11 6 9-4.9V16h2V8L12 2zM4 13.5V17c0 1.7 3.6 3 8 3s8-1.3 8-3v-3.5l-8 4.4-8-4.4z" />
+    </svg>
+  );
+}
+function IconSword() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>
+      <path d="M6.92 5H5l9 9 1-.94L6.92 5zM4.14 19.86l1.41 1.41 2.12-2.12 1.42 1.41 1.41-1.41-1.41-1.42 9.9-9.9L20.4 3.6a1 1 0 0 0-1.3-1.3l-4.24 1.42-9.9 9.9-1.41-1.42-1.42 1.42 1.42 1.41-2.13 2.12.71.71h.01z" />
     </svg>
   );
 }

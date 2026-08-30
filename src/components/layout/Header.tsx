@@ -58,7 +58,7 @@ export function Header() {
   );
 
   return (
-    <header className="sticky top-0 z-30 border-b border-stone-200/60 bg-surface/70 backdrop-blur-md dark:border-stone-800/60 dark:bg-surface-dark/70">
+    <header className="sticky top-0 z-30 border-b border-stone-900/[.06] bg-surface-light/80 backdrop-blur-md dark:border-white/[.06] dark:bg-surface-dark/80">
       <div className="flex w-full items-center justify-between px-2 py-1.5 sm:px-3 lg:pl-4 lg:pr-5">
         <Link href="/" className="flex items-center gap-2.5 font-display">
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-500 text-white shadow-soft">
@@ -77,18 +77,15 @@ export function Header() {
           <span className="text-xl font-semibold leading-none tracking-tight sm:text-[1.4rem]">gogachess</span>
         </Link>
 
-        <nav className="flex items-center gap-3">
-          <Link href="/rooms" className="hidden text-sm font-bold text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
-            Комнаты
-          </Link>
-          <Link href="/class" className="hidden text-sm font-bold text-stone-600 hover:text-brand-600 dark:text-stone-300 sm:inline">
-            Класс
-          </Link>
+        <nav className="flex items-center gap-1.5 sm:gap-2">
+          <NavLink href="/rooms" pathname={pathname}>Комнаты</NavLink>
+          <NavLink href="/class" pathname={pathname}>Класс</NavLink>
+          <span className="mx-1 hidden h-5 w-px bg-stone-900/10 sm:block dark:bg-white/10" aria-hidden />
           <ThemeToggle />
           {user ? (
             <AccountMenu user={user} onUserChange={setUser} onLogout={logout} />
           ) : (
-            <Link href="/login" className="btn-primary text-xs">
+            <Link href="/login" className="btn-primary px-4 py-2 text-sm">
               Войти
             </Link>
           )}
@@ -96,5 +93,31 @@ export function Header() {
       </div>
       {showVerifyBanner && user?.email && <EmailVerifyBanner email={user.email} />}
     </header>
+  );
+}
+
+/** Ссылка основной навигации с подсветкой активного раздела. */
+function NavLink({
+  href,
+  pathname,
+  children,
+}: {
+  href: string;
+  pathname: string | null;
+  children: React.ReactNode;
+}) {
+  const active = pathname === href || (pathname?.startsWith(href + '/') ?? false);
+  return (
+    <Link
+      href={href}
+      aria-current={active ? 'page' : undefined}
+      className={`hidden rounded-lg px-2.5 py-1.5 text-sm font-semibold transition-colors sm:inline ${
+        active
+          ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+          : 'text-stone-600 hover:bg-stone-900/[.05] hover:text-stone-900 dark:text-stone-300 dark:hover:bg-white/[.06] dark:hover:text-white'
+      }`}
+    >
+      {children}
+    </Link>
   );
 }

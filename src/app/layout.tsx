@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import { Onest } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
 import { AnalyticsGate } from '@/components/analytics/AnalyticsGate';
@@ -10,7 +10,8 @@ import { PieceSetHydrator } from '@/components/ui/PieceSetHydrator';
 
 // Единый шрифт на весь сайт (текст и заголовки) — самохостится Next.js при
 // сборке (без внешних запросов к Google Fonts, без сдвига layout при загрузке).
-const inter = Inter({
+// Onest: геометрический гротеск с полной кириллицей и выразительными весами.
+const onest = Onest({
   subsets: ['latin', 'cyrillic'],
   variable: '--font-sans',
   display: 'swap',
@@ -87,13 +88,15 @@ export const viewport: Viewport = {
   // Пинч-зум пальцами при этом остаётся доступен (iOS 10+ игнорирует ограничение
   // для жестов пользователя, но уважает его для авто-зума на инпутах).
   maximumScale: 1,
-  themeColor: '#c9c5b1',
+  themeColor: '#f4f3ee',
 };
 
+// Тема по умолчанию — СВЕТЛАЯ (основной вид сайта). Тёмная включается только
+// если пользователь сам выбрал её переключателем (выбор хранится в localStorage).
 const themeBootstrap = `
 (function(){try{
   var s = localStorage.getItem('chessclass-theme');
-  if(!s){ s = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
+  if(!s){ s = 'light'; }
   if(s === 'dark') document.documentElement.classList.add('dark');
   var b = localStorage.getItem('${BOARD_THEME_KEY}');
   if(b) document.documentElement.setAttribute('data-board-theme', b);
@@ -107,7 +110,7 @@ const boardThemeCss = buildBoardThemeCss();
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru" suppressHydrationWarning className={inter.variable}>
+    <html lang="ru" suppressHydrationWarning className={onest.variable}>
       <head>
         <style dangerouslySetInnerHTML={{ __html: boardThemeCss }} />
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />

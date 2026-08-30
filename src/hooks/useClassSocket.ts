@@ -18,6 +18,8 @@ interface Result {
   openMyBoard: (fen?: string) => void;
   /** Включить/выключить трансляцию для уже открытой «Моей доски». */
   toggleBroadcast: (on?: boolean) => void;
+  /** Запереть/отпереть вход на урок для учеников, которых ещё нет в классе. */
+  toggleDoor: (closed: boolean) => void;
 }
 
 /** Подключение к серверу для подписки на ClassState (учитель и ученик). */
@@ -68,6 +70,9 @@ export function useClassSocket(slug: string | null): Result {
   const toggleBroadcast = useCallback((on?: boolean) => {
     socketRef.current?.emit(SocketEvents.ClassBroadcastToggle, { on });
   }, []);
+  const toggleDoor = useCallback((closed: boolean) => {
+    socketRef.current?.emit(SocketEvents.ClassDoorToggle, { closed });
+  }, []);
 
   return {
     connected,
@@ -79,5 +84,6 @@ export function useClassSocket(slug: string | null): Result {
     stopDemo,
     openMyBoard,
     toggleBroadcast,
+    toggleDoor,
   };
 }

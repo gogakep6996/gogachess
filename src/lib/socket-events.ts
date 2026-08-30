@@ -102,6 +102,8 @@ export const SocketEvents = {
   ClassMyBoardOpen: 'class:my-board-open',
   /** Учитель: переключить флаг трансляции (видна ли ученикам). */
   ClassBroadcastToggle: 'class:broadcast-toggle',
+  /** Учитель: запереть/отпереть вход на урок для новых учеников. */
+  ClassDoorToggle: 'class:door-toggle',
   /** Авто-уведомление: ученик решил задачу. */
   TaskSessionSolved: 'task:solved',
 } as const;
@@ -385,6 +387,18 @@ export interface ClassStatePayload {
   lobbyParticipants: Array<{ userId: string; name: string; role: 'teacher' | 'student' }>;
   /** Активные сессии учеников в этом классе. */
   sessions: ClassActiveSessionDto[];
+  /** Учитель запер вход: новые ученики на урок не попадут. */
+  joinsClosed: boolean;
+  /**
+   * Кого пускать на урок при запертой двери. Список фиксируется в момент
+   * запирания и живёт до конца урока, поэтому обновление страницы, потеря
+   * связи или случайный выход не выставляют ученика за дверь.
+   *
+   * Клиенту нужен, чтобы заранее показать ученику, войдёт он или нет:
+   * `ClassState` рассылается всему классу одним снэпшотом, персонального
+   * флага в нём быть не может.
+   */
+  admittedIds: string[];
 }
 
 /** Каноничные тайм-контроли. */

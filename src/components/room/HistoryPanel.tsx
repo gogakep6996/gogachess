@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react';
+import { ListNumbers } from '@phosphor-icons/react';
 import type { MoveHistoryEntry, MoveTreeNode } from '@/lib/socket-events';
 import { STARTING_FEN } from '@/lib/socket-events';
 import { cn } from '@/lib/utils';
+import { EmptyHint, Panel } from './ui';
 
 interface Props {
   history: MoveHistoryEntry[];
@@ -20,6 +22,11 @@ interface Props {
   viewNodeId?: string | null;
   onSelectNode?: (id: string | null) => void;
 }
+
+/** Общий вид кликабельной записи хода. Варианты — янтарные, главная линия — нейтральная. */
+const MOVE_CELL =
+  'rounded-lg px-1.5 py-1 text-[12px] font-semibold leading-none tabular-nums transition-colors duration-150 ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45';
 
 export function HistoryPanel({
   history,
@@ -80,45 +87,30 @@ export function HistoryPanel({
   }
 
   return (
-    <div
-      className={cn(
-        'flex min-h-0 flex-col rounded-xl border border-stone-200/80 bg-paper/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
-        className,
-      )}
-    >
-      <div className="flex items-center justify-between border-b border-stone-200/70 px-2 py-1 dark:border-stone-800/70">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
-          История
-        </h3>
-        <span className="text-[10px] text-stone-400">
-          {history.length} {history.length === 1 ? 'ход' : history.length >= 2 && history.length <= 4 ? 'хода' : 'ходов'}
+    <Panel
+      title="Ходы"
+      icon={ListNumbers}
+      className={className}
+      bodyClassName="min-h-0 flex-1 overflow-hidden"
+      action={
+        <span className="text-[11px] font-semibold tabular-nums text-stone-400 dark:text-stone-500">
+          {history.length}
         </span>
-      </div>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
+      }
+    >
+      <div ref={scrollRef} className="h-full overflow-y-auto overscroll-contain p-1.5">
         {history.length === 0 ? (
-          <div className="px-1 py-2 text-center text-[11px] text-stone-400">
-            Пока ходов нет
-          </div>
+          <EmptyHint>Партия ещё не начата</EmptyHint>
         ) : (
           <ol className="space-y-0.5">
             <li>
-              <button
-                type="button"
-                data-active={viewIdx === -1}
-                onClick={() => onSelect(-1)}
-                className={cn(
-                  'w-full rounded px-1.5 py-0.5 text-left text-[11px] transition',
-                  viewIdx === -1
-                    ? 'bg-brand-100 font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
-                    : 'text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800',
-                )}
-              >
-                Старт партии
-              </button>
+              <StartCell active={viewIdx === -1} onClick={() => onSelect(-1)} />
             </li>
             {pairs.map(({ num, w, b }) => (
-              <li key={num} className="flex items-center gap-1 text-[11px] tabular-nums">
-                <span className="w-5 shrink-0 text-right text-stone-400">{num}.</span>
+              <li key={num} className="flex items-center gap-1">
+                <span className="w-6 shrink-0 text-right text-[11px] tabular-nums text-stone-400 dark:text-stone-500">
+                  {num}.
+                </span>
                 {w && (
                   <SanCell entry={w} active={viewIdx === w.idx} onClick={() => onSelect(w.idx)} />
                 )}
@@ -130,7 +122,26 @@ export function HistoryPanel({
           </ol>
         )}
       </div>
-    </div>
+    </Panel>
+  );
+}
+
+function StartCell({ active, onClick }: { active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-active={active}
+      onClick={onClick}
+      className={cn(
+        MOVE_CELL,
+        'w-full text-left',
+        active
+          ? 'bg-brand-600 text-white'
+          : 'text-stone-500 hover:bg-stone-900/[0.06] dark:text-stone-400 dark:hover:bg-white/[0.08]',
+      )}
+    >
+      Начальная позиция
+    </button>
   );
 }
 
@@ -148,13 +159,14 @@ function SanCell({
       type="button"
       data-active={active}
       onClick={onClick}
-      title={entry.legal ? entry.san : `${entry.san} · нелегальный`}
+      title={entry.legal ? entry.san : `${entry.san} - нелегальный ход`}
       className={cn(
-        'flex-1 truncate rounded px-1.5 py-0.5 text-left font-medium transition',
+        MOVE_CELL,
+        'flex-1 truncate text-left',
         active
-          ? 'bg-brand-100 text-brand-800 dark:bg-brand-900/40 dark:text-brand-200'
-          : 'hover:bg-stone-100 dark:hover:bg-stone-800',
-        !entry.legal && 'italic text-amber-700 dark:text-amber-300',
+          ? 'bg-brand-600 text-white'
+          : 'text-stone-700 hover:bg-stone-900/[0.06] dark:text-stone-200 dark:hover:bg-white/[0.08]',
+        !entry.legal && !active && 'italic text-amber-700 dark:text-amber-300',
       )}
     >
       {entry.san}
@@ -164,8 +176,8 @@ function SanCell({
 
 // ─────────────────────────────────────────────────────────────────────────
 // Дерево ходов с ветками (варианты как в Lichess). Инлайн-нотация: главная
-// линия — обычным цветом, варианты — в скобках, приглушённым/янтарным цветом
-// и с отступом, чтобы визуально отличаться.
+// линия — обычным цветом, варианты — в скобках, янтарным цветом и с отступом,
+// чтобы их было видно с одного взгляда.
 // ─────────────────────────────────────────────────────────────────────────
 function TreePanel({
   scrollRef,
@@ -216,13 +228,13 @@ function TreePanel({
       const m = meta(node);
       if (m.white) {
         out.push(
-          <span key={`${node.id}:n`} className="mr-0.5 text-stone-400">
+          <span key={`${node.id}:n`} className="mr-0.5 text-stone-400 dark:text-stone-500">
             {m.num}.
           </span>,
         );
       } else if (needNum) {
         out.push(
-          <span key={`${node.id}:n`} className="mr-0.5 text-stone-400">
+          <span key={`${node.id}:n`} className="mr-0.5 text-stone-400 dark:text-stone-500">
             {m.num}…
           </span>,
         );
@@ -245,9 +257,9 @@ function TreePanel({
             <span
               key={`${node.id}:var${i}`}
               className={cn(
-                'mx-0.5 rounded text-amber-700 dark:text-amber-300',
+                'mx-0.5 text-amber-700 dark:text-amber-300',
                 depth === 0 &&
-                  'my-0.5 block border-l-2 border-amber-300/60 pl-1.5 dark:border-amber-500/40',
+                  'my-1 block border-l-2 border-amber-300/70 pl-1.5 dark:border-amber-600/50',
               )}
             >
               <span className="text-amber-500/70">(</span>
@@ -266,43 +278,30 @@ function TreePanel({
   const rootKids = childrenOf(null);
 
   return (
-    <div
-      className={cn(
-        'flex min-h-0 flex-col rounded-xl border border-stone-200/80 bg-paper/70 shadow-soft backdrop-blur dark:border-stone-800/80 dark:bg-stone-900/50',
-        className,
-      )}
+    <Panel
+      title="Ходы"
+      icon={ListNumbers}
+      className={className}
+      bodyClassName="min-h-0 flex-1 overflow-hidden"
+      action={
+        moveTree.length > 0 ? (
+          <span className="text-[11px] font-semibold tabular-nums text-stone-400 dark:text-stone-500">
+            {moveTree.length}
+          </span>
+        ) : undefined
+      }
     >
-      <div className="flex items-center justify-between border-b border-stone-200/70 px-2 py-1 dark:border-stone-800/70">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
-          История
-        </h3>
-        {moveTree.length > 0 && (
-          <span className="text-[10px] text-stone-400">{moveTree.length}</span>
-        )}
-      </div>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
-        <button
-          type="button"
-          data-active={viewNodeId === null}
-          onClick={() => onSelectNode(null)}
-          className={cn(
-            'mb-1 w-full rounded px-1.5 py-0.5 text-left text-[11px] transition',
-            viewNodeId === null
-              ? 'bg-brand-100 font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
-              : 'text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800',
-          )}
-        >
-          Старт партии
-        </button>
+      <div ref={scrollRef} className="h-full overflow-y-auto overscroll-contain p-1.5">
+        <StartCell active={viewNodeId === null} onClick={() => onSelectNode(null)} />
         {rootKids.length === 0 ? (
-          <div className="px-1 py-2 text-center text-[11px] text-stone-400">Пока ходов нет</div>
+          <EmptyHint>Партия ещё не начата</EmptyHint>
         ) : (
-          <div className="text-[11px] leading-relaxed tabular-nums">
+          <div className="mt-1 text-[12px] leading-relaxed tabular-nums">
             {renderChain(rootKids[0].id, 0)}
             {rootKids.slice(1).map((alt, i) => (
               <span
                 key={`root:var${i}`}
-                className="my-0.5 block rounded border-l-2 border-amber-300/60 pl-1.5 text-amber-700 dark:border-amber-500/40 dark:text-amber-300"
+                className="my-1 block border-l-2 border-amber-300/70 pl-1.5 text-amber-700 dark:border-amber-600/50 dark:text-amber-300"
               >
                 <span className="text-amber-500/70">(</span>
                 {renderChain(alt.id, 1)}
@@ -312,7 +311,7 @@ function TreePanel({
           </div>
         )}
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -334,16 +333,17 @@ function MoveChip({
       type="button"
       data-active={active}
       onClick={onClick}
-      title={node.legal ? node.san : `${node.san} · нелегальный`}
+      title={node.legal ? node.san : `${node.san} - нелегальный ход`}
       className={cn(
-        'mr-0.5 inline rounded px-1 py-0.5 font-medium transition',
+        MOVE_CELL,
+        'mr-0.5 inline',
         active
-          ? 'bg-brand-500 text-white'
+          ? 'bg-brand-600 text-white'
           : variation
-            ? 'text-amber-700 hover:bg-amber-100/60 dark:text-amber-300 dark:hover:bg-amber-900/30'
-            : 'text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800',
+            ? 'text-amber-700 hover:bg-amber-100/70 dark:text-amber-300 dark:hover:bg-amber-900/40'
+            : 'text-stone-700 hover:bg-stone-900/[0.06] dark:text-stone-200 dark:hover:bg-white/[0.08]',
         !node.legal && 'italic',
-        !active && isCurrent && 'ring-1 ring-brand-400/70',
+        !active && isCurrent && 'ring-1 ring-inset ring-brand-400/70',
       )}
     >
       {node.san}

@@ -563,6 +563,12 @@ interface ClassRuntime {
    *  от переподключения уже получившего задачу ученика (он здесь есть → не сбрасывать
    *  его прогресс). Очищается при раздаче новой задачи и остановке урока. */
   distributedTo: Set<string>;
+  /** Учитель запер дверь: новых учеников на урок не пускаем. */
+  joinsClosed: boolean;
+  /** Кого пускать при запертой двери: все, кто успел войти, пока было открыто.
+   *  Не чистится при выходе ученика — иначе обрыв связи или случайный выход
+   *  на главную оставили бы его за дверью до конца урока. */
+  admitted: Set<string>;
 }
 
 const classRuntimes = new Map<string, ClassRuntime>(); // classId -> runtime
@@ -583,6 +589,8 @@ async function loadOrCreateClassRuntime(classId: string): Promise<ClassRuntime |
     demoBroadcast: false,
     lobbyMembers: new Map(),
     distributedTo: new Set(),
+    joinsClosed: false,
+    admitted: new Set(),
   };
   classRuntimes.set(classId, rt);
   return rt;
@@ -594,6 +602,21 @@ function findClassRuntimeByLobbyCode(code: string): ClassRuntime | null {
     if (rt.lobbyRoomCode === code) return rt;
   }
   return null;
+}
+
+/** Класс по коду любой его служебной комнаты урока: lobby или показа. */
+function findClassRuntimeByServiceRoom(code: string): ClassRuntime | null {
+  for (const rt of classRuntimes.values()) {
+    if (rt.lobbyRoomCode === code || rt.demoRoomCode === code) return rt;
+  }
+  return null;
+}
+
+/** Пускать ли этого пользователя в служебные комнаты урока. */
+function classDoorAllows(rt: ClassRuntime, userId: string): boolean {
+  if (!rt.joinsClosed) return true;
+  if (userId === rt.ownerId) return true;
+  return rt.admitted.has(userId);
 }
 
 /** userId учеников/учителя, реально вошедших в урок = участники lobby-комнаты.
@@ -675,6 +698,8 @@ async function buildClassState(io: IOServer, rt: ClassRuntime): Promise<ClassSta
         role: info.role,
       })),
     sessions,
+    joinsClosed: rt.joinsClosed,
+    admittedIds: Array.from(rt.admitted),
   };
 }
 
@@ -1169,6 +1194,19 @@ app.prepare().then(() => {
       // Кто-то вернулся в комнату — отменяем отложенное удаление, чтобы сохранить историю.
       cancelRoomDeletion(code);
 
+      // Запертая дверь класса: на урок пускаем только тех, кто уже был внутри
+      // в момент запирания. Проверяем ДО join — иначе ученик успеет получить
+      // состояние комнаты и голос соседей. Комната показа закрыта наравне с
+      // lobby: её код уходит в ClassState всем подписчикам страницы класса,
+      // и без проверки запертый ученик открыл бы трансляцию по прямой ссылке.
+      if (runtime.kind === 'class-lobby' || runtime.kind === 'class-demo') {
+        const gate = findClassRuntimeByServiceRoom(code);
+        if (gate && !classDoorAllows(gate, userId)) {
+          socket.emit(SocketEvents.RoomError, 'Учитель закрыл вход на урок');
+          return;
+        }
+      }
+
       const role: Participant['role'] = runtime.ownerId === userId ? 'teacher' : 'student';
       const participant: Participant = {
         socketId: socket.id,
@@ -1192,6 +1230,10 @@ app.prepare().then(() => {
       if (runtime.kind === 'class-lobby') {
         const lobbyClass = findClassRuntimeByLobbyCode(code);
         if (lobbyClass) {
+          // Вошёл, пока дверь открыта — попадает в список допущенных и сможет
+          // вернуться, даже если учитель запрёт класс, пока ученик перезагружает
+          // страницу или переживает обрыв связи.
+          if (role === 'student') lobbyClass.admitted.add(userId);
           if (
             role === 'student' &&
             lobbyClass.lessonActive &&
@@ -2243,6 +2285,10 @@ app.prepare().then(() => {
         rt.lobbyRoomCode = code;
       }
       rt.lessonActive = true;
+      // Новый урок всегда начинается с открытой двери: замок с прошлого урока
+      // молча не пустил бы весь класс.
+      rt.joinsClosed = false;
+      rt.admitted = new Set();
       void broadcastClass(io, rt);
     });
 
@@ -2257,6 +2303,8 @@ app.prepare().then(() => {
       rt.demoRoomCode = null;
       rt.demoBroadcast = false;
       rt.distributedTo = new Set();
+      rt.joinsClosed = false;
+      rt.admitted = new Set();
       // Урок завершён — стираем историю прошлых партий на всех досках класса.
       try {
         const boards = await prisma.taskSession.findMany({
@@ -2279,6 +2327,29 @@ app.prepare().then(() => {
         console.error('ClassLessonStop: clear pastGames failed', e);
       }
       // Lobby room оставляем — он легковесный и пригодится в следующий урок.
+      void broadcastClass(io, rt);
+    });
+
+    socket.on(SocketEvents.ClassDoorToggle, async (payload: { closed?: boolean } | boolean) => {
+      const cls = await prisma.class.findUnique({ where: { ownerId: userId } });
+      if (!cls) return;
+      const rt = classRuntimes.get(cls.id);
+      if (!rt || !rt.lessonActive) return;
+      if (rt.ownerId !== userId) return;
+
+      const closed =
+        typeof payload === 'boolean' ? payload : Boolean(payload?.closed);
+      rt.joinsClosed = closed;
+      if (closed) {
+        // Замок фиксирует текущий состав урока. Берём именно присутствующих в
+        // lobby, а не накопленный admitted: если ученик ушёл до запирания,
+        // учитель закрывал дверь уже без него.
+        rt.admitted = new Set(
+          Array.from(lessonPresentUserIds(rt)).filter((uid) => uid !== rt.ownerId),
+        );
+      } else {
+        rt.admitted = new Set();
+      }
       void broadcastClass(io, rt);
     });
 

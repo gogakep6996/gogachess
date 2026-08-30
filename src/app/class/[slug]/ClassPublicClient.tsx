@@ -2,13 +2,37 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  ArrowLeft,
+  Broadcast,
+  CaretLeft,
+  Folder,
+  FolderOpen,
+  Hourglass,
+  House,
+  Lock,
+  LockKey,
+  Play,
+  Target,
+  Warning,
+} from '@phosphor-icons/react';
 import { MiniBoard } from '@/components/chess/MiniBoard';
-import { FolderIcon } from '@/components/ui/FolderIcon';
 import { STARTING_FEN } from '@/lib/socket-events';
 import { useClassSocket } from '@/hooks/useClassSocket';
 import { ClassLobbyPanel } from '@/components/class/ClassLobbyPanel';
+import {
+  BoardCard,
+  BoardGrid,
+  EmptyState,
+  FolderTile,
+  ModeBar,
+  SectionHead,
+  SURFACE,
+} from '@/components/class/ui';
+import { ToolButton } from '@/components/room/ui';
 import { RoomClient } from '@/app/room/[code]/RoomClient';
 import { ClassAudioProvider } from '@/contexts/ClassAudioContext';
+import { cn } from '@/lib/utils';
 import type { TaskDto, FolderDto } from '../me/TasksLibrary';
 
 interface ClassDto {
@@ -32,7 +56,7 @@ interface Props {
 const CODE_STORAGE_KEY = (slug: string) => `class-access:${slug}`;
 // Где запоминаем открытую доску домашки — чтобы при F5 ученик остался за задачей.
 const HOMEWORK_STORAGE_KEY = (slug: string) => `class-homework:${slug}`;
-// Признак «ученик зашёл на урок» — чтобы при обновлении страницы не выкидывало с урока.
+// Признак «ученик зашёл на урок» — чтобы обновление страницы не выкидывало с урока.
 const LESSON_JOINED_KEY = (slug: string) => `class-lesson-joined:${slug}`;
 
 interface HomeworkBoard {
@@ -55,10 +79,10 @@ export function ClassPublicClient({
   const [code, setCode] = useState('');
   const [codeError, setCodeError] = useState<string | null>(null);
 
-  // Ученик ЯВНО зашёл на урок (через кнопку «Урок»). По умолчанию — нет:
-  // сначала ученик попадает на главную с домашками, а на урок входит сам.
-  // Лениво восстанавливаем из sessionStorage — чтобы при F5 не выкидывало с урока
-  // (если урок к этому моменту уже закончился, эффект ниже сбросит флаг обратно).
+  // Ученик ЯВНО зашёл на урок (кнопкой «Войти на урок»). По умолчанию — нет:
+  // сначала он попадает на главную с домашками. Лениво восстанавливаем из
+  // sessionStorage, чтобы F5 не выкидывал с урока (если урок уже кончился,
+  // эффект ниже сбросит флаг).
   const [lessonJoined, setLessonJoined] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     try {
@@ -67,9 +91,7 @@ export function ClassPublicClient({
       return false;
     }
   });
-  // Доска самостоятельного решения домашнего задания (вне урока).
-  // Лениво восстанавливаем из sessionStorage — чтобы при обновлении страницы
-  // ученик остался за задачей, а не «выпадал» на главную.
+  // Доска самостоятельного решения домашки (вне урока).
   const [homeworkBoard, setHomeworkBoard] = useState<HomeworkBoard | null>(() => {
     if (typeof window === 'undefined') return null;
     try {
@@ -81,7 +103,7 @@ export function ClassPublicClient({
   });
   const [startingTaskId, setStartingTaskId] = useState<string | null>(null);
   const [homeworkError, setHomeworkError] = useState<string | null>(null);
-  // Открытая папка домашек: undefined = список папок (блоки), иначе id группы
+  // Открытая папка домашек: undefined = список папок, иначе id группы
   // (id папки или '__none__' для «Без папки»).
   const [openHwFolder, setOpenHwFolder] = useState<string | undefined>(undefined);
 
@@ -114,19 +136,19 @@ export function ClassPublicClient({
     }
   }, [lessonJoined, cls.slug]);
 
-  // Кнопка «назад» браузера: если ученик за доской домашки — возвращаем его на
-  // главную (к списку ДЗ), а не уводим с сайта.
+  // Кнопка «назад» браузера: если ученик за доской домашки — возвращаем его к
+  // списку заданий, а не уводим с сайта.
   useEffect(() => {
     const onPop = () => setHomeworkBoard(null);
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // Подписка на live-состояние класса — для баннера «идёт урок» и кнопки «Урок».
+  // Подписка на live-состояние класса — для баннера «идёт урок» и входа на урок.
   const { state, connected } = useClassSocket(cls.slug);
   void connected;
 
-  // Если урок закончился, пока ученик был «на уроке» — возвращаем его на главную.
+  // Если урок закончился, пока ученик был на нём — возвращаем его на главную.
   useEffect(() => {
     if (lessonJoined && state && !state.lessonActive) setLessonJoined(false);
   }, [lessonJoined, state]);
@@ -153,7 +175,7 @@ export function ClassPublicClient({
         return;
       }
       const data = (await res.json()) as { roomCode: string; sideToPlay: string };
-      // Добавляем запись в историю браузера, чтобы «назад» вернул на список ДЗ.
+      // Добавляем запись в историю браузера, чтобы «назад» вернул к списку.
       try {
         window.history.pushState({ classHomework: cls.slug }, '');
       } catch {
@@ -187,7 +209,7 @@ export function ClassPublicClient({
       cache: 'no-store',
     });
     if (!res.ok) {
-      setCodeError('Ошибка запроса');
+      setCodeError('Не получилось проверить код. Попробуйте ещё раз.');
       return;
     }
     const data = (await res.json()) as {
@@ -210,8 +232,8 @@ export function ClassPublicClient({
 
   // Какую доску показывать ученику прямо сейчас:
   //  - демо (приоритет): учитель ведёт показ всем;
-  //  - личная доска задачи (если уже раздана и есть сессия с roomCode);
-  //  - иначе nothing → показываем витрину задач.
+  //  - личная доска задачи (если роздана и есть сессия);
+  //  - иначе ничего → экран ожидания.
   const activeBoard = useMemo(() => {
     if (!state) return null;
     // Демо-доска видна ученикам ТОЛЬКО при включённой трансляции.
@@ -233,15 +255,27 @@ export function ClassPublicClient({
   }, [state, meId]);
 
   const currentTaskForSide =
-    activeBoard?.kind === 'task'
-      ? tasks.find((t) => t.id === activeBoard.taskId)
-      : undefined;
+    activeBoard?.kind === 'task' ? tasks.find((t) => t.id === activeBoard.taskId) : undefined;
 
-  const lobbyParticipants = state?.lobbyParticipants ?? [];
-  // «На уроке» — только если ученик сам зашёл (lessonJoined) и урок идёт.
+  // «На уроке» — только если ученик сам зашёл и урок идёт.
   const inLesson = !!(lessonJoined && state?.lessonActive && state.lobbyRoomCode && meId);
-  // Домашки, сгруппированные по папкам (в порядке папок учителя),
-  // плюс отдельная группа «Без папки» в конце.
+
+  // Учитель запер вход. Список допущенных фиксируется в момент запирания, так
+  // что уже вошедшие спокойно переживают F5 и обрывы связи, а остальные внутрь
+  // не попадут: сервер отклонит их и на входе в lobby-комнату.
+  const lockedOut = !!(
+    state?.joinsClosed &&
+    !isOwner &&
+    (!meId || !state.admittedIds.includes(meId))
+  );
+
+  // Если дверь заперли, пока ученика не было в классе, — не даём ему висеть на
+  // экране урока в ожидании доски, которую он уже не получит.
+  useEffect(() => {
+    if (lockedOut && lessonJoined) setLessonJoined(false);
+  }, [lockedOut, lessonJoined]);
+
+  // Домашки, сгруппированные по папкам учителя, плюс «Без папки» в конце.
   const homeworkGroups = useMemo(() => {
     const hw = tasks.filter((t) => t.isHomework);
     const byFolder = new Map<string, TaskDto[]>();
@@ -267,50 +301,41 @@ export function ClassPublicClient({
     return { total: hw.length, groups };
   }, [tasks, folders]);
 
-  // ЖЁСТКИЙ ГЕЙТ: класс с кодом доступа закрыт целиком, пока код не введён.
-  // Не показываем ни доску урока, ни лобби, ни список задач, ни аудио —
-  // только экран ввода кода. Иначе ученик мог зайти на урок без подтверждения.
+  // ЖЁСТКИЙ ГЕЙТ: класс с кодом закрыт целиком, пока код не введён. Ни доски
+  // урока, ни лобби, ни списка задач — иначе можно было бы попасть на урок
+  // без подтверждения.
   if (codeNeeded) {
     return renderCodeGate();
   }
 
-  // Старая раскладка: либо full-screen RoomClient (за доской), либо витрина задач + правый aside.
-  // Лобби-аудио живёт в провайдере уровнем выше — WebRTC mesh не пересобирается
-  // при переключении вида.
   const view = renderView();
 
   return inLesson && state?.lobbyRoomCode ? (
-    <ClassAudioProvider lobbyRoomCode={state.lobbyRoomCode}>
-      {view}
-    </ClassAudioProvider>
+    <ClassAudioProvider lobbyRoomCode={state.lobbyRoomCode}>{view}</ClassAudioProvider>
   ) : (
     view
   );
 
+  // ── Экран ввода кода ──
   function renderCodeGate(): ReactNode {
     return (
       <main className="flex min-h-0 flex-1 items-center justify-center px-4 py-10">
-        <div className="card w-full max-w-md">
-          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-            🔒 Закрытый класс
-          </div>
-          <h1 className="font-display text-xl font-semibold leading-tight">
+        <div className={cn('w-full max-w-md p-6', SURFACE)}>
+          <span
+            aria-hidden
+            className="grid h-10 w-10 place-items-center rounded-2xl bg-amber-500/15 text-amber-700 dark:text-amber-300"
+          >
+            <Lock size={20} weight="bold" />
+          </span>
+          <h1 className="mt-3 text-[19px] font-semibold leading-tight tracking-tight text-stone-900 dark:text-stone-50">
             {cls.name || `Класс — ${cls.ownerName}`}
           </h1>
-          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+          <p className="mt-1 text-[13px] text-stone-500 dark:text-stone-400">
             Учитель: {cls.ownerName}
           </p>
-          <p className="mt-3 text-sm text-stone-600 dark:text-stone-300">
-            Чтобы войти в класс, введите код доступа, который дал учитель.
+          <p className="mt-3 text-[13px] leading-relaxed text-stone-600 dark:text-stone-300">
+            Класс закрыт. Введите код доступа, который дал учитель.
           </p>
-          {!meId && (
-            <p className="mt-2 text-xs text-stone-500">
-              <Link href={`/login?next=/class/${cls.slug}`} className="underline">
-                Войдите в аккаунт
-              </Link>{' '}
-              — иначе вы не сможете участвовать в уроке.
-            </p>
-          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -320,54 +345,66 @@ export function ClassPublicClient({
           >
             <input
               type="text"
+              inputMode="numeric"
               autoFocus
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="например 1234"
-              className="flex-1 rounded-lg border border-stone-300 bg-paper px-3 py-2 font-mono text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-stone-700 dark:bg-stone-900"
+              aria-label="Код доступа"
+              className="h-10 min-w-0 flex-1 rounded-xl border-0 bg-stone-900/[0.05] px-3 font-mono text-[14px] tracking-wider text-stone-800 outline-none ring-1 ring-inset ring-transparent transition placeholder:font-sans placeholder:tracking-normal placeholder:text-stone-400 focus:bg-white focus:ring-brand-500/50 dark:bg-white/[0.07] dark:text-stone-100 dark:focus:bg-stone-800"
             />
-            <button type="submit" disabled={!code.trim()} className="btn-primary text-sm">
+            <ToolButton type="submit" tone="primary" size="md" disabled={!code.trim()}>
               Войти
-            </button>
+            </ToolButton>
           </form>
-          {codeError && <div className="mt-2 text-sm text-red-600">{codeError}</div>}
+          {codeError && (
+            <p className="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-red-600 dark:text-red-400">
+              <Warning size={14} weight="bold" aria-hidden />
+              {codeError}
+            </p>
+          )}
+          {!meId && (
+            <p className="mt-4 border-t border-stone-900/[0.07] pt-3 text-[12px] text-stone-500 dark:border-white/[0.08] dark:text-stone-400">
+              <Link
+                href={`/login?next=/class/${cls.slug}`}
+                className="font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300"
+              >
+                Войдите в аккаунт
+              </Link>
+              , иначе не получится участвовать в уроке.
+            </p>
+          )}
         </div>
       </main>
     );
   }
 
+  // ── Каркас «ученик за доской»: полоса режима + доска на всё остальное ──
   function renderBoardShell(opts: {
     roomCode: string;
     name: string;
     studentTaskMode?: { humanColor: 'w' | 'b' };
-    headerText: string;
-    isDemo: boolean;
+    icon: typeof Target;
+    tone: 'neutral' | 'brand' | 'amber';
+    live?: boolean;
+    title: string;
+    subtitle: string;
     onBack: () => void;
     backLabel: string;
   }): ReactNode {
-    const backButton = (
-      <button
-        onClick={opts.onBack}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-stone-300/70 bg-paper px-4 py-2 text-sm font-medium text-stone-700 shadow-sm transition hover:brightness-95 active:scale-95 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
-      >
-        <span className="text-base leading-none">🏠</span>
-        {opts.backLabel.replace(/^←\s*/, '')}
-      </button>
-    );
     return (
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          className={`flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-0.5 text-[11px] font-semibold leading-tight ${
-            opts.isDemo
-              ? 'border-b border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200'
-              : 'border-b border-stone-200 bg-stone-50 text-stone-700 dark:border-stone-700 dark:bg-stone-800/40 dark:text-stone-200'
-          }`}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <ModeBar
+          icon={opts.icon}
+          tone={opts.tone}
+          live={opts.live}
+          title={opts.title}
+          subtitle={opts.subtitle}
         >
-          <span>{opts.headerText}</span>
-          <span className="text-[10px] text-stone-500 dark:text-stone-400">
-            {cls.name || `Класс — ${cls.ownerName}`}
-          </span>
-        </div>
+          <ToolButton icon={ArrowLeft} onClick={opts.onBack}>
+            {opts.backLabel}
+          </ToolButton>
+        </ModeBar>
         <main className="flex min-h-0 flex-1 flex-col">
           <RoomClient
             meId={meId!}
@@ -381,39 +418,41 @@ export function ClassPublicClient({
             }}
             embedded
             studentTaskMode={opts.studentTaskMode}
-            leftTopSlot={backButton}
           />
         </main>
       </div>
     );
   }
 
-  // Карточка одной домашки (используется и в плоском списке, и внутри папки).
   function renderHwCard(t: TaskDto): ReactNode {
     const starting = startingTaskId === t.id;
     return (
-      <li
+      <BoardCard
         key={t.id}
-        className="card flex w-[244px] flex-col items-center gap-1.5 !p-2 text-center"
-      >
-        <MiniBoard fen={t.fen || STARTING_FEN} size={170} flipped={t.sideToPlay === 'b'} />
-        <div className="w-full truncate text-sm font-semibold" title={t.title}>
-          {t.title}
-        </div>
-        {meId ? (
-          <button
-            onClick={() => startHomework(t)}
-            disabled={starting}
-            className="btn-primary px-4 py-1 text-xs disabled:opacity-60"
-          >
-            {starting ? 'Открываем…' : '▶ Решать'}
-          </button>
-        ) : (
-          <Link href={`/login?next=/class/${cls.slug}`} className="btn-outline px-4 py-1 text-xs">
-            Войти
-          </Link>
-        )}
-      </li>
+        board={<MiniBoard fen={t.fen || STARTING_FEN} fluid flipped={t.sideToPlay === 'b'} />}
+        title={t.title}
+        meta={<span className="truncate">{t.sideToPlay === 'b' ? 'играют чёрные' : 'играют белые'}</span>}
+        footer={
+          meId ? (
+            <ToolButton
+              icon={Play}
+              tone="primary"
+              block
+              disabled={starting}
+              onClick={() => startHomework(t)}
+            >
+              {starting ? 'Открываем…' : 'Решать'}
+            </ToolButton>
+          ) : (
+            <Link
+              href={`/login?next=/class/${cls.slug}`}
+              className="inline-flex h-8 w-full items-center justify-center rounded-xl bg-stone-900/[0.05] text-[12px] font-semibold text-stone-700 transition-colors duration-150 hover:bg-stone-900/[0.09] dark:bg-white/[0.07] dark:text-stone-100"
+            >
+              Войти, чтобы решать
+            </Link>
+          )
+        }
+      />
     );
   }
 
@@ -424,22 +463,24 @@ export function ClassPublicClient({
         roomCode: homeworkBoard.roomCode,
         name: homeworkBoard.taskTitle,
         studentTaskMode: { humanColor: homeworkBoard.humanColor },
-        headerText: `🎯 Домашка: ${homeworkBoard.taskTitle}`,
-        isDemo: false,
-        // Через history.back() — чтобы синхронно сработала «назад» браузера
-        // (popstate уберёт доску). Если запушенной записи нет — просто закрываем.
+        icon: Target,
+        tone: 'neutral',
+        title: homeworkBoard.taskTitle,
+        subtitle: 'Домашнее задание',
+        // Через history.back(), чтобы синхронно сработала «назад» браузера
+        // (popstate уберёт доску). Если записи нет — просто закрываем.
         onBack: () => {
           if (window.history.state?.classHomework) window.history.back();
           else setHomeworkBoard(null);
         },
-        backLabel: '← К задачам',
+        backLabel: 'К заданиям',
       });
     }
 
-    // 2) Ученик зашёл на урок (кнопкой «Урок»). Показываем доску урока, а если
-    //    учитель ещё ничего не раздал — экран ожидания с ростером.
+    // 2) Ученик на уроке.
     if (inLesson && meId) {
       const leaveLesson = () => setLessonJoined(false);
+
       if (activeBoard) {
         const isDemo = activeBoard.kind === 'demo';
         const humanColor: 'w' | 'b' =
@@ -450,202 +491,214 @@ export function ClassPublicClient({
           roomCode: activeBoard.roomCode,
           name: activeBoard.kind === 'task' ? activeBoard.taskTitle : 'Показ учителя',
           studentTaskMode: activeBoard.kind === 'task' ? { humanColor } : undefined,
-          headerText: isDemo
-            ? '🔴 Учитель транслирует свою доску — следите за разбором'
-            : `🎯 Задача: ${activeBoard.kind === 'task' ? activeBoard.taskTitle : ''}`,
-          isDemo,
+          icon: isDemo ? Broadcast : Target,
+          tone: isDemo ? 'brand' : 'neutral',
+          live: isDemo,
+          title: isDemo
+            ? 'Учитель показывает свою доску'
+            : activeBoard.kind === 'task'
+              ? activeBoard.taskTitle
+              : 'Задача',
+          subtitle: isDemo ? 'Следите за разбором' : 'Ваша личная доска на уроке',
           onBack: leaveLesson,
-          backLabel: '← На главную',
+          backLabel: 'На главную',
         });
       }
-      // Урок идёт, но задача ещё не роздана / трансляции нет.
+
+      // Урок идёт, но задачи ещё нет и трансляция не включена.
       return (
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_240px]">
-          <main className="flex min-h-0 flex-col items-center justify-center gap-3 px-4 py-6 text-center">
-            <div className="text-4xl">⏳</div>
-            <h2 className="text-lg font-semibold">Вы на уроке</h2>
-            <p className="max-w-sm text-sm text-stone-500">
-              Ждём учителя: скоро откроется задача на вашей личной доске или начнётся показ.
-            </p>
-            <button onClick={leaveLesson} className="btn-outline text-sm">
-              ← Выйти на главную
-            </button>
+        <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_17rem]">
+          <main className="flex min-h-0 items-center justify-center overflow-y-auto p-4">
+            <EmptyState
+              icon={Hourglass}
+              title="Вы на уроке"
+              hint="Ждём учителя: сейчас откроется задача на вашей личной доске или начнётся показ."
+            >
+              <ToolButton icon={ArrowLeft} onClick={leaveLesson}>
+                Выйти на главную
+              </ToolButton>
+            </EmptyState>
           </main>
-          {renderLobbyAside()}
+          <aside className="flex min-h-0 flex-col px-3 pb-3 pt-3 sm:px-5 lg:pl-0">
+            <ClassLobbyPanel
+              meId={meId}
+              isTeacher={isOwner}
+              className="min-h-[26rem] flex-1"
+            />
+          </aside>
         </div>
       );
     }
 
-    // 3) Главная: домашние задания (можно решать) + кнопка «Урок».
+    // 3) Главная класса: домашние задания и вход на урок.
     return (
-      <div className="flex min-h-0 flex-1">
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4 sm:px-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="rounded-xl border border-stone-200 bg-paper px-3 py-2 dark:border-stone-700 dark:bg-stone-900">
-              <div className="font-display text-base font-semibold leading-tight">
-                {cls.name || `Класс — ${cls.ownerName}`}
-              </div>
-              <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
-                Учитель: {cls.ownerName}
-              </div>
+      <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-3 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <h1 className="truncate text-[19px] font-semibold leading-tight tracking-tight text-stone-900 dark:text-stone-50">
+              {cls.name || `Класс — ${cls.ownerName}`}
+            </h1>
+            <p className="mt-0.5 text-[12px] text-stone-500 dark:text-stone-400">
+              Учитель: {cls.ownerName}
+            </p>
+          </div>
+          {isOwner && (
+            <Link
+              href="/class/me"
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl bg-stone-900/[0.05] px-2.5 text-[12px] font-semibold text-stone-600 transition-colors duration-150 hover:bg-stone-900/[0.09] dark:bg-white/[0.07] dark:text-stone-300 dark:hover:bg-white/[0.12]"
+            >
+              Управлять классом
+            </Link>
+          )}
+        </div>
+
+        {/* Урок идёт → вход. Ученик заходит сам, чтобы его не выдёргивало
+            с домашки на чужую трансляцию. */}
+        {state?.lessonActive && (
+          <div
+            className={cn(
+              'flex flex-wrap items-center justify-between gap-x-3 gap-y-2 p-2.5',
+              lockedOut
+                ? 'bg-amber-50/90 ring-amber-600/20 dark:bg-amber-950/40 dark:ring-amber-400/20'
+                : 'bg-brand-50/90 ring-brand-600/15 dark:bg-brand-950/50 dark:ring-brand-400/20',
+              SURFACE,
+            )}
+          >
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span
+                aria-hidden
+                className={cn(
+                  'grid h-8 w-8 shrink-0 place-items-center rounded-xl text-white',
+                  lockedOut ? 'bg-amber-600' : 'bg-brand-600',
+                )}
+              >
+                {lockedOut ? (
+                  <LockKey size={16} weight="bold" />
+                ) : (
+                  <Broadcast size={16} weight="bold" />
+                )}
+              </span>
+              <span className="min-w-0 leading-tight">
+                <span
+                  className={cn(
+                    'block text-[13px] font-semibold',
+                    lockedOut
+                      ? 'text-amber-900 dark:text-amber-100'
+                      : 'text-brand-800 dark:text-brand-100',
+                  )}
+                >
+                  Идёт урок
+                </span>
+                <span
+                  className={cn(
+                    'block truncate text-[11px]',
+                    lockedOut
+                      ? 'text-amber-800/70 dark:text-amber-200/70'
+                      : 'text-brand-700/70 dark:text-brand-200/70',
+                  )}
+                >
+                  {lockedOut ? 'Учитель закрыл вход' : 'Учитель уже в классе'}
+                </span>
+              </span>
             </div>
-            {isOwner && (
-              <Link href="/class/me" className="btn-outline text-xs">
-                Управлять классом →
+            {!meId ? (
+              <Link
+                href={`/login?next=/class/${cls.slug}`}
+                className="text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-200"
+              >
+                Войдите, чтобы участвовать
               </Link>
+            ) : lockedOut ? (
+              <span className="text-[12px] font-medium text-amber-800 dark:text-amber-200">
+                Попросите учителя открыть вход
+              </span>
+            ) : (
+              <ToolButton
+                icon={Play}
+                tone="primary"
+                size="md"
+                onClick={() => setLessonJoined(true)}
+              >
+                Войти на урок
+              </ToolButton>
             )}
           </div>
+        )}
 
-          {/* Идёт урок → кнопка «Урок». Ученик заходит на урок только сам,
-              чтобы не «выдёргивало» с домашек на трансляцию/раздачу. */}
-          {state?.lessonActive && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs dark:border-emerald-700 dark:bg-emerald-900/30">
-              <div className="flex items-center gap-2 font-semibold text-emerald-700 dark:text-emerald-200">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-                Идёт урок учителя
-              </div>
-              {meId ? (
-                <button
-                  onClick={() => setLessonJoined(true)}
-                  className="btn-primary px-4 py-1 text-xs"
-                >
-                  Урок →
-                </button>
-              ) : (
-                <Link href={`/login?next=/class/${cls.slug}`} className="text-xs underline">
-                  Войдите, чтобы участвовать
-                </Link>
-              )}
-            </div>
-          )}
+        {homeworkError && (
+          <p className="flex items-center gap-1.5 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900">
+            <Warning size={14} weight="bold" aria-hidden />
+            {homeworkError}
+          </p>
+        )}
 
-          {homeworkError && (
-            <div className="rounded-lg bg-red-100 px-3 py-1.5 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-300">
-              {homeworkError}
-            </div>
-          )}
-
-          {/* ── Домашние задания: папки-блоки → внутри задачи ── */}
-          <h2 className="mt-1 text-base font-semibold">
-            Домашние задания · {homeworkGroups.total}
-          </h2>
-          {homeworkGroups.total === 0 ? (
-            <div className="card text-sm text-stone-500">
-              Учитель пока не добавил домашних заданий. Загляните позже!
-            </div>
-          ) : folders.length === 0 ? (
-            // Папок нет — показываем задачи сразу списком.
-            <ul className="flex flex-wrap gap-2">
-              {homeworkGroups.groups.flatMap((g) => g.tasks).map((t) => renderHwCard(t))}
-            </ul>
-          ) : openHwFolder === undefined ? (
-            // Список папок-блоков.
-            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {homeworkGroups.groups.map((group) => (
-                <li key={group.id}>
-                  <button
-                    onClick={() => setOpenHwFolder(group.id)}
-                    className="card group flex w-full items-center gap-3.5 !p-4 pr-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
-                  >
-                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-600 transition-colors group-hover:bg-brand-500/15 dark:bg-brand-400/10 dark:text-brand-300">
-                      <FolderIcon className="h-6 w-6" open={!group.name} />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[15px] font-semibold leading-tight">
-                        {group.name ?? 'Без папки'}
-                      </span>
-                      <span className="mt-1 inline-flex items-center rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-500 dark:bg-stone-800 dark:text-stone-400">
-                        {group.tasks.length} шт
-                      </span>
-                    </span>
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="h-4 w-4 shrink-0 text-stone-300 transition-transform group-hover:translate-x-0.5 group-hover:text-brand-500 dark:text-stone-600"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            // Внутри выбранной папки.
-            (() => {
-              const group = homeworkGroups.groups.find((g) => g.id === openHwFolder);
-              return (
-                <div>
-                  <div className="mb-3 flex items-center gap-2">
-                    <button
-                      onClick={() => setOpenHwFolder(undefined)}
-                      className="flex items-center gap-1 rounded-full border border-stone-300/70 px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-                    >
-                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                      Папки
-                    </button>
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500/10 text-brand-600 dark:bg-brand-400/10 dark:text-brand-300">
-                      <FolderIcon className="h-4 w-4" open={!group?.name} />
-                    </span>
-                    <h3 className="text-sm font-semibold">{group?.name ?? 'Без папки'}</h3>
-                  </div>
-                  {!group || group.tasks.length === 0 ? (
-                    <div className="card text-sm text-stone-500">В этой папке пока пусто.</div>
-                  ) : (
-                    <ul className="flex flex-wrap gap-2">
-                      {group.tasks.map((t) => renderHwCard(t))}
-                    </ul>
-                  )}
-                </div>
-              );
-            })()
-          )}
-        </main>
-      </div>
+        {renderHomework()}
+      </main>
     );
   }
 
-  function renderLobbyAside(): ReactNode {
-    if (!(inLesson && meId)) return null;
-    return (
-      <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto px-3 pb-4 pt-3 sm:px-4">
-        <ClassLobbyPanel
-          meId={meId}
-          isTeacher={isOwner}
-          layout="vertical"
-          middleSlot={
-            <div className="card !p-3">
-              <div className="mb-2 text-xs font-semibold uppercase text-stone-500">
-                Участники · {lobbyParticipants.length}
-              </div>
-              {lobbyParticipants.length === 0 ? (
-                <div className="text-xs text-stone-500">Никто не подключён</div>
-              ) : (
-                <ul className="space-y-1">
-                  {lobbyParticipants.map((p) => (
-                    <li key={p.userId} className="flex items-center gap-2 text-sm">
-                      <span
-                        className={`h-2 w-2 rounded-full ${
-                          p.role === 'teacher' ? 'bg-amber-500' : 'bg-emerald-500'
-                        }`}
-                      />
-                      <span className="truncate">{p.name}</span>
-                      {p.role === 'teacher' && (
-                        <span className="ml-auto text-[10px] uppercase text-amber-600 dark:text-amber-300">
-                          учитель
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          }
+  function renderHomework(): ReactNode {
+    if (homeworkGroups.total === 0) {
+      return (
+        <EmptyState
+          icon={House}
+          title="Домашних заданий пока нет"
+          hint="Учитель ещё не выложил задачи. Загляните позже."
         />
-      </aside>
+      );
+    }
+
+    // Папок нет — показываем задачи сразу.
+    if (folders.length === 0) {
+      return (
+        <div className="flex flex-col gap-2.5">
+          <SectionHead title="Домашние задания" count={homeworkGroups.total} />
+          <BoardGrid min="12rem">
+            {homeworkGroups.groups.flatMap((g) => g.tasks).map((t) => renderHwCard(t))}
+          </BoardGrid>
+        </div>
+      );
+    }
+
+    // Список папок.
+    if (openHwFolder === undefined) {
+      return (
+        <div className="flex flex-col gap-2.5">
+          <SectionHead
+            title="Домашние задания"
+            count={homeworkGroups.total}
+            hint="Выберите папку, чтобы увидеть задачи"
+          />
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {homeworkGroups.groups.map((group) => (
+              <FolderTile
+                key={group.id}
+                icon={group.name ? Folder : FolderOpen}
+                name={group.name ?? 'Без папки'}
+                count={group.tasks.length}
+                onClick={() => setOpenHwFolder(group.id)}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // Внутри папки.
+    const group = homeworkGroups.groups.find((g) => g.id === openHwFolder);
+    return (
+      <div className="flex flex-col gap-2.5">
+        <SectionHead title={group?.name ?? 'Без папки'} count={group?.tasks.length ?? 0}>
+          <ToolButton icon={CaretLeft} onClick={() => setOpenHwFolder(undefined)}>
+            Все папки
+          </ToolButton>
+        </SectionHead>
+        {!group || group.tasks.length === 0 ? (
+          <EmptyState icon={FolderOpen} title="В этой папке пусто" />
+        ) : (
+          <BoardGrid min="12rem">{group.tasks.map((t) => renderHwCard(t))}</BoardGrid>
+        )}
+      </div>
     );
   }
 }

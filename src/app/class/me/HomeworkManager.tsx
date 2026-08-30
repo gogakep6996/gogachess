@@ -1,20 +1,41 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import {
+  CaretLeft,
+  Check,
+  ChartBar,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Minus,
+  Plus,
+  PencilSimple,
+  Trash,
+} from '@phosphor-icons/react';
 import { MiniBoard } from '@/components/chess/MiniBoard';
-import { FolderIcon } from '@/components/ui/FolderIcon';
 import { FolderPicker } from '@/components/class/FolderPicker';
+import {
+  BoardCard,
+  BoardGrid,
+  EmptyState,
+  FolderTile,
+  SectionHead,
+  SURFACE,
+} from '@/components/class/ui';
+import { IconButton, StatusChip, ToolButton } from '@/components/room/ui';
 import { STARTING_FEN } from '@/lib/socket-events';
+import { cn } from '@/lib/utils';
 import type { FolderDto, TaskDto } from './TasksLibrary';
 import { HomeworkReport } from './HomeworkReport';
 
-const DIFFICULTY_LABEL: Record<string, { label: string; tone: string }> = {
-  easy: { label: 'легко', tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
-  medium: { label: 'средне', tone: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' },
-  hard: { label: 'сложно', tone: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' },
+const DIFFICULTY_LABEL: Record<string, { label: string; tone: 'brand' | 'amber' | 'red' }> = {
+  easy: { label: 'легко', tone: 'brand' },
+  medium: { label: 'средне', tone: 'amber' },
+  hard: { label: 'сложно', tone: 'red' },
 };
 
-// Ключ открытой папки: строка = id папки, null = «Без папки», undefined = корень (список папок).
+// Ключ открытой папки: строка = id папки, null = «Без папки», undefined = корень.
 type OpenKey = string | null | undefined;
 
 export function HomeworkManager({
@@ -31,6 +52,7 @@ export function HomeworkManager({
   const [open, setOpen] = useState<OpenKey>(undefined);
   const [newFolderName, setNewFolderName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [addingFolder, setAddingFolder] = useState(false);
   const [reportTask, setReportTask] = useState<TaskDto | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -63,6 +85,7 @@ export function HomeworkManager({
         const { folder } = (await res.json()) as { folder: FolderDto };
         onFoldersChange([...folders, folder]);
         setNewFolderName('');
+        setAddingFolder(false);
       }
     } finally {
       setCreating(false);
@@ -82,7 +105,12 @@ export function HomeworkManager({
   }
 
   async function deleteFolder(f: FolderDto) {
-    if (!confirm(`Удалить папку «${f.name}»? Задания из неё не удалятся — останутся в других папках/«Без папки».`)) return;
+    if (
+      !confirm(
+        `Удалить папку «${f.name}»? Задания из неё не удалятся — останутся в других папках или в «Без папки».`,
+      )
+    )
+      return;
     const res = await fetch(`/api/class/me/folders/${f.id}`, { method: 'DELETE' });
     if (res.ok) {
       onFoldersChange(folders.filter((x) => x.id !== f.id));
@@ -98,7 +126,7 @@ export function HomeworkManager({
   }
 
   // Оптимистично меняем задачу и синхронизируем с сервером. optimistic — новое
-  // локальное состояние задачи, body — тело PATCH (сервер вернёт авторитетный набор).
+  // локальное состояние, body — тело PATCH (сервер вернёт авторитетный набор).
   async function patchTask(
     t: TaskDto,
     optimistic: Partial<TaskDto>,
@@ -130,14 +158,9 @@ export function HomeworkManager({
     }
   }
 
-  /** Задача в папке folderId? */
-  function inFolderOf(t: TaskDto, folderId: string) {
-    return t.folderIds.includes(folderId);
-  }
-
-  /** Переключить принадлежность задачи папке (добавить/убрать). */
+  /** Переключить принадлежность задачи папке. */
   function toggleFolder(t: TaskDto, folderId: string) {
-    if (inFolderOf(t, folderId)) {
+    if (t.folderIds.includes(folderId)) {
       patchTask(
         t,
         { folderIds: t.folderIds.filter((f) => f !== folderId) },
@@ -152,67 +175,100 @@ export function HomeworkManager({
     }
   }
 
-  // ── Корень: список папок-блоков ──
+  // ── Корень: список папок ──
   if (open === undefined) {
     return (
-      <div>
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold">Домашние задания</h2>
-            <p className="mt-0.5 text-xs text-stone-500">
-              Разложите домашки по папкам. Откройте папку, чтобы добавить задания и посмотреть,
-              кто и как их решал.
-            </p>
-          </div>
+      <div className="flex flex-col gap-3">
+        <SectionHead
+          title="Домашние задания"
+          count={homework.length}
+          hint="Разложите задания по папкам. Внутри папки видно, кто и как их решал."
+        >
+          {!addingFolder && (
+            <ToolButton icon={FolderPlus} size="md" onClick={() => setAddingFolder(true)}>
+              Новая папка
+            </ToolButton>
+          )}
+        </SectionHead>
+
+        {addingFolder && (
           <form
             onSubmit={(e) => {
               e.preventDefault();
               createFolder();
             }}
-            className="flex items-center gap-1"
+            className={cn('flex items-center gap-1.5 p-2', SURFACE)}
           >
             <input
+              autoFocus
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
-              placeholder="Новая папка"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setAddingFolder(false);
+                  setNewFolderName('');
+                }
+              }}
+              placeholder="Название папки"
+              aria-label="Название папки"
               maxLength={60}
-              className="w-36 rounded-full border border-stone-300 bg-paper px-3.5 py-1.5 text-sm focus:border-brand-500 focus:outline-none dark:border-stone-700 dark:bg-stone-900"
+              className="h-8 min-w-0 flex-1 rounded-xl border-0 bg-stone-900/[0.05] px-2.5 text-[12px] text-stone-800 outline-none ring-1 ring-inset ring-transparent transition placeholder:text-stone-400 focus:bg-white focus:ring-brand-500/50 dark:bg-white/[0.07] dark:text-stone-100 dark:focus:bg-stone-800"
             />
-            <button
-              type="submit"
-              disabled={!newFolderName.trim() || creating}
-              className="btn-primary rounded-full px-3.5 py-1.5 text-sm disabled:opacity-50"
+            <ToolButton type="submit" tone="primary" disabled={!newFolderName.trim() || creating}>
+              Создать
+            </ToolButton>
+            <ToolButton
+              onClick={() => {
+                setAddingFolder(false);
+                setNewFolderName('');
+              }}
             >
-              + Папка
-            </button>
+              Отмена
+            </ToolButton>
           </form>
-        </div>
+        )}
 
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {folders.map((f) => (
-            <li key={f.id}>
-              <FolderBlock
-                title={f.name}
+        {folders.length === 0 && countByFolder.none === 0 ? (
+          <EmptyState
+            icon={Folder}
+            title="Домашних заданий пока нет"
+            hint="Отметьте позиции в библиотеке как домашние — они появятся здесь. Папки помогут разложить их по темам."
+          >
+            <ToolButton icon={FolderPlus} tone="primary" onClick={() => setAddingFolder(true)}>
+              Создать папку
+            </ToolButton>
+          </EmptyState>
+        ) : (
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {folders.map((f) => (
+              <FolderTile
+                key={f.id}
+                icon={Folder}
+                name={f.name}
                 count={countByFolder.map.get(f.id) ?? 0}
-                onOpen={() => setOpen(f.id)}
-                onRename={() => renameFolder(f)}
-                onDelete={() => deleteFolder(f)}
-              />
-            </li>
-          ))}
-          <li>
-            <FolderBlock
-              title="Без папки"
+                onClick={() => setOpen(f.id)}
+              >
+                <IconButton
+                  icon={PencilSimple}
+                  label="Переименовать папку"
+                  className="!h-7 !w-7"
+                  onClick={() => renameFolder(f)}
+                />
+                <IconButton
+                  icon={Trash}
+                  label="Удалить папку"
+                  tone="danger"
+                  className="!h-7 !w-7"
+                  onClick={() => deleteFolder(f)}
+                />
+              </FolderTile>
+            ))}
+            <FolderTile
+              icon={FolderOpen}
+              name="Без папки"
               count={countByFolder.none}
-              muted
-              onOpen={() => setOpen(null)}
+              onClick={() => setOpen(null)}
             />
-          </li>
-        </ul>
-
-        {folders.length === 0 && countByFolder.none === 0 && (
-          <div className="mt-3 text-sm text-stone-500">
-            Создайте папку и откройте её, чтобы добавить домашние задания.
           </div>
         )}
       </div>
@@ -227,8 +283,8 @@ export function HomeworkManager({
       ? homework.filter((t) => t.folderIds.length === 0)
       : homework.filter((t) => t.folderIds.includes(open));
   // Кандидаты на добавление:
-  //   • в реальную папку — всё, что ещё не в ней (в т.ч. домашки из других папок);
-  //   • в «Без папки» — задачи, которые ещё не домашки (сделаем их домашкой без папки).
+  //   • в реальную папку — всё, чего в ней ещё нет (в том числе домашки из других папок);
+  //   • в «Без папки» — задачи, которые ещё не домашки.
   const candidates =
     open === null
       ? tasks.filter((t) => !t.isHomework)
@@ -247,65 +303,66 @@ export function HomeworkManager({
   }
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setOpen(undefined);
-              setAdding(false);
-            }}
-            className="flex items-center gap-1 rounded-full border border-stone-300/70 px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Папки
-          </button>
-          <div className="flex items-center gap-2">
-            <span
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-                folder
-                  ? 'bg-brand-500/10 text-brand-600 dark:bg-brand-400/10 dark:text-brand-300'
-                  : 'bg-stone-100 text-stone-400 dark:bg-stone-800 dark:text-stone-500'
-              }`}
-            >
-              <FolderIcon className="h-5 w-5" open={!folder} />
-            </span>
-            <h2 className="text-base font-semibold">
-              {folderName}{' '}
-              <span className="text-sm font-normal text-stone-400">· {inFolder.length}</span>
-            </h2>
-          </div>
-        </div>
-        <button onClick={() => setAdding((v) => !v)} className="btn-primary text-sm">
-          {adding ? 'Готово' : '+ Добавить задания'}
-        </button>
-      </div>
+    <div className="flex flex-col gap-3">
+      <SectionHead title={folderName} count={inFolder.length}>
+        <ToolButton
+          icon={adding ? Check : Plus}
+          tone={adding ? 'primary' : 'neutral'}
+          size="md"
+          active={adding}
+          onClick={() => setAdding((v) => !v)}
+        >
+          {adding ? 'Готово' : 'Добавить задания'}
+        </ToolButton>
+        <ToolButton
+          icon={CaretLeft}
+          size="md"
+          onClick={() => {
+            setOpen(undefined);
+            setAdding(false);
+          }}
+        >
+          Все папки
+        </ToolButton>
+      </SectionHead>
 
       {adding && (
-        <div className="mb-4 rounded-xl border border-stone-200 bg-paper p-3 dark:border-stone-700 dark:bg-stone-900">
-          <div className="mb-2 text-xs font-semibold uppercase text-stone-500">
-            Выберите задачи из библиотеки — они попадут в «{folderName}»
-          </div>
+        <div
+          className={cn(
+            'p-2.5',
+            'bg-brand-50/80 ring-brand-600/15 dark:bg-brand-950/40 dark:ring-brand-400/20',
+            SURFACE,
+          )}
+        >
+          <p className="mb-2 text-[12px] font-semibold text-brand-800 dark:text-brand-100">
+            Выберите позиции из библиотеки — они попадут в «{folderName}»
+          </p>
           {candidates.length === 0 ? (
-            <div className="text-sm text-stone-500">
-              Нет доступных задач. Создайте новые в «Моей библиотеке».
-            </div>
+            <p className="py-2 text-center text-[12px] text-stone-500 dark:text-stone-400">
+              Свободных позиций нет. Создайте новые в библиотеке.
+            </p>
           ) : (
-            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <ul className="grid max-h-[26rem] gap-1.5 overflow-y-auto overscroll-contain pr-0.5 sm:grid-cols-2 xl:grid-cols-3">
               {candidates.map((t) => (
-                <li
-                  key={t.id}
-                  className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 p-2 dark:border-stone-700 dark:bg-stone-800/40"
-                >
-                  <MiniBoard fen={t.fen || STARTING_FEN} size={54} flipped={t.sideToPlay === 'b'} />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{t.title}</span>
+                <li key={t.id}>
                   <button
+                    type="button"
                     onClick={() => addToFolder(t)}
-                    className="shrink-0 rounded-md bg-brand-500 px-2 py-1 text-xs font-semibold text-white hover:bg-brand-600"
+                    title={`Добавить «${t.title}»`}
+                    className="flex w-full items-center gap-2 rounded-xl bg-white/70 p-1.5 text-left ring-1 ring-stone-900/[0.06] transition-colors duration-150 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45 dark:bg-stone-900/50 dark:ring-white/[0.08] dark:hover:bg-stone-900"
                   >
-                    + Сюда
+                    <span className="shrink-0 overflow-hidden rounded-lg ring-1 ring-stone-900/[0.06] dark:ring-white/[0.08]">
+                      <MiniBoard fen={t.fen || STARTING_FEN} size={40} flipped={t.sideToPlay === 'b'} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-stone-800 dark:text-stone-100">
+                      {t.title}
+                    </span>
+                    <span
+                      aria-hidden
+                      className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-brand-600 text-white"
+                    >
+                      <Plus size={13} weight="bold" />
+                    </span>
                   </button>
                 </li>
               ))}
@@ -315,147 +372,71 @@ export function HomeworkManager({
       )}
 
       {inFolder.length === 0 ? (
-        <div className="card text-sm text-stone-500">
-          В этой папке пока нет заданий. Нажмите «+ Добавить задания».
-        </div>
+        <EmptyState
+          icon={FolderOpen}
+          title="В папке пока нет заданий"
+          hint="Нажмите «Добавить задания» и выберите позиции из библиотеки."
+        />
       ) : (
-        <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <BoardGrid min="13rem">
           {inFolder.map((t) => {
             const diff = DIFFICULTY_LABEL[t.difficulty] ?? DIFFICULTY_LABEL.medium;
             return (
-              <li
+              <BoardCard
                 key={t.id}
-                className="group flex flex-col gap-1.5 rounded-xl border border-stone-200 bg-paper p-2 shadow-sm ring-2 ring-brand-400/70 transition-shadow hover:shadow-md dark:border-stone-700 dark:bg-stone-900 dark:ring-brand-500/60"
-              >
-                <div className="flex justify-center">
-                  <MiniBoard fen={t.fen || STARTING_FEN} size={140} flipped={t.sideToPlay === 'b'} />
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="truncate text-sm font-semibold leading-tight">{t.title}</span>
-                  <span
-                    className={`ml-auto shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${diff.tone}`}
-                  >
-                    {diff.label}
-                  </span>
-                </div>
-
-                <FolderPicker
-                  selectedIds={t.folderIds}
-                  folders={folders}
-                  onToggle={(fid) => toggleFolder(t, fid)}
-                />
-
-                <div className="mt-auto flex items-center gap-1">
-                  <button
-                    onClick={() => setReportTask(t)}
-                    className="flex-1 rounded-md bg-brand-500 px-1.5 py-1 text-[11px] font-semibold text-white hover:bg-brand-600"
-                  >
-                    📊 Отчёт
-                  </button>
-                  {open === null ? (
-                    <button
-                      onClick={() =>
-                        patchTask(t, { isHomework: false, folderIds: [] }, { isHomework: false })
-                      }
-                      title="Убрать из домашних заданий"
-                      className="rounded-md border border-stone-300 px-1.5 py-1 text-[11px] text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
+                board={
+                  <MiniBoard fen={t.fen || STARTING_FEN} fluid flipped={t.sideToPlay === 'b'} />
+                }
+                badge={<StatusChip tone={diff.tone}>{diff.label}</StatusChip>}
+                title={t.title}
+                footer={
+                  <>
+                    <div className="flex items-center gap-1">
+                      <FolderPicker
+                        className="min-w-0 flex-1"
+                        selectedIds={t.folderIds}
+                        folders={folders}
+                        onToggle={(fid) => toggleFolder(t, fid)}
+                      />
+                      <IconButton
+                        icon={Minus}
+                        label={
+                          open === null
+                            ? 'Убрать из домашних заданий'
+                            : 'Убрать из этой папки'
+                        }
+                        className="!h-7 !w-7 shrink-0"
+                        onClick={() => {
+                          if (open === null) {
+                            patchTask(
+                              t,
+                              { isHomework: false, folderIds: [] },
+                              { isHomework: false },
+                            );
+                          } else if (open) {
+                            toggleFolder(t, open);
+                          }
+                        }}
+                      />
+                    </div>
+                    <ToolButton
+                      icon={ChartBar}
+                      tone="primary"
+                      block
+                      onClick={() => setReportTask(t)}
+                      title="Кто из учеников решал и как"
                     >
-                      Убрать
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        if (open) toggleFolder(t, open);
-                      }}
-                      title="Убрать из этой папки"
-                      className="rounded-md border border-stone-300 px-1.5 py-1 text-[11px] text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-                    >
-                      Из папки
-                    </button>
-                  )}
-                </div>
-              </li>
+                      Отчёт
+                    </ToolButton>
+                  </>
+                }
+              />
             );
           })}
-        </ul>
+        </BoardGrid>
       )}
 
       {reportTask && <HomeworkReport task={reportTask} onClose={() => setReportTask(null)} />}
-    </div>
-  );
-}
-
-function FolderBlock({
-  title,
-  count,
-  muted,
-  onOpen,
-  onRename,
-  onDelete,
-}: {
-  title: string;
-  count: number;
-  muted?: boolean;
-  onOpen: () => void;
-  onRename?: () => void;
-  onDelete?: () => void;
-}) {
-  return (
-    <div
-      className={`group relative overflow-hidden rounded-2xl border p-4 pr-3 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg ${
-        muted
-          ? 'border-dashed border-stone-300 bg-stone-50/60 dark:border-stone-700 dark:bg-stone-900/40'
-          : 'border-stone-200/80 bg-paper dark:border-stone-800/80 dark:bg-stone-900'
-      }`}
-    >
-      <button onClick={onOpen} className="flex w-full min-w-0 items-center gap-3.5 text-left">
-        <span
-          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-colors ${
-            muted
-              ? 'bg-stone-200/70 text-stone-400 dark:bg-stone-800 dark:text-stone-500'
-              : 'bg-brand-500/10 text-brand-600 group-hover:bg-brand-500/15 dark:bg-brand-400/10 dark:text-brand-300'
-          }`}
-        >
-          <FolderIcon className="h-6 w-6" open={muted} />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px] font-semibold leading-tight">{title}</span>
-          <span className="mt-1 inline-flex items-center rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-500 dark:bg-stone-800 dark:text-stone-400">
-            {count} шт
-          </span>
-        </span>
-        <svg
-          viewBox="0 0 24 24"
-          className="h-4 w-4 shrink-0 text-stone-300 transition-transform group-hover:translate-x-0.5 group-hover:text-brand-500 dark:text-stone-600"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      {(onRename || onDelete) && (
-        <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          {onRename && (
-            <button
-              onClick={onRename}
-              title="Переименовать"
-              className="flex h-6 w-6 items-center justify-center rounded-full bg-paper/90 text-xs text-stone-500 shadow-sm hover:bg-stone-100 hover:text-stone-700 dark:bg-stone-800/90 dark:text-stone-400 dark:hover:bg-stone-700"
-            >
-              ✎
-            </button>
-          )}
-          {onDelete && (
-            <button
-              onClick={onDelete}
-              title="Удалить папку"
-              className="flex h-6 w-6 items-center justify-center rounded-full bg-paper/90 text-xs text-red-500 shadow-sm hover:bg-red-50 dark:bg-stone-800/90 dark:hover:bg-red-900/30"
-            >
-              🗑
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

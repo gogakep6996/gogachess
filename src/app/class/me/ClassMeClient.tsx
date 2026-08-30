@@ -1,14 +1,29 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import {
+  ArrowLeft,
+  Books,
+  Broadcast,
+  ChalkboardTeacher,
+  Check,
+  Eye,
+  House,
+  Link as LinkIcon,
+  PresentationChart,
+  Stop,
+} from '@phosphor-icons/react';
 import { useClassSocket } from '@/hooks/useClassSocket';
 import { TasksLibrary, type TaskDto, type FolderDto } from './TasksLibrary';
 import { HomeworkManager } from './HomeworkManager';
 import { LessonDashboard, type IntrudeRequest } from './LessonDashboard';
 import { ClassLobbyPanel } from '@/components/class/ClassLobbyPanel';
 import { LobbyFloatingChat } from '@/components/class/FloatingChat';
+import { ModeBar } from '@/components/class/ui';
+import { Segmented, ToolButton } from '@/components/room/ui';
 import { RoomClient } from '@/app/room/[code]/RoomClient';
 import { ClassAudioProvider } from '@/contexts/ClassAudioContext';
+import { cn } from '@/lib/utils';
 import type { ClassDto } from './ClassSettings';
 import { ClassAccessCode } from './ClassAccessCode';
 
@@ -21,7 +36,7 @@ interface Props {
   initialLibraryFolders: FolderDto[];
 }
 
-type Tab = 'tasks' | 'lesson' | 'homework';
+type Tab = 'lesson' | 'homework' | 'tasks';
 
 export function ClassMeClient({
   meId,
@@ -37,57 +52,48 @@ export function ClassMeClient({
   const [libraryFolders, setLibraryFolders] = useState<FolderDto[]>(initialLibraryFolders);
   const [tab, setTab] = useState<Tab>('lesson');
   // Вторжение учителя в личную доску ученика. Когда задано — рендерим
-  // full-screen RoomClient (учитель = owner student-board комнаты, видит весь
-  // тот же UI, что и в «Моей доске», и может редактировать позицию).
+  // full-screen RoomClient (учитель = owner student-board комнаты, видит тот же
+  // UI, что и в «Моей доске», и может править позицию).
   const [intrudeRoom, setIntrudeRoom] = useState<IntrudeRequest | null>(null);
 
-  // Сокет-подключение класса поднимаем здесь, чтобы и дашборд, и провайдер
-  // аудио делили одно и то же состояние класса.
+  // Сокет класса поднимаем здесь, чтобы дашборд и провайдер аудио делили
+  // одно и то же состояние.
   const classSocket = useClassSocket(cls.slug);
   const { state, stopDemo, toggleBroadcast } = classSocket;
-  const students =
-    state?.lobbyParticipants.filter((p) => p.role === 'student') ?? [];
 
   const broadcasting = !!state?.demoBroadcast;
   const inLesson = !!(state?.lessonActive && state.lobbyRoomCode);
+  // За доской (вторжение или своя доска) главная область занята целиком —
+  // чат в этих режимах живёт плавающей кнопкой. На дашборде он в правой
+  // колонке, поэтому пузырь там не нужен и ничего не перекрывает.
+  const atBoard = !!intrudeRoom || !!state?.demoRoomCode;
 
-  // ============================================================
-  // Старая раскладка: главный вид переключается ПОЛНОСТЬЮ (либо
-  // full-screen RoomClient за доской, либо дашборд с правым aside).
-  // НО: WebRTC mesh лобби-аудио живёт в <ClassAudioProvider> уровнем выше —
-  // он не пересобирается при переключении вида, поэтому связь не рвётся.
-  // Аудио-UI в обоих видах читает из контекста (ClassLobbyPanel в дашборде,
-  // AudioPanel в RoomClient на странице доски).
-  // ============================================================
   const view = renderView();
 
   return inLesson && state?.lobbyRoomCode ? (
     <ClassAudioProvider lobbyRoomCode={state.lobbyRoomCode}>
       {view}
-      {/* Плавающая иконка чата в правом нижнем углу — доступна во всех видах
-          урока (дашборд, доска ученика, «Моя доска», трансляция). */}
-      <LobbyFloatingChat meId={meId} isTeacher />
+      {atBoard && <LobbyFloatingChat meId={meId} isTeacher />}
     </ClassAudioProvider>
   ) : (
     view
   );
 
   function renderView(): ReactNode {
+    // ── Доска конкретного ученика ──
     if (intrudeRoom) {
       return (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-stone-200 bg-stone-50 px-3 py-0.5 text-[11px] font-semibold leading-tight text-stone-700 dark:border-stone-700 dark:bg-stone-800/40 dark:text-stone-200">
-            <span>
-              👁 Доска ученика: <span className="font-bold">{intrudeRoom.studentName}</span> —
-              всё, что вы делаете, видит ученик
-            </span>
-            <button
-              onClick={() => setIntrudeRoom(null)}
-              className="rounded border border-red-300 bg-red-50 px-1.5 py-px text-[10px] font-semibold text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300"
-            >
-              ← Вернуться к классу
-            </button>
-          </div>
+          <ModeBar
+            icon={Eye}
+            tone="amber"
+            title={<>Доска ученика: {intrudeRoom.studentName}</>}
+            subtitle="Всё, что вы делаете на этой доске, ученик видит сразу"
+          >
+            <ToolButton icon={ArrowLeft} onClick={() => setIntrudeRoom(null)}>
+              К классу
+            </ToolButton>
+          </ModeBar>
           <main className="flex min-h-0 flex-1 flex-col">
             <RoomClient
               meId={meId}
@@ -106,45 +112,34 @@ export function ClassMeClient({
       );
     }
 
+    // ── Своя доска: приватно или в эфир ──
     if (state?.demoRoomCode) {
       return (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div
-            className={`relative flex shrink-0 items-stretch justify-center gap-2 px-3 py-0.5 text-[11px] font-semibold leading-tight ${
+          <ModeBar
+            icon={broadcasting ? Broadcast : PresentationChart}
+            tone={broadcasting ? 'brand' : 'neutral'}
+            live={broadcasting}
+            title={broadcasting ? 'Идёт трансляция' : 'Моя доска'}
+            subtitle={
               broadcasting
-                ? 'border-b border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200'
-                : 'border-b border-stone-200 bg-stone-50 text-stone-700 dark:border-stone-700 dark:bg-stone-800/40 dark:text-stone-200'
-            }`}
+                ? 'Ученики видят эту доску вместо своих задач'
+                : 'Видна только вам — подготовьте позицию и включите эфир'
+            }
           >
-            <span className="pointer-events-none absolute left-3 top-1/2 hidden -translate-y-1/2 lg:block">
-              {broadcasting
-                ? '🔴 Идёт трансляция — все ученики видят эту доску'
-                : '👀 Моя доска (видна только вам)'}
-            </span>
-            <div className="flex items-stretch gap-2">
-              {broadcasting ? (
-                <button
-                  onClick={() => toggleBroadcast(false)}
-                  className="flex items-center rounded-md border border-stone-300 bg-paper px-4 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
-                >
-                  ⏸ Остановить трансляцию
-                </button>
-              ) : (
-                <button
-                  onClick={() => toggleBroadcast(true)}
-                  className="flex items-center rounded-md bg-emerald-500 px-4 text-sm font-semibold text-white hover:bg-emerald-600"
-                >
-                  📡 Транслировать ученикам
-                </button>
-              )}
-              <button
-                onClick={stopDemo}
-                className="flex items-center rounded-md border border-red-300 bg-red-50 px-4 text-sm font-semibold text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300"
-              >
-                ← Урок
-              </button>
-            </div>
-          </div>
+            {broadcasting ? (
+              <ToolButton icon={Stop} onClick={() => toggleBroadcast(false)}>
+                Остановить эфир
+              </ToolButton>
+            ) : (
+              <ToolButton icon={Broadcast} tone="primary" onClick={() => toggleBroadcast(true)}>
+                В эфир
+              </ToolButton>
+            )}
+            <ToolButton icon={ArrowLeft} onClick={stopDemo}>
+              К классу
+            </ToolButton>
+          </ModeBar>
           <main className="flex min-h-0 flex-1 flex-col">
             <RoomClient
               meId={meId}
@@ -163,48 +158,22 @@ export function ClassMeClient({
       );
     }
 
-    // Обычный дашборд: левая колонка — урок/библиотека, правая — лобби-аудио + ученики + чат.
+    // ── Командный центр: разделы слева, участники и чат справа ──
     return (
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_240px]">
-        <main className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-4 py-4 sm:px-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="rounded-xl border border-stone-200 bg-paper px-3 py-2 dark:border-stone-700 dark:bg-stone-900">
-                <div className="font-display text-base font-semibold leading-tight">
-                  {cls.name || `Класс — ${cls.ownerName}`}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof window !== 'undefined') {
-                      navigator.clipboard
-                        .writeText(`${window.location.origin}/class/${cls.slug}`)
-                        .catch(() => undefined);
-                    }
-                  }}
-                  title="Скопировать ссылку"
-                  className="mt-1 block max-w-full truncate rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-left font-mono text-xs text-brand-600 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-800 dark:text-brand-300 dark:hover:bg-stone-700"
-                >
-                  /class/{cls.slug}
-                </button>
-              </div>
-
-              {/* Код доступа — компактно рядом с названием. Клик генерирует код. */}
-              <ClassAccessCode initialCode={cls.accessCode} />
-            </div>
-
-            <div className="flex items-center gap-1">
-              <TabButton active={tab === 'lesson'} onClick={() => setTab('lesson')}>
-                Урок
-              </TabButton>
-              <TabButton active={tab === 'homework'} onClick={() => setTab('homework')}>
-                Домашние задания · {tasks.filter((t) => t.isHomework).length}
-              </TabButton>
-              <TabButton active={tab === 'tasks'} onClick={() => setTab('tasks')}>
-                Моя библиотека · {tasks.length}
-              </TabButton>
-            </div>
-          </div>
+      <div
+        className={cn(
+          'grid min-h-0 flex-1',
+          inLesson ? 'lg:grid-cols-[minmax(0,1fr)_17rem]' : 'lg:grid-cols-1',
+        )}
+      >
+        <main className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-3 py-3 sm:px-5">
+          <ClassTopBar
+            cls={cls}
+            tab={tab}
+            onTabChange={setTab}
+            homeworkCount={tasks.filter((t) => t.isHomework).length}
+            libraryCount={tasks.length}
+          />
 
           {tab === 'lesson' ? (
             <LessonDashboard
@@ -231,61 +200,94 @@ export function ClassMeClient({
           )}
         </main>
 
-        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto px-3 pb-4 pt-3 sm:px-4">
-          <ClassLobbyPanel
-            meId={meId}
-            isTeacher
-            layout="vertical"
-            showChat={false}
-            middleSlot={
-              <div className="card !p-3">
-                <div className="mb-2 text-xs font-semibold uppercase text-stone-500">
-                  Ученики · {students.length}
-                </div>
-                {students.length === 0 ? (
-                  <div className="text-xs text-stone-500">Никто не подключён</div>
-                ) : (
-                  <ul className="space-y-1">
-                    {students.map((s) => (
-                      <li
-                        key={s.userId}
-                        className="flex items-center gap-2 text-sm"
-                      >
-                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                        <span className="truncate">{s.name}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            }
-          />
-        </aside>
+        {inLesson && (
+          <aside className="flex min-h-0 flex-col px-3 pb-3 pt-3 sm:px-5 lg:pl-0">
+            <ClassLobbyPanel meId={meId} isTeacher className="min-h-[26rem] flex-1" />
+          </aside>
+        )}
       </div>
     );
   }
 }
 
-function TabButton({
-  active,
-  onClick,
-  children,
+// ───────────────────────────────────────────────────────────────
+// Шапка класса
+// ───────────────────────────────────────────────────────────────
+
+/**
+ * Одна строка вместо трёх разнородных плашек: чей класс, как в него зайти и
+ * какой раздел открыт. Ссылка и код доступа — соседи, потому что учитель
+ * диктует их ученикам вместе.
+ */
+function ClassTopBar({
+  cls,
+  tab,
+  onTabChange,
+  homeworkCount,
+  libraryCount,
 }: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
+  cls: ClassDto;
+  tab: Tab;
+  onTabChange: (t: Tab) => void;
+  homeworkCount: number;
+  libraryCount: number;
 }) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <h1 className="truncate text-[17px] font-semibold tracking-tight text-stone-900 dark:text-stone-50">
+          {cls.name || `Класс — ${cls.ownerName}`}
+        </h1>
+        <ClassLinkButton slug={cls.slug} />
+        <ClassAccessCode initialCode={cls.accessCode} />
+      </div>
+
+      <Segmented
+        ariaLabel="Разделы класса"
+        className="w-full sm:w-auto"
+        value={tab}
+        onChange={onTabChange}
+        options={[
+          { id: 'lesson', label: 'Урок', icon: ChalkboardTeacher },
+          { id: 'homework', label: `Домашние · ${homeworkCount}`, icon: House },
+          { id: 'tasks', label: `Библиотека · ${libraryCount}`, icon: Books },
+        ]}
+      />
+    </div>
+  );
+}
+
+/** Ссылка-приглашение в класс: сама кнопка и есть «скопировать». */
+function ClassLinkButton({ slug }: { slug: string }) {
+  const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      onClick={onClick}
-      className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
-        active
-          ? 'border-brand-500 bg-brand-500 text-white shadow-sm'
-          : 'border-stone-300 bg-paper text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800'
-      }`}
+      title="Скопировать ссылку на класс"
+      onClick={() => {
+        if (typeof window === 'undefined') return;
+        navigator.clipboard
+          ?.writeText(`${window.location.origin}/class/${slug}`)
+          .then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1400);
+          })
+          .catch(() => undefined);
+      }}
+      className={cn(
+        'inline-flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-[12px] font-semibold transition-colors duration-150',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45',
+        copied
+          ? 'bg-brand-600 text-white'
+          : 'bg-stone-900/[0.05] text-stone-600 hover:bg-stone-900/[0.09] dark:bg-white/[0.07] dark:text-stone-300 dark:hover:bg-white/[0.12]',
+      )}
     >
-      {children}
+      {copied ? (
+        <Check size={14} weight="bold" aria-hidden />
+      ) : (
+        <LinkIcon size={14} weight="bold" aria-hidden />
+      )}
+      {copied ? 'Скопировано' : `/class/${slug}`}
     </button>
   );
 }
