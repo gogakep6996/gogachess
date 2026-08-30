@@ -19,6 +19,15 @@ FROM node:${NODE_VERSION} AS builder
 WORKDIR /app
 RUN apk add --no-cache libc6-compat openssl
 ENV NEXT_TELEMETRY_DISABLED=1
+# Переменные NEXT_PUBLIC_* Next.js подставляет в клиентский бандл на сборке —
+# при запуске контейнера они уже не читаются. Файл .env в образ не попадает
+# (он в .dockerignore), поэтому значения приходят аргументами из docker-compose.
+# Без клиентского ключа виджет SmartCaptcha собирается пустым, и проверки
+# «я не бот» на сайте фактически нет.
+ARG NEXT_PUBLIC_SMARTCAPTCHA_CLIENT_KEY=""
+ARG NEXT_PUBLIC_ICE_SERVERS=""
+ENV NEXT_PUBLIC_SMARTCAPTCHA_CLIENT_KEY=${NEXT_PUBLIC_SMARTCAPTCHA_CLIENT_KEY}
+ENV NEXT_PUBLIC_ICE_SERVERS=${NEXT_PUBLIC_ICE_SERVERS}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # schema.prisma нужен и сборке, и рантайму. Каталог prisma/migrations обязателен:
