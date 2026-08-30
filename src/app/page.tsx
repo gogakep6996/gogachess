@@ -77,7 +77,7 @@ export default async function HomePage() {
             Всё для занятий и игры
           </h2>
           <p className="mt-2 max-w-[60ch] text-stone-600 dark:text-stone-400">
-            Пять разделов: от урока один на один до группового занятия
+            Четыре раздела: от урока один на один до группового занятия
             с голосовой связью.
           </p>
 
@@ -102,23 +102,14 @@ export default async function HomePage() {
               title="Турниры"
               text="Арена со свободным подбором, таблицей и трансляцией всех партий."
               icon={<IconTrophy />}
-              className="lg:col-span-2"
+              className="lg:col-span-3"
             />
             <Tile
               href="/learn"
               title="Обучение"
               text="Тактические задачи: маты, эндшпили, вилки и связки."
               icon={<IconBook />}
-              className="lg:col-span-2"
-              badge="Новое"
-            />
-            <Tile
-              href="/fun"
-              title="Развлекательные шахматы"
-              text="Армия Света против армии Тьмы: сказочные фигуры, битвы и магия — детям точно понравится!"
-              icon={<IconSword />}
-              className="lg:col-span-2"
-              tone="accent"
+              className="lg:col-span-3"
               badge="Новое"
             />
           </div>
@@ -265,13 +256,6 @@ function IconGraduation() {
   return (
     <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>
       <path d="M12 2 1 8l11 6 9-4.9V16h2V8L12 2zM4 13.5V17c0 1.7 3.6 3 8 3s8-1.3 8-3v-3.5l-8 4.4-8-4.4z" />
-    </svg>
-  );
-}
-function IconSword() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>
-      <path d="M6.92 5H5l9 9 1-.94L6.92 5zM4.14 19.86l1.41 1.41 2.12-2.12 1.42 1.41 1.41-1.41-1.41-1.42 9.9-9.9L20.4 3.6a1 1 0 0 0-1.3-1.3l-4.24 1.42-9.9 9.9-1.41-1.42-1.42 1.42 1.42 1.41-2.13 2.12.71.71h.01z" />
     </svg>
   );
 }
