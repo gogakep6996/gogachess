@@ -174,7 +174,7 @@ export function RoomParticipants({
       )}
 
       <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-0.5">
-        {participants.length === 0 && <EmptyHint>В комнате пока никого нет</EmptyHint>}
+        {participants.length === 0 && <EmptyHint>На уроке пока никого нет</EmptyHint>}
         {participants.map((p) => {
           const isMe = p.userId === meId;
           const speaking = p.micEnabled && (levels[p.socketId] ?? 0) > 0.06;

@@ -31,24 +31,24 @@ export default async function HomePage() {
               Шахматы для <span className="text-brand-600 dark:text-brand-300">уроков</span>, игры и турниров
             </h1>
             <p className="mt-4 max-w-[52ch] text-base leading-relaxed text-stone-600 sm:text-lg dark:text-stone-300">
-              Играйте с друзьями, проводите занятия с классом и разбирайте
-              позиции с движком — прямо в браузере, без сторонних программ.
+              Проводите занятия один на один и с группой, разбирайте позиции
+              с движком — прямо в браузере, без сторонних программ.
             </p>
             <div className="mt-7 flex flex-wrap items-center gap-3">
               <Link
-                href={user ? '/play' : '/login?next=/play'}
+                href={user ? '/class' : '/login?next=/class'}
                 className="btn-primary group px-5 py-3 text-base"
               >
-                Играть онлайн
+                Групповой урок
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-white/20 transition-transform duration-200 group-hover:translate-x-0.5">
                   <ArrowRight size={14} weight="bold" aria-hidden />
                 </span>
               </Link>
               <Link
-                href={user ? '/class' : '/login?next=/class'}
+                href={user ? '/rooms' : '/login?next=/rooms'}
                 className="btn-outline px-5 py-3 text-base"
               >
-                Создать класс
+                Быстрый урок
               </Link>
             </div>
           </div>
@@ -77,24 +77,25 @@ export default async function HomePage() {
             Всё для занятий и игры
           </h2>
           <p className="mt-2 max-w-[60ch] text-stone-600 dark:text-stone-400">
-            Семь разделов: от быстрой партии до группового урока с голосовой связью.
+            Пять разделов: от урока один на один до группового занятия
+            с голосовой связью.
           </p>
 
           <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
             <Tile
-              href={user ? '/play' : '/login?next=/play'}
-              title="Играть онлайн"
-              text="Быстрая партия со случайным соперником в выбранном таймере."
-              icon={<IconKnight />}
-              className="lg:col-span-3"
-              featured
-            />
-            <Tile
               href={user ? '/rooms' : '/login?next=/rooms'}
-              title="Создать комнату"
-              text="Открыть приватный или публичный класс для урока."
+              title="Быстрый урок"
+              text="Занятие один на один: общая доска, голосовая связь и разбор позиции по ссылке."
               icon={<IconRook />}
               className="lg:col-span-3"
+            />
+            <Tile
+              href={user ? '/class' : '/login?next=/class'}
+              title="Групповой урок"
+              text="У каждого ученика своя доска: учитель раздаёт задачи, видит все решения сразу и выводит любую доску на общий экран."
+              icon={<IconGraduation />}
+              className="lg:col-span-3"
+              featured
             />
             <Tile
               href={user ? '/tournaments' : '/login?next=/tournaments'}
@@ -112,19 +113,12 @@ export default async function HomePage() {
               badge="Новое"
             />
             <Tile
-              href={user ? '/class' : '/login?next=/class'}
-              title="Класс"
-              text="Групповые уроки: задачи учителя, личные доски учеников, разбор и трансляция."
-              icon={<IconGraduation />}
-              className="lg:col-span-2"
-              tone="accent"
-            />
-            <Tile
               href="/fun"
               title="Развлекательные шахматы"
               text="Армия Света против армии Тьмы: сказочные фигуры, битвы и магия — детям точно понравится!"
               icon={<IconSword />}
-              className="lg:col-span-6"
+              className="lg:col-span-2"
+              tone="accent"
               badge="Новое"
             />
           </div>
@@ -143,7 +137,7 @@ export default async function HomePage() {
             />
             <Feature
               title="Чистое аудио"
-              text="WebRTC peer-to-peer прямо в браузере. Никаких Zoom — только ваша комната."
+              text="Голосовая связь прямо в браузере. Никаких Zoom — только вы и ученики."
               icon={<Microphone size={26} weight="duotone" />}
             />
             <Feature
@@ -246,13 +240,6 @@ function Feature({ title, text, icon }: { title: string; text: string; icon: Rea
 }
 
 /* Шахматные иконки разделов */
-function IconKnight() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>
-      <path d="M14 3c3.5 1 6 4 6 9v9H7v-3c0-2 1-3 2-4-2 0-4-1-4-3 0-3 4-7 5-8 0 1 1 2 2 2l2-2z" />
-    </svg>
-  );
-}
 function IconRook() {
   return (
     <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden>

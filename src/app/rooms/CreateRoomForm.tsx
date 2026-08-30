@@ -32,7 +32,7 @@ export function CreateRoomForm() {
 
   return (
     <form onSubmit={onSubmit} className="card space-y-4">
-      <h2 className="font-display text-2xl">Создать комнату</h2>
+      <h2 className="font-display text-2xl">Создать урок</h2>
 
       <label className="block">
         <span className="mb-1 block text-sm font-medium">Название</span>

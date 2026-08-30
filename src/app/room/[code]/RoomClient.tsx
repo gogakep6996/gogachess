@@ -1448,7 +1448,7 @@ function LinkCard({
     <button
       type="button"
       onClick={onCopy}
-      title="Скопировать ссылку на комнату"
+      title="Скопировать ссылку на урок"
       className="group flex w-full shrink-0 items-center gap-2 rounded-2xl bg-white/90 px-2.5 py-2 text-left ring-1 ring-stone-900/[0.07] backdrop-blur-sm transition-colors duration-150 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45 dark:bg-stone-900/70 dark:ring-white/[0.08] dark:hover:bg-brand-900/30"
     >
       <span className="min-w-0 flex-1">

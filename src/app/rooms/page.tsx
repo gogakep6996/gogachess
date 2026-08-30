@@ -21,9 +21,9 @@ export default async function RoomsPage() {
       <main className="mx-auto max-w-6xl px-6 py-10">
         <header className="mb-6 flex items-end justify-between gap-4">
           <div>
-            <h1 className="font-display text-3xl font-semibold">Создать комнату</h1>
+            <h1 className="font-display text-3xl font-semibold">Быстрый урок</h1>
             <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-              Откройте свою комнату для урока и пригласите учеников по ссылке.
+              Занятие один на один: откройте доску и пригласите ученика по ссылке.
             </p>
           </div>
         </header>
@@ -33,15 +33,15 @@ export default async function RoomsPage() {
             <div className="card">
               <h3 className="font-semibold">Подсказка</h3>
               <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-                Комнаты закрытые — попасть в них можно только по прямой ссылке.
-                После создания скопируйте ссылку на странице комнаты и отправьте
-                ученикам.
+                Уроки закрытые — попасть в них можно только по прямой ссылке.
+                После создания скопируйте ссылку на странице урока и отправьте
+                ученику.
               </p>
             </div>
           </section>
 
           <section className="space-y-8">
-            <RoomList title="Мои комнаты" rooms={own.map(map)} empty="Вы ещё не создали ни одной комнаты" />
+            <RoomList title="Мои уроки" rooms={own.map(map)} empty="Вы ещё не создали ни одного урока" />
           </section>
         </div>
       </main>

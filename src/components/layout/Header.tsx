@@ -78,8 +78,8 @@ export function Header() {
         </Link>
 
         <nav className="flex items-center gap-1.5 sm:gap-2">
-          <NavLink href="/rooms" pathname={pathname}>Комнаты</NavLink>
-          <NavLink href="/class" pathname={pathname}>Класс</NavLink>
+          <NavLink href="/rooms" pathname={pathname}>Быстрый урок</NavLink>
+          <NavLink href="/class" pathname={pathname}>Групповой урок</NavLink>
           <span className="mx-1 hidden h-5 w-px bg-stone-900/10 sm:block dark:bg-white/10" aria-hidden />
           <ThemeToggle />
           {user ? (

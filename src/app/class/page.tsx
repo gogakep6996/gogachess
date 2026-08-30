@@ -7,7 +7,7 @@ import { ClassSearch } from './ClassSearch';
 export const dynamic = 'force-dynamic';
 
 export const metadata = {
-  title: 'Классы учителей',
+  title: 'Групповые уроки',
 };
 
 export default async function ClassIndexPage() {
@@ -29,7 +29,7 @@ export default async function ClassIndexPage() {
         <header className="mb-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
           <div className="max-w-xl">
             <h1 className="text-[26px] font-semibold leading-tight tracking-tight text-stone-900 dark:text-stone-50">
-              Классы учителей
+              Групповые уроки
             </h1>
             <p className="mt-1.5 text-[14px] leading-relaxed text-stone-600 dark:text-stone-400">
               Зайдите к своему учителю: там его задачи и живые уроки. Или найдите нового
