@@ -34,6 +34,12 @@ function YandexMetrikaRouteListener() {
 /**
  * Подключается один раз в корневом layout — счётчик начинает работать на всех страницах.
  * Скрипт грузится после интерактивности (strategy="afterInteractive"), чтобы не блокировать LCP.
+ *
+ * webvisor выключен намеренно и включать его нельзя.
+ * Вебвизор записывает всё содержимое страницы, то есть и переписку в чате урока,
+ * и имена учеников — среди них дети. Это ушло бы в Яндекс как к третьему лицу,
+ * без основания и сверх заявленных в политике целей. Ответственность за маскирование
+ * данных Яндекс возлагает на владельца сайта.
  */
 export function YandexMetrika() {
   return (
@@ -51,9 +57,8 @@ export function YandexMetrika() {
 
           ym(${YANDEX_METRIKA_ID}, 'init', {
             ssr: true,
-            webvisor: true,
+            webvisor: false,
             clickmap: true,
-            ecommerce: "dataLayer",
             accurateTrackBounce: true,
             trackLinks: true
           });
