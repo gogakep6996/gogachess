@@ -25,6 +25,23 @@ model User {
   emailVerifiedAt DateTime?
   createdAt       DateTime  @default(now())
 
+  /// Доказательство согласия на обработку персональных данных (ст. 9 152-ФЗ:
+  /// обязанность доказать наличие согласия лежит на операторе). Заполняется
+  /// при регистрации — галочкой под формой. У пользователей, зарегистрированных
+  /// до внедрения фиксации, поля остаются пустыми.
+  consentAcceptedAt      DateTime?
+  /// Редакция документов на момент согласия, см. lib/legal.ts.
+  consentDocumentVersion String?
+  /// IP и браузер на момент согласия — чтобы связать согласие с конкретным действием.
+  consentIp              String?
+  consentUserAgent       String?
+
+  /// Выбор в баннере cookie: 'accepted' — аналитика разрешена, 'declined' — только
+  /// технические. У анонимных посетителей выбор остаётся только в их браузере,
+  /// у вошедших дублируется сюда, чтобы решение можно было подтвердить.
+  cookieConsent   String?
+  cookieConsentAt DateTime?
+
   ownedRooms          Room[]                 @relation("RoomOwner")
   messages            Message[]
   tournamentEntries   TournamentPlayer[]

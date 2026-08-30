@@ -25,7 +25,7 @@ export default function RegisterPage() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, displayName, captchaToken }),
+        body: JSON.stringify({ email, password, displayName, captchaToken, acceptedTerms: agreed }),
       });
       const data = (await res.json()) as { error?: string; user?: { email: string | null } };
       if (!res.ok) {
@@ -101,9 +101,14 @@ export default function RegisterPage() {
                 required
               />
               <span>
-                Я даю согласие на обработку персональных данных и принимаю{' '}
+                Подтверждаю, что мне исполнилось 18 лет, даю согласие на обработку
+                персональных данных и принимаю{' '}
+                <Link href="/terms" target="_blank" className="text-brand-600 hover:underline">
+                  Пользовательское соглашение
+                </Link>{' '}
+                и{' '}
                 <Link href="/privacy" target="_blank" className="text-brand-600 hover:underline">
-                  Политику конфиденциальности
+                  Политику обработки персональных данных
                 </Link>
                 .
               </span>

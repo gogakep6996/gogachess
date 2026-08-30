@@ -4,13 +4,20 @@ import { hashPassword, signToken, setAuthCookie } from '@/lib/auth';
 import { sendVerifyEmail } from '@/lib/email/flows';
 import { checkLimit, getClientIp } from '@/lib/rate-limit';
 import { verifyCaptcha } from '@/lib/captcha';
+import { LEGAL_VERSION } from '@/lib/legal';
 
 interface Body {
   email: string;
   password: string;
   displayName: string;
-  /** Опциональный токен Cloudflare Turnstile (если настроен на проде). */
+  /** Токен Yandex SmartCaptcha (если капча настроена, см. lib/captcha.ts). */
   captchaToken?: string;
+  /**
+   * Галочка под формой: подтверждение возраста, согласие на обработку
+   * персональных данных и принятие документов сайта. Проверяется на сервере —
+   * в браузере её можно обойти прямым запросом к API.
+   */
+  acceptedTerms?: boolean;
 }
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -55,8 +62,17 @@ export async function POST(request: Request) {
   if (displayName.length < 2) {
     return NextResponse.json({ error: 'Имя слишком короткое' }, { status: 400 });
   }
+  if (body.acceptedTerms !== true) {
+    return NextResponse.json(
+      {
+        error:
+          'Нужно подтвердить возраст, согласие на обработку персональных данных и принять документы сайта',
+      },
+      { status: 400 },
+    );
+  }
 
-  // Капча проверяется на сервере (Turnstile). Если переменные не заданы —
+  // Капча проверяется на сервере (Yandex SmartCaptcha). Если переменные не заданы —
   // verifyCaptcha вернёт true и пропустит, см. lib/captcha.ts.
   const captchaOk = await verifyCaptcha(body.captchaToken, ip);
   if (!captchaOk) {
@@ -75,6 +91,11 @@ export async function POST(request: Request) {
       passwordHash,
       displayName,
       // emailVerifiedAt оставляем null — пользователь должен подтвердить почту.
+      // Доказательство согласия: время, редакция документов и обстоятельства действия.
+      consentAcceptedAt: new Date(),
+      consentDocumentVersion: LEGAL_VERSION,
+      consentIp: ip,
+      consentUserAgent: (request.headers.get('user-agent') || '').slice(0, 512) || null,
     },
   });
 

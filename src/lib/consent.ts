@@ -39,6 +39,18 @@ export function setConsent(choice: 'accepted' | 'declined'): void {
   } catch {
     // приватный режим — согласие не сохранится, баннер появится снова
   }
+
+  // Дублируем выбор на сервер: localStorage лежит на устройстве пользователя и
+  // доказательством его решения быть не может. Для анонимных посетителей запрос
+  // ничего не сохранит и просто вернёт saved: false — это нормально.
+  // Ошибку глушим: работа баннера не должна зависеть от доступности сети.
+  void fetch('/api/consent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ choice }),
+    keepalive: true,
+  }).catch(() => {});
+
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(CONSENT_EVENT));
   }
