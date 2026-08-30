@@ -89,9 +89,12 @@ export default async function HomePage() {
           />
         </section>
 
-        <footer className="mt-16 border-t border-stone-300/60 pt-6 text-center text-sm text-stone-500 dark:border-stone-700/60 dark:text-stone-400">
+        <footer className="mt-16 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-stone-300/60 pt-6 text-center text-sm text-stone-500 dark:border-stone-700/60 dark:text-stone-400">
           <Link href="/privacy" className="hover:text-brand-600 hover:underline dark:hover:text-brand-400">
-            Политика конфиденциальности
+            Политика обработки персональных данных
+          </Link>
+          <Link href="/terms" className="hover:text-brand-600 hover:underline dark:hover:text-brand-400">
+            Пользовательское соглашение
           </Link>
         </footer>
       </main>
