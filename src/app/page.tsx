@@ -27,12 +27,19 @@ export default async function HomePage() {
             <span className="badge bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200">
               Платформа для шахматных уроков
             </span>
-            <h1 className="mt-4 font-display text-4xl font-bold leading-[1.08] tracking-tight text-stone-900 sm:text-5xl dark:text-stone-50">
-              Шахматы для <span className="text-brand-600 dark:text-brand-300">уроков</span>, игры и турниров
+            {/* text-balance делит заголовок на строки по смыслу, иначе «турниров»
+                срывается на третью строку и разрывает цветной акцент */}
+            <h1 className="mt-4 text-balance font-display text-4xl font-bold leading-[1.08] tracking-tight text-stone-900 sm:text-5xl dark:text-stone-50">
+              Шахматы для проведения <span className="text-brand-600 dark:text-brand-300">уроков и турниров</span>
             </h1>
-            <p className="mt-4 max-w-[52ch] text-base leading-relaxed text-stone-600 sm:text-lg dark:text-stone-300">
-              Проводите занятия один на один и с группой, разбирайте позиции
-              с движком — прямо в браузере, без сторонних программ.
+            {/* Перенос по границе предложений: автоматический перенос рвал
+                «групповые занятия» и «Живая доска». На узких экранах строка
+                не помещается целиком, поэтому там перенос отключён. */}
+            <p className="mt-4 max-w-[52ch] text-pretty text-base leading-relaxed text-stone-600 sm:text-lg dark:text-stone-300">
+              Проводите индивидуальные и групповые занятия.{' '}
+              <br className="hidden sm:inline" />
+              Любые изменения на доске сразу видны и ученику, и учителю,
+              а голосовая связь работает прямо в браузере.
             </p>
             <div className="mt-7 flex flex-wrap items-center gap-3">
               <Link
@@ -71,7 +78,8 @@ export default async function HomePage() {
           </div>
         </section>
 
-        {/* ── Разделы сайта: асимметричная bento-сетка вместо ровных плиток ── */}
+        {/* ── Разделы сайта: сетка 2×2. `auto-rows-fr` держит ряды одной высоты,
+              иначе плитка с длинным описанием вытягивает свой ряд выше соседнего ── */}
         <section className="mt-20 sm:mt-24">
           <h2 className="font-display text-2xl font-bold tracking-tight text-stone-900 sm:text-3xl dark:text-stone-50">
             Всё для занятий и игры
@@ -81,20 +89,18 @@ export default async function HomePage() {
             с голосовой связью.
           </p>
 
-          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+          <div className="mt-8 grid grid-cols-1 gap-4 sm:auto-rows-fr sm:grid-cols-2">
             <Tile
               href={user ? '/rooms' : '/login?next=/rooms'}
               title="Быстрый урок"
               text="Занятие один на один: общая доска, голосовая связь и разбор позиции по ссылке."
               icon={<IconRook />}
-              className="lg:col-span-3"
             />
             <Tile
               href={user ? '/class' : '/login?next=/class'}
               title="Групповой урок"
               text="У каждого ученика своя доска: учитель раздаёт задачи, видит все решения сразу и выводит любую доску на общий экран."
               icon={<IconGraduation />}
-              className="lg:col-span-3"
               featured
             />
             <Tile
@@ -102,14 +108,12 @@ export default async function HomePage() {
               title="Турниры"
               text="Арена со свободным подбором, таблицей и трансляцией всех партий."
               icon={<IconTrophy />}
-              className="lg:col-span-3"
             />
             <Tile
               href="/learn"
               title="Обучение"
               text="Тактические задачи: маты, эндшпили, вилки и связки."
               icon={<IconBook />}
-              className="lg:col-span-3"
               badge="Новое"
             />
           </div>
