@@ -554,7 +554,9 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
 
   function persistGame(g: GameRt): void {
     queueWrite(g.id, () =>
-      prisma.arenaGame.update({
+      // updateMany по той же причине, что и у участника: удалённый турнир
+      // уносит партии каскадом, а очередь записи может ещё не опустеть.
+      prisma.arenaGame.updateMany({
         where: { id: g.id },
         data: {
           status: g.status,
@@ -571,9 +573,13 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
   }
 
   function persistPlayer(rt: ArenaRt, p: PlayerRt): void {
+    // updateMany, а не update: строки может уже не быть. Владелец удаляет ещё
+    // не начавшийся турнир, участники уходят каскадом, а в памяти они живут до
+    // следующей синхронизации. update в этот момент кидает P2025 и пишет в лог
+    // пугающую строку про ошибку записи, хотя терять нечего — турнира нет.
     prisma.arenaPlayer
-      .update({
-        where: { arenaId_userId: { arenaId: rt.id, userId: p.userId } },
+      .updateMany({
+        where: { arenaId: rt.id, userId: p.userId },
         data: {
           score: p.score,
           wins: p.wins,
@@ -844,7 +850,9 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
       // Старт арены по расписанию.
       if (rt.status === 'scheduled' && now >= rt.startsAt.getTime()) {
         rt.status = 'running';
-        prisma.arena.update({ where: { id: rt.id }, data: { status: 'running' } }).catch(logDb);
+        prisma.arena
+          .updateMany({ where: { id: rt.id }, data: { status: 'running' } })
+          .catch(logDb);
         tryPair(rt);
         void broadcast(rt);
       }
@@ -898,7 +906,10 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
         if (!anyLive) {
           rt.status = 'finished';
           prisma.arena
-            .update({ where: { id: rt.id }, data: { status: 'finished', finishedAt: new Date() } })
+            .updateMany({
+              where: { id: rt.id },
+              data: { status: 'finished', finishedAt: new Date() },
+            })
             .catch(logDb);
           dirty = true;
         }
