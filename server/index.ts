@@ -3,7 +3,6 @@ import { parse } from 'node:url';
 import { createHmac } from 'node:crypto';
 import next from 'next';
 import { Server as IOServer, Socket } from 'socket.io';
-import jwt from 'jsonwebtoken';
 import { Chess } from 'chess.js';
 import { PrismaClient } from '@prisma/client';
 import {
@@ -15,9 +14,6 @@ import {
   type RoomStatePayload,
   type ChatMessageDto,
   type MatchFoundPayload,
-  type TournamentLivePayload,
-  type TournamentMatchDto,
-  type TournamentStandingDto,
   type RoomMode,
   type MoveHistoryEntry,
   type MoveTreeNode,
@@ -40,13 +36,12 @@ import {
   type Square,
 } from '../src/lib/fen';
 import { applyPseudoLegalMove } from '../src/lib/pseudo-legal';
+import { parseAuthCookie } from './auth-cookie';
+import { registerArena } from './arena';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number(process.env.PORT) || 3000;
 const hostname = '0.0.0.0';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
-const COOKIE_NAME = 'chess_token';
 
 const prisma = new PrismaClient();
 
@@ -63,10 +58,8 @@ interface RoomRuntime {
   audioReady: Set<string>;
   kind: string;
   timeControl: string | null;
-  tournamentId: string | null;
   whiteId?: string | null;
   blackId?: string | null;
-  matchId?: string | null;
   finished?: boolean;
   /** Настройки тренировочной комнаты (legal/illegal, sideLock, права учеников). */
   mode: RoomMode;
@@ -93,11 +86,11 @@ interface RoomRuntime {
   historyViewNodeId: string | null;
   /** Снимки прошлых партий на доске (после «начать заново») — для разбора учителем. */
   pastGames: PastGameDto[];
-  /** Часы партии (только для турнирных / казуальных партий с timeControl). */
+  /** Часы партии (только для казуальных партий /play с timeControl). */
   clock: ClockState | null;
-  /** Активное предложение ничьей (только для tournament/casual). */
+  /** Активное предложение ничьей (только для casual). */
   drawOffer: DrawOfferState | null;
-  /** Итог партии (для tournament/casual после завершения). */
+  /** Итог партии (для casual после завершения). */
   result: GameResultState | null;
   /** Включён ли движок-соперник на доске ученика (только для student-board).
    *  По умолчанию true. Учитель может выключить кнопкой; флаг сохраняется
@@ -115,26 +108,11 @@ interface RoomRuntime {
   studentMovesLocked: boolean;
   /** Единственный ученик (userId), которому разрешено ходить при блокировке. */
   allowedMoverUserId: string | null;
-  /** Турнир: дедлайн (ms epoch) на один из первых двух полуходов. Кто к этому
-   *  моменту не сходил — проигрывает. null = правило не действует (сыграно ≥2 хода
-   *  или это не турнирная партия). */
-  firstMoveDeadlineAt: number | null;
   /** Снимок «живой» партии ученика на момент, когда учитель начал разбор
    *  (загрузил прошлую партию). Пока не null — идёт разбор: при выходе учителя из
    *  доски позиция ученика восстанавливается из снимка и он продолжает играть с
    *  движком. null = обычный режим (разбор не начат). */
   reviewBackup?: RoomReviewBackup | null;
-}
-
-/** Сколько даётся на каждый из первых двух полуходов турнирной партии. */
-const FIRST_MOVE_MS = 20_000;
-
-/** Число сделанных полуходов, вычисленное из FEN (надёжно после рестарта сервера). */
-function pliesFromFen(fen: string): number {
-  const parts = fen.split(' ');
-  const stm = parts[1] === 'b' ? 'b' : 'w';
-  const fullmove = Number(parts[5]) || 1;
-  return (fullmove - 1) * 2 + (stm === 'b' ? 1 : 0);
 }
 
 /**
@@ -362,28 +340,6 @@ function cancelRoomDeletion(code: string): void {
 /** socketId -> { userId, timeControl } */
 const matchQueue = new Map<string, { userId: string; userName: string; timeControl: string }>();
 
-/** Общий чат турнира (in-memory): tournamentId -> последние сообщения. */
-const tournamentChats = new Map<string, ChatMessageDto[]>();
-const TOURNAMENT_CHAT_LIMIT = 200;
-
-function parseAuthCookie(cookieHeader: string | undefined): { sub: string; name: string } | null {
-  if (!cookieHeader) return null;
-  const cookies = Object.fromEntries(
-    cookieHeader.split(';').map((c) => {
-      const [k, ...v] = c.trim().split('=');
-      return [k, decodeURIComponent(v.join('='))];
-    }),
-  );
-  const token = cookies[COOKIE_NAME];
-  if (!token) return null;
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as { sub: string; name: string };
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
 function buildState(room: RoomRuntime): RoomStatePayload {
   return {
     code: room.code,
@@ -417,7 +373,6 @@ function buildState(room: RoomRuntime): RoomStatePayload {
     humanColor: room.humanColor ?? null,
     studentMovesLocked: room.studentMovesLocked,
     allowedMoverUserId: room.allowedMoverUserId,
-    firstMoveDeadlineAt: room.firstMoveDeadlineAt,
   };
 }
 
@@ -459,14 +414,11 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
   const existing = rooms.get(code);
   if (existing) return existing;
 
-  const dbRoom = await prisma.room.findUnique({
-    where: { code },
-    include: { match: { select: { id: true, whiteId: true, blackId: true } } },
-  });
+  const dbRoom = await prisma.room.findUnique({ where: { code } });
   if (!dbRoom) return null;
 
   const initialFen = dbRoom.fen || STARTING_FEN;
-  const needsClock = dbRoom.kind === 'tournament' || dbRoom.kind === 'casual';
+  const needsClock = dbRoom.kind === 'casual';
   // Для доски ученика берём силу движка из задачи, которую раздал учитель
   // (TaskSession уникально связана с этой комнатой через roomId). Иначе — полная сила.
   let engineLevel = 20;
@@ -493,10 +445,11 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     audioReady: new Set(),
     kind: dbRoom.kind,
     timeControl: dbRoom.timeControl,
-    tournamentId: dbRoom.tournamentId,
-    matchId: dbRoom.match?.id ?? null,
-    whiteId: dbRoom.match?.whiteId ?? null,
-    blackId: dbRoom.match?.blackId ?? null,
+    // Кто играет белыми/чёрными задаётся при создании casual-партии в подборе
+    // и живёт в памяти. После рестарта сервера ограничение по цвету теряется —
+    // так было и раньше, партии арены этой ветки не касаются.
+    whiteId: null,
+    blackId: null,
     mode: { ...DEFAULT_ROOM_MODE },
     history: [],
     segmentStartFen: initialFen,
@@ -516,12 +469,6 @@ async function loadOrCreateRuntime(code: string): Promise<RoomRuntime | null> {
     humanColor,
     studentMovesLocked: false,
     allowedMoverUserId: null,
-    // Турнирная партия, в которой ещё не сыграно 2 полухода → запускаем 20-сек дедлайн
-    // на первый/второй ход (на случай реконструкции runtime после рестарта сервера).
-    firstMoveDeadlineAt:
-      dbRoom.kind === 'tournament' && pliesFromFen(initialFen) < 2
-        ? Date.now() + FIRST_MOVE_MS
-        : null,
   };
   rooms.set(code, runtime);
   return runtime;
@@ -902,8 +849,12 @@ app.prepare().then(() => {
     nextFn();
   });
 
-  // Универсальное завершение партии: фиксирует runtime.result, останавливает часы,
-  // оповещает участников и (для турнирной партии) обновляет TournamentMatch + очки.
+  // Арена живёт в своём пространстве имён '/arena' со своей проверкой входа:
+  // трансляцию там смотрят и без учётной записи.
+  registerArena(io, prisma);
+
+  // Завершение казуальной партии: фиксирует runtime.result, останавливает часы,
+  // оповещает участников. Партии арены сюда не приходят — у них своя модель.
   function endGame(
     runtime: RoomRuntime,
     outcome: 'white' | 'black' | 'draw',
@@ -916,229 +867,7 @@ app.prepare().then(() => {
     runtime.drawOffer = null;
     io.to(runtime.code).emit(SocketEvents.RoomState, buildState(runtime));
     io.to(runtime.code).emit(SocketEvents.GameOver, { outcome, reason });
-    if (runtime.kind === 'tournament' && runtime.matchId) {
-      void finishMatch(runtime.matchId, outcome);
-    }
   }
-
-  // ---- Турниры: live broadcast по комнатам tournament:<id> ----
-  async function broadcastTournament(tournamentId: string): Promise<void> {
-    const t = await prisma.tournament.findUnique({
-      where: { id: tournamentId },
-      include: {
-        players: {
-          include: { user: { select: { id: true, displayName: true } } },
-        },
-        matches: {
-          include: {
-            white: { select: { id: true, displayName: true } },
-            black: { select: { id: true, displayName: true } },
-            room: { select: { code: true, fen: true } },
-          },
-          orderBy: { startedAt: 'desc' },
-          take: 100,
-        },
-      },
-    });
-    if (!t) return;
-    const standings: TournamentStandingDto[] = t.players
-      .slice()
-      .sort((a, b) => b.score - a.score || b.played - a.played)
-      .map((p, i) => ({
-        userId: p.userId,
-        name: p.user.displayName,
-        score: p.score,
-        played: p.played,
-        rank: i + 1,
-        isAvailable: p.isAvailable,
-      }));
-    const matches: TournamentMatchDto[] = t.matches.map((m) => ({
-      id: m.id,
-      roomCode: m.room?.code ?? null,
-      whiteId: m.whiteId,
-      whiteName: m.white.displayName,
-      blackId: m.blackId,
-      blackName: m.black.displayName,
-      status: m.status,
-      fen: m.room?.fen ?? undefined,
-    }));
-    const endsAt = t.status === 'running'
-      ? new Date(t.startsAt.getTime() + t.durationMin * 60_000).toISOString()
-      : null;
-    const payload: TournamentLivePayload = {
-      id: t.id,
-      status: t.status,
-      startsAt: t.startsAt.toISOString(),
-      endsAt,
-      matches,
-      standings,
-    };
-    io.to(`tournament:${tournamentId}`).emit(SocketEvents.TournamentState, payload);
-  }
-
-  // Подбор пары внутри активного турнира.
-  async function tryPairInTournament(tournamentId: string): Promise<void> {
-    const t = await prisma.tournament.findUnique({ where: { id: tournamentId } });
-    if (!t || t.status !== 'running') return;
-
-    const free = await prisma.tournamentPlayer.findMany({
-      where: { tournamentId, isAvailable: true },
-      orderBy: { joinedAt: 'asc' },
-      include: { user: { select: { id: true, displayName: true } } },
-    });
-    while (free.length >= 2) {
-      const a = free.shift()!;
-      const b = free.shift()!;
-      // Цвет — случайно
-      const aWhite = Math.random() < 0.5;
-      const whiteId = aWhite ? a.userId : b.userId;
-      const blackId = aWhite ? b.userId : a.userId;
-      const whiteName = aWhite ? a.user.displayName : b.user.displayName;
-      const blackName = aWhite ? b.user.displayName : a.user.displayName;
-
-      const code = await uniqueRoomCode();
-      const room = await prisma.room.create({
-        data: {
-          code,
-          name: `${whiteName} vs ${blackName}`,
-          isPublic: true,
-          ownerId: whiteId,
-          kind: 'tournament',
-          timeControl: t.timeControl,
-          tournamentId: t.id,
-        },
-      });
-      const match = await prisma.tournamentMatch.create({
-        data: { tournamentId: t.id, roomId: room.id, whiteId, blackId, status: 'live' },
-      });
-      await prisma.tournamentPlayer.updateMany({
-        where: { tournamentId, userId: { in: [whiteId, blackId] } },
-        data: { isAvailable: false },
-      });
-
-      // Уведомляем игроков с открытой страницей подбора (если они там)
-      // — а заодно шлём системно через events для тех, кто на /play не сидит:
-      // здесь просто шлём всем подключённым сокетам этих пользователей.
-      io.sockets.sockets.forEach((s) => {
-        const uid = s.data.userId as string | undefined;
-        if (!uid) return;
-        if (uid === whiteId || uid === blackId) {
-          const opp = uid === whiteId ? blackName : whiteName;
-          const payload: MatchFoundPayload = {
-            code,
-            timeControl: t.timeControl,
-            opponentName: opp,
-          };
-          s.emit(SocketEvents.MatchFound, payload);
-        }
-      });
-
-      // Кэшируем runtime для быстрой обработки
-      rooms.set(code, {
-        code,
-        name: room.name,
-        isPublic: true,
-        ownerId: whiteId,
-        fen: STARTING_FEN,
-        segmentStartFen: STARTING_FEN,
-        isEditing: false,
-        editorId: null,
-        participants: new Map(),
-        audioReady: new Set(),
-        kind: 'tournament',
-        timeControl: t.timeControl,
-        tournamentId: t.id,
-        matchId: match.id,
-        whiteId,
-        blackId,
-        mode: { ...DEFAULT_ROOM_MODE },
-        history: [],
-        arrows: [],
-        marks: [],
-        freshSegment: true,
-        historyViewIdx: null,
-        moveNodes: [],
-        currentNodeId: null,
-        historyViewNodeId: null,
-        pastGames: [],
-        clock: makeClock(t.timeControl),
-        drawOffer: null,
-        result: null,
-        engineEnabled: false,
-        engineLevel: 20,
-        humanColor: null,
-        studentMovesLocked: false,
-        allowedMoverUserId: null,
-        // У белых есть 20 секунд на первый ход с момента создания партии.
-        firstMoveDeadlineAt: Date.now() + FIRST_MOVE_MS,
-      });
-    }
-    await broadcastTournament(tournamentId);
-  }
-
-  // Завершение партии: обновляем очки и освобождаем игроков.
-  async function finishMatch(
-    matchId: string,
-    status: 'white' | 'black' | 'draw',
-  ): Promise<void> {
-    const m = await prisma.tournamentMatch.findUnique({
-      where: { id: matchId },
-      include: { tournament: true },
-    });
-    if (!m || m.status !== 'live') return;
-    await prisma.tournamentMatch.update({
-      where: { id: matchId },
-      data: { status, finishedAt: new Date() },
-    });
-    const whiteScore = status === 'white' ? 1 : status === 'draw' ? 0.5 : 0;
-    const blackScore = status === 'black' ? 1 : status === 'draw' ? 0.5 : 0;
-    // После завершения партии игрок НЕ возвращается автоматически в подбор —
-    // пусть нажмёт «Вернуться в турнир» (POST /join), чтобы снова стать isAvailable.
-    await prisma.tournamentPlayer.update({
-      where: { tournamentId_userId: { tournamentId: m.tournamentId, userId: m.whiteId } },
-      data: { score: { increment: whiteScore }, played: { increment: 1 }, isAvailable: false },
-    });
-    await prisma.tournamentPlayer.update({
-      where: { tournamentId_userId: { tournamentId: m.tournamentId, userId: m.blackId } },
-      data: { score: { increment: blackScore }, played: { increment: 1 }, isAvailable: false },
-    });
-    await broadcastTournament(m.tournamentId);
-    await tryPairInTournament(m.tournamentId);
-  }
-
-  // Тикер: запускает турниры по времени и завершает их.
-  setInterval(async () => {
-    try {
-      const now = new Date();
-      const toStart = await prisma.tournament.findMany({
-        where: { status: 'scheduled', startsAt: { lte: now } },
-      });
-      for (const t of toStart) {
-        await prisma.tournament.update({ where: { id: t.id }, data: { status: 'running' } });
-        await broadcastTournament(t.id);
-        await tryPairInTournament(t.id);
-      }
-      const running = await prisma.tournament.findMany({ where: { status: 'running' } });
-      for (const t of running) {
-        const endsAt = new Date(t.startsAt.getTime() + t.durationMin * 60_000);
-        if (now >= endsAt) {
-          await prisma.tournament.update({ where: { id: t.id }, data: { status: 'finished' } });
-          // Все live-матчи объявляем ничьей по тайм-ауту арены.
-          const live = await prisma.tournamentMatch.findMany({
-            where: { tournamentId: t.id, status: 'live' },
-          });
-          for (const m of live) {
-            await finishMatch(m.id, 'draw');
-          }
-          await broadcastTournament(t.id);
-        } else {
-          await tryPairInTournament(t.id);
-        }
-      }
-    } catch (err) {
-      console.error('tournament tick error', err);
-    }
-  }, 5000);
 
   // Тикер часов: каждые 250 мс пробегаем по всем активным партиям и проверяем флаг.
   // Если часы тикающего цвета истекли — завершаем партию по timeout.
@@ -1151,18 +880,6 @@ app.prepare().then(() => {
       if (runtime.drawOffer && now > runtime.drawOffer.expiresAt) {
         runtime.drawOffer = null;
         io.to(runtime.code).emit(SocketEvents.RoomState, buildState(runtime));
-      }
-      // Правило первых двух полуходов (турнир): кто не сходил за 20 секунд — проигрывает.
-      if (runtime.firstMoveDeadlineAt !== null) {
-        if (pliesFromFen(runtime.fen) >= 2) {
-          runtime.firstMoveDeadlineAt = null;
-        } else if (now >= runtime.firstMoveDeadlineAt) {
-          const stm: 'w' | 'b' = (runtime.fen.split(' ')[1] ?? 'w') === 'b' ? 'b' : 'w';
-          const winner: 'white' | 'black' = stm === 'w' ? 'black' : 'white';
-          runtime.firstMoveDeadlineAt = null;
-          endGame(runtime, winner, 'timeout');
-          continue;
-        }
       }
       // Тикаем часы.
       const c = runtime.clock;
@@ -1282,8 +999,8 @@ app.prepare().then(() => {
         return;
       }
 
-      // ---------- Турнирная / casual партия: строго по правилам ----------
-      if (runtime.kind === 'tournament' || runtime.kind === 'casual') {
+      // ---------- Быстрая партия (/play): строго по правилам ----------
+      if (runtime.kind === 'casual') {
         if (runtime.finished) {
           socket.emit(SocketEvents.RoomError, 'Партия уже окончена');
           return;
@@ -1327,12 +1044,6 @@ app.prepare().then(() => {
           runtime.historyViewIdx = null;
           // Часы: списываем время мовера, +инкремент, передаём ход сопернику.
           applyClockOnMove(runtime, turn);
-          // Правило первых двух полуходов (турнир): пока сыграно <2 полуходов —
-          // у соперника снова 20 секунд на ответный ход; после 2-го хода правило снимается.
-          if (runtime.kind === 'tournament') {
-            runtime.firstMoveDeadlineAt =
-              pliesFromFen(runtime.fen) < 2 ? Date.now() + FIRST_MOVE_MS : null;
-          }
           // Любой ход отменяет действующее предложение ничьей.
           runtime.drawOffer = null;
           io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
@@ -1513,7 +1224,7 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      if (runtime.kind === 'tournament' || runtime.kind === 'casual') {
+      if (runtime.kind === 'casual') {
         socket.emit(SocketEvents.RoomError, 'В игровой партии редактор недоступен');
         return;
       }
@@ -2088,7 +1799,6 @@ app.prepare().then(() => {
           audioReady: new Set(),
           kind: 'casual',
           timeControl,
-          tournamentId: null,
           whiteId,
           blackId,
           mode: { ...DEFAULT_ROOM_MODE },
@@ -2109,8 +1819,6 @@ app.prepare().then(() => {
           humanColor: null,
           studentMovesLocked: false,
           allowedMoverUserId: null,
-          // Правило 20 секунд — только для турнирных партий, casual без него.
-          firstMoveDeadlineAt: null,
         });
         const payloadA: MatchFoundPayload = {
           code,
@@ -2135,13 +1843,14 @@ app.prepare().then(() => {
     });
 
     // ---------- Сдача / Ничья ----------
-    // Только участник турнирной/casual партии может сдаться или предложить ничью.
+    // Только участник казуальной партии (/play) может сдаться или предложить ничью.
+    // В арене эти действия обрабатывает пространство имён '/arena'.
     socket.on(SocketEvents.Resign, () => {
       const code = socket.data.roomCode as string | undefined;
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      if (runtime.kind !== 'tournament' && runtime.kind !== 'casual') return;
+      if (runtime.kind !== 'casual') return;
       if (runtime.finished) return;
       if (userId !== runtime.whiteId && userId !== runtime.blackId) return;
       const winner: 'white' | 'black' =
@@ -2155,7 +1864,7 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      if (runtime.kind !== 'tournament' && runtime.kind !== 'casual') return;
+      if (runtime.kind !== 'casual') return;
       if (runtime.finished) return;
       if (userId !== runtime.whiteId && userId !== runtime.blackId) return;
       // Не даём «спамить» предложением.
@@ -2172,7 +1881,7 @@ app.prepare().then(() => {
       if (!code) return;
       const runtime = rooms.get(code);
       if (!runtime) return;
-      if (runtime.kind !== 'tournament' && runtime.kind !== 'casual') return;
+      if (runtime.kind !== 'casual') return;
       if (runtime.finished) return;
       if (!runtime.drawOffer) return;
       // Принять может только тот, кому предложили (т.е. НЕ автор оффера),
@@ -2197,34 +1906,6 @@ app.prepare().then(() => {
       if (userId === runtime.drawOffer.fromUserId) return;
       runtime.drawOffer = null;
       io.to(code).emit(SocketEvents.RoomState, buildState(runtime));
-    });
-
-    // ---------- Подписка на лайв-турнир ----------
-    socket.on(SocketEvents.TournamentLive, async (id: string) => {
-      if (typeof id !== 'string') return;
-      socket.join(`tournament:${id}`);
-      socket.data.tournamentId = id;
-      socket.emit(SocketEvents.TournamentChatHistory, tournamentChats.get(id) ?? []);
-      await broadcastTournament(id);
-    });
-
-    // Общий чат турнира: сообщение видят все подписанные на tournament:<id>.
-    socket.on(SocketEvents.TournamentChatSend, (content: string) => {
-      const id = socket.data.tournamentId as string | undefined;
-      if (!id || typeof content !== 'string' || !content.trim()) return;
-      const trimmed = content.trim().slice(0, 1000);
-      const dto: ChatMessageDto = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        userId,
-        userName,
-        content: trimmed,
-        createdAt: new Date().toISOString(),
-      };
-      const list = tournamentChats.get(id) ?? [];
-      list.push(dto);
-      if (list.length > TOURNAMENT_CHAT_LIMIT) list.splice(0, list.length - TOURNAMENT_CHAT_LIMIT);
-      tournamentChats.set(id, list);
-      io.to(`tournament:${id}`).emit(SocketEvents.TournamentChatNew, dto);
     });
 
     // ---------- КЛАСС: подписка / lifecycle урока / демо / раздача ----------

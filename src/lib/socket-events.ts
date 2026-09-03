@@ -73,13 +73,38 @@ export const SocketEvents = {
   DrawAccept: 'chess:draw-accept',
   DrawDecline: 'chess:draw-decline',
 
-  // Турниры (live-обновления)
-  TournamentLive: 'tournament:live',   // подписка на конкретный турнир
-  TournamentState: 'tournament:state', // апдейты с матчами/таблицей
-  /** Общий чат участников турнира (in-memory, живёт пока идёт турнир). */
-  TournamentChatSend: 'tournament:chat-send',
-  TournamentChatNew: 'tournament:chat-new',
-  TournamentChatHistory: 'tournament:chat-history',
+  // ─────────────────────────── Арена (турниры) ───────────────────────────
+  // Живут в отдельном пространстве имён сокета '/arena': туда пускают и
+  // незалогиненных зрителей, а в основное пространство — только вошедших.
+
+  /** Подписаться на арену. Сразу приходит ArenaState. */
+  ArenaWatch: 'arena:watch',
+  /** Снэпшот арены: таблица, идущие партии, моё состояние. */
+  ArenaState: 'arena:state',
+  /** Записаться / вернуться в пул. payload { accessCode?: string }. */
+  ArenaJoin: 'arena:join',
+  /** Остаться в арене, но пар не получать. */
+  ArenaPause: 'arena:pause',
+
+  /** Смотреть конкретную партию (своя приходит автоматически). */
+  ArenaGameWatch: 'arena:game-watch',
+  /** Полное состояние партии: позиция, ходы, часы. */
+  ArenaGameState: 'arena:game-state',
+  /** Партия окончена — для тоста с результатом. */
+  ArenaGameOver: 'arena:game-over',
+
+  ArenaMove: 'arena:move',
+  ArenaResign: 'arena:resign',
+  ArenaDrawOffer: 'arena:draw-offer',
+  ArenaDrawAccept: 'arena:draw-accept',
+  ArenaDrawDecline: 'arena:draw-decline',
+
+  ArenaChatSend: 'arena:chat-send',
+  ArenaChatNew: 'arena:chat-new',
+  ArenaChatHistory: 'arena:chat-history',
+
+  /** Текст ошибки для показа пользователю. */
+  ArenaError: 'arena:error',
 
   // Класс учителя (live-обновления для дашборда учителя и страницы ученика)
   /** Подписка на состояние класса (учитель / ученик). Сразу шлём текущий ClassState. */
@@ -233,7 +258,8 @@ export interface GameResultState {
     | 'insufficient-material'
     | 'threefold'
     | 'fifty-move'
-    | 'tournament-end'
+    /** Арена: первый ход не сделан за 20 секунд — партия отменена, в зачёт не идёт. */
+    | 'no-first-move'
     | 'other';
 }
 
@@ -298,9 +324,6 @@ export interface RoomStatePayload {
   /** Единственный ученик (userId), которому разрешено ходить при включённой
    *  блокировке studentMovesLocked. null = никому, кроме учителя. */
   allowedMoverUserId: string | null;
-  /** Турнир: дедлайн (ms epoch) на один из первых двух полуходов. Кто не сходит
-   *  до него — проигрывает. null = правило не действует. Для отрисовки таймера. */
-  firstMoveDeadlineAt: number | null;
 }
 
 export interface ChatMessageDto {
@@ -317,35 +340,151 @@ export interface MatchFoundPayload {
   opponentName: string;
 }
 
-export interface TournamentMatchDto {
+// ═══════════════════════════════ АРЕНА ═══════════════════════════════════
+//
+// Единственный формат турнира: отведённое время, непрерывный подбор пар,
+// очки с бонусом за серию побед. Партии арены не используют модель Room —
+// у них своя модель ArenaGame со своим списком ходов и часами.
+
+/** Результат одной партии глазами игрока — цветной квадратик в таблице. */
+export type ArenaResult = 'win' | 'draw' | 'loss';
+
+/** Состояние участника: в пуле, играет или на паузе. */
+export type ArenaPlayerState = 'ready' | 'playing' | 'paused';
+
+/** Строка таблицы результатов. */
+export interface ArenaStandingDto {
+  userId: string;
+  name: string;
+  rank: number;
+  score: number;
+  wins: number;
+  played: number;
+  /** Побед подряд. 2 и больше — «огонёк»: победа даёт 4 очка, ничья 2. */
+  streak: number;
+  state: ArenaPlayerState;
+  /** Последние результаты, самый свежий первым. */
+  recent: ArenaResult[];
+}
+
+/** Партия в списке: для трансляции и для разбора после арены. */
+export interface ArenaGameSummaryDto {
   id: string;
-  roomCode: string | null;
   whiteId: string;
   whiteName: string;
   blackId: string;
   blackName: string;
+  /** 'live' | 'white' | 'black' | 'draw' | 'cancelled'. */
   status: string;
-  fen?: string;
+  fen: string;
+  movesCount: number;
 }
 
-export interface TournamentStandingDto {
-  userId: string;
-  name: string;
-  score: number;
-  played: number;
-  rank: number;
-  isAvailable: boolean;
-}
-
-export interface TournamentLivePayload {
+/** Снэпшот арены. Приходит на ArenaWatch и при каждом изменении. */
+export interface ArenaStatePayload {
   id: string;
+  name: string;
+  timeControl: string;
+  durationMin: number;
+  /** 'scheduled' | 'running' | 'finished'. */
   status: string;
-  /** ISO-время старта турнира (для отсчёта «до начала»). */
-  startsAt: string | null;
-  endsAt: string | null;
-  matches: TournamentMatchDto[];
-  standings: TournamentStandingDto[];
+  /** ISO-время старта. */
+  startsAt: string;
+  /** ISO-время, когда закрывается подбор пар. */
+  endsAt: string;
+  /** Время вышло: новых пар нет, но начатые партии доигрываются. */
+  pairingClosed: boolean;
+  ownerId: string;
+  /** Для записи нужен код доступа. Сам код клиенту не отправляется. */
+  hasAccessCode: boolean;
+  /** Своя начальная позиция всех партий. null — обычная начальная. */
+  startFen: string | null;
+  standings: ArenaStandingDto[];
+  /** Идущие сейчас партии. */
+  liveGames: ArenaGameSummaryDto[];
+  /** Сыгранные партии — заполняется, когда арена окончена. */
+  finishedGames: ArenaGameSummaryDto[];
+  /** Моё участие. null — не записан или смотрю без входа на сайт. */
+  me: {
+    state: ArenaPlayerState;
+    score: number;
+    streak: number;
+    /** id моей текущей партии, если играю. */
+    gameId: string | null;
+    /**
+     * Нажата «Пауза» во время партии: текущую доигрываем, следующей пары
+     * не будет. Без этого признака кнопка выглядела бы сломанной — состояние
+     * остаётся «играет», и человек не понимает, услышали ли его.
+     */
+    pauseRequested: boolean;
+  } | null;
 }
+
+/** Полное состояние одной партии арены. */
+export interface ArenaGamePayload {
+  id: string;
+  arenaId: string;
+  whiteId: string;
+  whiteName: string;
+  blackId: string;
+  blackName: string;
+  /** Серия соперника на момент начала партии — «огонёк» рядом с именем. */
+  whiteStreak: number;
+  blackStreak: number;
+  /** 'live' | 'white' | 'black' | 'draw' | 'cancelled'. */
+  status: string;
+  /** Причина окончания, если партия закончена. */
+  result: GameResultState | null;
+  fen: string;
+  /** С какой позиции начали. Нужна перемотке: «до первого хода» у турнира
+   *  со своей позицией — не стандартная расстановка. */
+  startFen: string;
+  /** Полная история ходов — по ней работает перемотка. */
+  moves: MoveHistoryEntry[];
+  clock: ClockState;
+  drawOffer: DrawOfferState | null;
+  /**
+   * Дедлайн на первый ход (ms epoch). Не сделан — партия отменяется.
+   * null у турниров со своей позицией: она незнакомая, и на первый ход
+   * нужно время наравне с остальными.
+   */
+  firstMoveDeadlineAt: number | null;
+}
+
+/** Контроли времени арены. Длительность арены с контролем не связана:
+ *  любой контроль можно поставить на любую длительность. */
+export const ARENA_TIME_CONTROLS = [
+  { id: 'bullet-1+0', label: 'Пуля · 1+0' },
+  { id: 'blitz-3+0', label: 'Блиц · 3+0' },
+  { id: 'blitz-3+2', label: 'Блиц · 3+2' },
+  { id: 'blitz-5+0', label: 'Блиц · 5+0' },
+  { id: 'rapid-10+0', label: 'Рапид · 10+0' },
+  { id: 'rapid-10+5', label: 'Рапид · 10+5' },
+] as const;
+
+export type ArenaTimeControlId = (typeof ARENA_TIME_CONTROLS)[number]['id'];
+
+/** Сколько минут арена принимает новые пары. */
+export const ARENA_DURATIONS = [20, 30, 45, 60, 90, 120] as const;
+
+/** Сколько даётся на первый ход. Не сходил — партия отменяется и в зачёт
+ *  не идёт, а отсутствующий игрок ставится на паузу. Правило работает только
+ *  в турнирах с обычной начальной позицией: своя позиция требует времени
+ *  на то, чтобы просто в ней разобраться. */
+export const ARENA_FIRST_MOVE_MS = 20_000;
+
+/** Сколько секунд действует предложение ничьей. */
+export const ARENA_DRAW_OFFER_MS = 15_000;
+
+/** Очки: победа 2, ничья 1. На серии (2+ побед подряд) — вдвое. */
+export const ARENA_POINTS = {
+  win: 2,
+  draw: 1,
+  winOnStreak: 4,
+  drawOnStreak: 2,
+  /** С какой длины серии включается «огонёк». */
+  streakFrom: 2,
+} as const;
 
 /** Активная сессия ученика в задаче — для live grid учителя. */
 export interface ClassActiveSessionDto {
@@ -416,7 +555,10 @@ export type TimeControlId = (typeof TIME_CONTROLS)[number]['id'];
 
 export function timeControlLabel(id: string | null | undefined): string {
   if (!id) return 'Без таймера';
-  return TIME_CONTROLS.find((t) => t.id === id)?.label ?? id;
+  const known =
+    TIME_CONTROLS.find((t) => t.id === id)?.label ??
+    ARENA_TIME_CONTROLS.find((t) => t.id === id)?.label;
+  return known ?? id;
 }
 
 /** Парсер строки timeControl вида 'blitz-5+0' / 'rapid-15+10' в миллисекунды.

@@ -61,7 +61,7 @@ export default async function AdminUsersPage() {
       _count: {
         select: {
           ownedRooms: true,
-          ownedTournaments: true,
+          ownedArenas: true,
           taskSessions: true,
         },
       },
@@ -130,7 +130,7 @@ export default async function AdminUsersPage() {
                     {fmtDate(u.createdAt)}
                   </td>
                   <td className="px-3 py-2 text-right">{u._count.ownedRooms}</td>
-                  <td className="px-3 py-2 text-right">{u._count.ownedTournaments}</td>
+                  <td className="px-3 py-2 text-right">{u._count.ownedArenas}</td>
                   <td className="px-3 py-2 text-right">{u._count.taskSessions}</td>
                 </tr>
               ))}

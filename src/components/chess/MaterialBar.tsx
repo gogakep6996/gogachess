@@ -1,14 +1,16 @@
 'use client';
 
-// Полоска с захваченными фигурами и материальным перевесом — в духе Личесса.
+// Полоска с захваченными фигурами и материальным перевесом.
 // Источник истины — текущая FEN-позиция: сравниваем количество фигур со «стартовым набором».
+// Стартовый набор берётся из позиции, с которой начали партию: в турнире со своей
+// расстановкой обычный комплект дал бы горы мнимых «съеденных» фигур.
 
 import { PieceSvg } from '@/components/chess/PieceSvg';
 import type { PieceCode } from '@/lib/piece';
 
 const PIECE_VALUE: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 const INITIAL: Record<string, number> = { p: 8, n: 2, b: 2, r: 2, q: 1 };
-// Порядок в выводе захваченных — от тяжёлых к лёгким, как делает Личесс.
+// Порядок в выводе захваченных — от тяжёлых к лёгким.
 const PIECE_ORDER: Array<keyof typeof PIECE_VALUE> = ['q', 'r', 'b', 'n', 'p'];
 
 function countOnBoard(fen: string): Record<'w' | 'b', Record<string, number>> {
@@ -27,8 +29,10 @@ function countOnBoard(fen: string): Record<'w' | 'b', Record<string, number>> {
 }
 
 /** Считает съеденные фигуры и материальный перевес обоих цветов. */
-function computeMaterial(fen: string) {
+function computeMaterial(fen: string, startFen?: string) {
   const board = countOnBoard(fen);
+  // Сколько фигур было в начале партии: обычный комплект или своя расстановка.
+  const start = startFen ? countOnBoard(startFen) : null;
   const captured = {
     w: {} as Record<string, number>, // что белые СЪЕЛИ (т.е. недостающие у чёрных)
     b: {} as Record<string, number>,
@@ -36,8 +40,8 @@ function computeMaterial(fen: string) {
   let whiteValue = 0;
   let blackValue = 0;
   for (const type of PIECE_ORDER) {
-    const wMissing = Math.max(0, INITIAL[type] - board.b[type]);
-    const bMissing = Math.max(0, INITIAL[type] - board.w[type]);
+    const wMissing = Math.max(0, (start ? start.b[type] : INITIAL[type]) - board.b[type]);
+    const bMissing = Math.max(0, (start ? start.w[type] : INITIAL[type]) - board.w[type]);
     if (wMissing > 0) captured.w[type] = wMissing;
     if (bMissing > 0) captured.b[type] = bMissing;
     whiteValue += wMissing * PIECE_VALUE[type];
@@ -53,14 +57,16 @@ interface Props {
   fen: string;
   /** Чьё «лицо» рисуем — для какого цвета показать съеденное им + его +N. */
   color: 'w' | 'b';
+  /** Позиция начала партии. Без неё считаем от обычного комплекта фигур. */
+  startFen?: string;
   className?: string;
   /** Компактный режим: маленькие иконки, без min-h, ничего не показываем если нет захватов. */
   compact?: boolean;
 }
 
 /** Маленькая полоска с захваченными фигурами и значком +N (если есть перевес). */
-export function MaterialBar({ fen, color, className, compact }: Props) {
-  const { captured, diff } = computeMaterial(fen);
+export function MaterialBar({ fen, color, startFen, className, compact }: Props) {
+  const { captured, diff } = computeMaterial(fen, startFen);
   const mine = captured[color]; // что СЪЕЛ этот цвет
   const advantage = color === 'w' ? diff : -diff;
 

@@ -11,7 +11,7 @@ function fmt(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
-  // Если осталось меньше 10 секунд — показываем десятые, как в Личесс.
+  // Если осталось меньше 10 секунд — показываем десятые.
   if (ms < 10_000) {
     const tenths = Math.floor((ms % 1000) / 100);
     return `${m}:${String(s).padStart(2, '0')}.${tenths}`;
@@ -26,7 +26,7 @@ interface Props {
   side: 'w' | 'b';
   /** Подсветка «это мой таймер». */
   isMine?: boolean;
-  /** sm — компактный (для inline-блока «имя · ранг · часы»). */
+  /** sm — компактный (для inline-блока «имя · часы»). */
   size?: 'sm' | 'lg';
   className?: string;
 }
@@ -78,7 +78,6 @@ export function ClockDisplay({ clock, side, isMine, size = 'lg', className }: Pr
     size === 'sm'
       ? 'rounded-md px-2.5 py-1 text-lg'
       : 'rounded-xl px-3 py-2 text-3xl';
-  // Цвета цифр чуть мягче — пользователь жаловался на излишнюю яркость.
   // w-fit: фон обнимает цифры (не растягивается на всю колонку), размер цифр прежний.
   return (
     <div

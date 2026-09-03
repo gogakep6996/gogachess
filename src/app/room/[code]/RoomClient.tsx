@@ -21,7 +21,7 @@ import {
 } from '@phosphor-icons/react';
 import { ChessBoard } from '@/components/chess/ChessBoard';
 import { MiniBoard } from '@/components/chess/MiniBoard';
-import { MoveNav } from '@/components/tournament/MoveNav';
+import { MoveNav } from '@/components/chess/MoveNav';
 import { PromotionDialog } from '@/components/chess/PromotionDialog';
 import { FloatingChat } from '@/components/class/FloatingChat';
 import { EnginePanel } from '@/components/room/EnginePanel';

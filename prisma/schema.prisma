@@ -42,20 +42,20 @@ model User {
   cookieConsent   String?
   cookieConsentAt DateTime?
 
-  ownedRooms          Room[]                 @relation("RoomOwner")
-  messages            Message[]
-  tournamentEntries   TournamentPlayer[]
-  ownedTournaments    Tournament[]           @relation("TournamentOwner")
-  whiteMatches        TournamentMatch[]      @relation("MatchWhite")
-  blackMatches        TournamentMatch[]      @relation("MatchBlack")
-  ownedClass          Class?                 @relation("ClassOwner")
-  taskSessions        TaskSession[]
-  taskAttempts        TaskAttempt[]
-  authTokens          AuthToken[]
-  notifications       Notification[]
+  ownedRooms      Room[]         @relation("RoomOwner")
+  messages        Message[]
+  ownedArenas     Arena[]        @relation("ArenaOwner")
+  arenaEntries    ArenaPlayer[]
+  arenaWhiteGames ArenaGame[]    @relation("ArenaGameWhite")
+  arenaBlackGames ArenaGame[]    @relation("ArenaGameBlack")
+  ownedClass      Class?         @relation("ClassOwner")
+  taskSessions    TaskSession[]
+  taskAttempts    TaskAttempt[]
+  authTokens      AuthToken[]
+  notifications   Notification[]
 
-  friendRequestsSent     Friendship[]        @relation("FriendRequester")
-  friendRequestsReceived Friendship[]        @relation("FriendAddressee")
+  friendRequestsSent     Friendship[] @relation("FriendRequester")
+  friendRequestsReceived Friendship[] @relation("FriendAddressee")
 }
 
 /// Уведомление пользователя — показывается в выпадающем меню аккаунта.
@@ -94,24 +94,21 @@ model AuthToken {
 }
 
 model Room {
-  id          String    @id @default(cuid())
-  code        String    @unique
+  id          String   @id @default(cuid())
+  code        String   @unique
   name        String
-  isPublic    Boolean   @default(true)
+  isPublic    Boolean  @default(true)
   ownerId     String
-  owner       User      @relation("RoomOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  fen         String    @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
-  /// "lesson" | "casual" | "tournament" | "class-lobby" | "student-board" | "class-demo"
-  kind        String    @default("lesson")
+  owner       User     @relation("RoomOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  fen         String   @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+  /// "lesson" | "casual" | "class-lobby" | "student-board" | "class-demo"
+  /// Партии арены комнатами НЕ пользуются — у них своя модель ArenaGame.
+  kind        String   @default("lesson")
   /// Например "blitz-5+0", "rapid-10+0"; пусто для уроков.
   timeControl String?
-  /// Привязка к турниру (если kind = tournament).
-  tournamentId String?
-  tournament   Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
-  createdAt   DateTime  @default(now())
+  createdAt   DateTime @default(now())
 
   messages    Message[]
-  match       TournamentMatch?
   taskSession TaskSession?
 }
 
@@ -127,78 +124,143 @@ model Message {
   @@index([roomId, createdAt])
 }
 
-model Tournament {
-  id          String   @id @default(cuid())
+// ================================== АРЕНА ==================================
+//
+// Единственный формат турнира на сайте — арена в духе lichess: отведённое время,
+// непрерывный подбор пар, очки за победы с бонусом за серию.
+//
+// Партии арены НЕ используют модель Room. Комната тянет за собой дерево
+// вариантов, редактор позиции, чат в базе, аудиосвязь и роли «учитель/ученик» —
+// для соревновательной партии всё это лишнее и мешает строгости правил
+// (владельцем комнаты становился один из соперников). Поэтому у арены своя
+// модель партии со своим списком ходов и часами.
+
+/// Одна арена: расписание, правила, участники, партии.
+model Arena {
+  id          String    @id @default(cuid())
   name        String
-  /// "blitz-3+0" / "blitz-5+0" / "rapid-10+0" / "rapid-15+10" / "classical-30+0" / "bullet-1+0"
+  /// Контроль времени в формате "blitz-5+0" — разбирается parseTimeControl().
   timeControl String
-  /// Длительность арены в минутах
+  /// Сколько минут арена принимает новые пары.
   durationMin Int
-  /// Когда начинается турнир
+  /// Момент старта: до него арена в состоянии "scheduled".
   startsAt    DateTime
-  /// "scheduled" | "running" | "finished"
-  status      String   @default("scheduled")
+  /// "scheduled" — ждёт старта;
+  /// "running"  — идёт (даже если время вышло, а партии ещё доигрываются);
+  /// "finished" — время вышло И все партии доиграны, таблица заморожена.
+  status      String    @default("scheduled")
+  /// Код доступа: null или пусто — арена открыта всем; иначе для записи нужен код.
+  /// Так учитель проводит арену только для своих учеников: список учеников класса
+  /// в базе не хранится, проверять членство нечем, а код работает как в классе.
+  accessCode  String?
+  /// Своя начальная позиция (FEN): null — партии начинаются со стандартной.
+  /// Для турниров со своей позицией правило «20 секунд на первый ход»
+  /// не действует: позиция незнакомая, на первый ход нужно время.
+  startFen    String?
   ownerId     String
-  owner       User     @relation("TournamentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
+  owner       User      @relation("ArenaOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  /// Когда доигралась последняя партия и таблица стала окончательной.
+  finishedAt  DateTime?
 
-  players     TournamentPlayer[]
-  matches     TournamentMatch[]
-  rooms       Room[]
+  players ArenaPlayer[]
+  games   ArenaGame[]
 
+  @@index([status, startsAt])
   @@index([startsAt])
 }
 
-model TournamentPlayer {
-  id           String     @id @default(cuid())
-  tournamentId String
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  userId       String
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  score        Float      @default(0)
-  played       Int        @default(0)
-  /// Свободен и готов к следующей партии
-  isAvailable  Boolean    @default(true)
-  joinedAt     DateTime   @default(now())
+/// Участник арены: очки, серия, баланс цветов, готов ли к следующей партии.
+model ArenaPlayer {
+  id      String @id @default(cuid())
+  arenaId String
+  arena   Arena  @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([tournamentId, userId])
-  @@index([tournamentId, score])
+  /// Победа 2, ничья 1, поражение 0. На серии — вдвое (4 и 2), см. streak.
+  score  Int @default(0)
+  wins   Int @default(0)
+  draws  Int @default(0)
+  losses Int @default(0)
+  /// Побед подряд. 2 и больше — «огонёк»: победа приносит 4 очка, ничья 2.
+  /// Ничья и поражение обнуляют серию, отменённая партия её не трогает.
+  streak Int @default(0)
+
+  /// Сыграно партий каждым цветом — подбор выравнивает по разнице.
+  whiteGames     Int     @default(0)
+  blackGames     Int     @default(0)
+  /// Соперник по прошлой партии: ту же пару подряд не повторяем, пока есть выбор.
+  lastOpponentId String?
+
+  /// "ready" — в пуле, ждёт соперника;
+  /// "playing" — сейчас играет;
+  /// "paused" — остался в арене, но пары не получает (кнопка «Пауза»).
+  state String @default("ready")
+
+  /// Когда игрок набрал текущее число очков. Тай-брейк при равенстве очков и
+  /// побед: кто набрал раньше — тот выше в таблице.
+  scoredAt DateTime?
+  joinedAt DateTime  @default(now())
+
+  @@unique([arenaId, userId])
+  @@index([arenaId, score])
 }
 
-model TournamentMatch {
-  id           String     @id @default(cuid())
-  tournamentId String
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  roomId       String?    @unique
-  room         Room?      @relation(fields: [roomId], references: [id], onDelete: SetNull)
-  whiteId      String
-  white        User       @relation("MatchWhite", fields: [whiteId], references: [id], onDelete: Cascade)
-  blackId      String
-  black        User       @relation("MatchBlack", fields: [blackId], references: [id], onDelete: Cascade)
-  /// "live" | "white" | "black" | "draw"
-  status       String     @default("live")
-  startedAt    DateTime   @default(now())
-  finishedAt   DateTime?
+/// Партия арены. Ходы лежат в базе списком, а не только конечной позицией:
+/// иначе после перезапуска контейнера партию нельзя было бы посмотреть.
+model ArenaGame {
+  id      String @id @default(cuid())
+  arenaId String
+  arena   Arena  @relation(fields: [arenaId], references: [id], onDelete: Cascade)
 
-  @@index([tournamentId, status])
+  whiteId String
+  white   User   @relation("ArenaGameWhite", fields: [whiteId], references: [id], onDelete: Cascade)
+  blackId String
+  black   User   @relation("ArenaGameBlack", fields: [blackId], references: [id], onDelete: Cascade)
+
+  /// "live" | "white" | "black" | "draw" | "cancelled".
+  /// "cancelled" — первый ход не сделан за 20 секунд: в зачёт не идёт.
+  status String  @default("live")
+  /// Причина окончания: checkmate | stalemate | resignation | timeout |
+  /// draw-agreement | insufficient-material | threefold | fifty-move | no-first-move.
+  reason String?
+
+  /// Текущая (или итоговая) позиция.
+  fen   String
+  /// JSON-массив ходов: [{ san, from, to, fen, promotion? }, ...].
+  moves String @default("[]")
+
+  /// Остаток на часах в миллисекундах на момент последнего хода.
+  whiteMs       Int
+  blackMs       Int
+  /// Когда пошли часы стороны, чья сейчас очередь. Нужен, чтобы после
+  /// перезапуска сервера вычесть уже утекшее время, а не начать отсчёт заново.
+  turnStartedAt DateTime?
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([arenaId, status])
+  @@index([arenaId, startedAt])
 }
 
 /// «Класс» учителя — постоянный учебный кабинет.
 /// Один класс на учителя (1:1 c User). URL: /class/<slug>.
 model Class {
-  id          String   @id @default(cuid())
-  ownerId     String   @unique
-  owner       User     @relation("ClassOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  ownerId    String   @unique
+  owner      User     @relation("ClassOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   /// URL-slug — генерируется из displayName.
-  slug        String   @unique
+  slug       String   @unique
   /// Опциональное «дружелюбное» название (если null — используем displayName).
-  name        String?
+  name       String?
   /// Если задан — для входа на урок ученик должен ввести этот код.
-  accessCode  String?
+  accessCode String?
   /// Виден ли в общем поиске (true) или только по прямой ссылке (false).
-  isPublic    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isPublic   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   tasks           Task[]
   homeworkFolders HomeworkFolder[]
@@ -295,10 +357,10 @@ model Task {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  sessions    TaskSession[]
-  attempts    TaskAttempt[]
+  sessions           TaskSession[]
+  attempts           TaskAttempt[]
   /// Папки ДЗ, в которых лежит задача (может быть несколько).
-  folderLinks HomeworkFolderTask[]
+  folderLinks        HomeworkFolderTask[]
   /// Папки «Моей библиотеки» (организационные, отдельные от ДЗ).
   libraryFolderLinks LibraryFolderTask[]
 
@@ -309,25 +371,25 @@ model Task {
 /// урок и домашнее задание ведут раздельные доски, чтобы прогресс из домашки
 /// не «протекал» в урок и наоборот.
 model TaskSession {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   taskId      String
-  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Контекст доски: 'lesson' (раздача учителем на уроке) | 'homework'
   /// (самостоятельное решение на странице класса). Разделяет прогресс.
-  context     String   @default("lesson")
+  context     String    @default("lesson")
   /// Привязка к Room (kind='student-board') — там и крутится сокет / движок / история.
-  roomId      String?  @unique
-  room        Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  roomId      String?   @unique
+  room        Room?     @relation(fields: [roomId], references: [id], onDelete: SetNull)
   /// 'active' | 'solved' | 'abandoned'
-  status      String   @default("active")
+  status      String    @default("active")
   /// Snapshot текущей позиции (для быстрой загрузки списка).
   fen         String
   /// Сколько ходов сделано.
-  movesPlayed Int      @default(0)
-  startedAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  movesPlayed Int       @default(0)
+  startedAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   solvedAt    DateTime?
 
   @@unique([taskId, userId, context])
@@ -371,15 +433,15 @@ model TaskAttempt {
 /// Дружба/заявка в друзья. requester отправил, addressee принимает или отклоняет.
 /// Пара хранится один раз (в любом направлении) — уникальность проверяет код.
 model Friendship {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   requesterId String
-  requester   User      @relation("FriendRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  requester   User     @relation("FriendRequester", fields: [requesterId], references: [id], onDelete: Cascade)
   addresseeId String
-  addressee   User      @relation("FriendAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  addressee   User     @relation("FriendAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
   /// 'pending' | 'accepted' | 'rejected'
-  status      String    @default("pending")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@unique([requesterId, addresseeId])
   @@index([addresseeId, status])

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, CaretRight, Check, X } from '@phosphor-icons/react';
 import { MiniBoard } from '@/components/chess/MiniBoard';
-import { MoveNav } from '@/components/tournament/MoveNav';
+import { MoveNav } from '@/components/chess/MoveNav';
 import { FieldLabel, IconButton, StatusChip } from '@/components/room/ui';
 import { STARTING_FEN, type MoveHistoryEntry } from '@/lib/socket-events';
 import { cn } from '@/lib/utils';
