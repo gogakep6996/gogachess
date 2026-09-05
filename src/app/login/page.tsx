@@ -4,7 +4,12 @@ import { useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Header } from '@/components/layout/Header';
-import { CaptchaWidget, CAPTCHA_CANCELLED, type CaptchaHandle } from '@/components/auth/CaptchaWidget';
+import {
+  CaptchaWidget,
+  CAPTCHA_CANCELLED,
+  CAPTCHA_NOT_READY,
+  type CaptchaHandle,
+} from '@/components/auth/CaptchaWidget';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -27,6 +32,13 @@ export default function LoginPage() {
       } catch (err) {
         if (err instanceof Error && err.message === CAPTCHA_CANCELLED) {
           setError('Проверка «я не бот» не пройдена. Попробуйте ещё раз.');
+          return;
+        }
+        if (err instanceof Error && err.message === CAPTCHA_NOT_READY) {
+          setError(
+            'Проверка «я не бот» не загрузилась. Обновите страницу; если не помогло — ' +
+              'отключите блокировщик рекламы для этого сайта.',
+          );
           return;
         }
         throw err;

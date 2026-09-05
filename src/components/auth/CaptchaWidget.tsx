@@ -28,14 +28,31 @@ const SCRIPT_SRC = `https://smartcaptcha.cloud.yandex.ru/captcha.js?render=onloa
 /** Пользователь закрыл окно с заданием, не решив его. */
 export const CAPTCHA_CANCELLED = 'captcha-cancelled';
 
+/** Виджет так и не построился: скрипт Яндекса не загрузился или заблокирован. */
+export const CAPTCHA_NOT_READY = 'captcha-not-ready';
+
+/** Сколько ждём готовности виджета, прежде чем признать её недостижимой. */
+const READY_TIMEOUT_MS = 15_000;
+
 export interface CaptchaHandle {
   /**
    * Возвращает токен для отправки на сервер.
    * В обычном режиме — уже полученный, в невидимом — запускает проверку и ждёт её.
    * Если капча не настроена, возвращает пустую строку, и сервер пропустит запрос.
+   * Если капча настроена, но ещё не готова — дожидается её.
    */
   execute: () => Promise<string>;
   reset: () => void;
+}
+
+type Deferred = { promise: Promise<void>; resolve: () => void };
+
+function createDeferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 interface Props {
@@ -84,6 +101,12 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const widgetIdRef = useRef<string | null>(null);
+  // Готовность виджета. Скрипт капчи грузится со стороннего домена и успевает
+  // не всегда: нажатие «Войти» в первую секунду после открытия страницы
+  // заставало widgetId пустым, форма отправляла пустой токен, и сервер отвечал
+  // отказом «я не бот» при верном пароле. Теперь execute() дожидается этого
+  // обещания вместо того, чтобы молча вернуть пустую строку.
+  const readyRef = useRef<Deferred>(createDeferred());
   // Ожидающий вызов execute() в невидимом режиме: резолвится из callback виджета.
   const resolverRef = useRef<Resolver | null>(null);
   // Колбэк держим в ref, чтобы эффект не перезапускался и виджет не пересоздавался.
@@ -152,6 +175,7 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
           },
         });
         widgetIdRef.current = widgetId;
+        readyRef.current.resolve();
 
         // Токен живёт 5 минут и одноразовый: по истечении и при сбоях сбрасываем
         // его в форме, чтобы кнопка отправки не отправляла недействительный токен.
@@ -181,6 +205,9 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
       for (const unsubscribe of unsubscribers) unsubscribe();
       const widgetId = widgetIdRef.current;
       widgetIdRef.current = null;
+      // Виджета снова нет — следующий execute() должен ждать новый, а не
+      // получить уже выполненное обещание от предыдущего.
+      readyRef.current = createDeferred();
       if (widgetId && window.smartCaptcha) window.smartCaptcha.destroy(widgetId);
     };
   }, [siteKey, invisible]);
@@ -188,12 +215,28 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
   useImperativeHandle(
     ref,
     (): CaptchaHandle => ({
-      execute: () => {
+      execute: async () => {
+        // Капча не настроена вовсе — сервер тоже пропустит, см. lib/captcha.ts.
+        if (!siteKey) return '';
+
+        if (!widgetIdRef.current) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            readyRef.current.promise,
+            new Promise<void>((r) => {
+              timer = setTimeout(r, READY_TIMEOUT_MS);
+            }),
+          ]);
+          if (timer) clearTimeout(timer);
+        }
+
         const smartCaptcha = window.smartCaptcha;
         const widgetId = widgetIdRef.current;
-        if (!siteKey || !smartCaptcha || !widgetId) return Promise.resolve('');
+        // Не дождались: лучше честно сказать про капчу, чем отправить пустой
+        // токен и получить с сервера обвинение в том, что человек — бот.
+        if (!smartCaptcha || !widgetId) throw new Error(CAPTCHA_NOT_READY);
 
-        if (!invisible) return Promise.resolve(smartCaptcha.getResponse(widgetId) || '');
+        if (!invisible) return smartCaptcha.getResponse(widgetId) || '';
 
         // Токен одноразовый, поэтому перед каждой отправкой формы начинаем заново.
         smartCaptcha.reset(widgetId);
