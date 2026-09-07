@@ -45,14 +45,16 @@ export interface CaptchaHandle {
   reset: () => void;
 }
 
-type Deferred = { promise: Promise<void>; resolve: () => void };
+type Deferred = { promise: Promise<void>; resolve: () => void; reject: (err: Error) => void };
 
 function createDeferred(): Deferred {
   let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
+  let reject!: (err: Error) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 interface Props {
@@ -78,12 +80,12 @@ interface SmartCaptchaGlobal {
       invisible?: boolean;
       hideShield?: boolean;
     },
-  ) => string;
-  getResponse: (widgetId?: string) => string;
-  execute: (widgetId?: string) => void;
-  reset: (widgetId?: string) => void;
-  destroy: (widgetId?: string) => void;
-  subscribe: (widgetId: string, event: SubscribeEvent, callback: () => void) => () => void;
+  ) => string | number;
+  getResponse: (widgetId?: string | number) => string;
+  execute: (widgetId?: string | number) => void;
+  reset: (widgetId?: string | number) => void;
+  destroy: (widgetId?: string | number) => void;
+  subscribe: (widgetId: string | number, event: SubscribeEvent, callback: () => void) => () => void;
 }
 
 declare global {
@@ -93,6 +95,10 @@ declare global {
   }
 }
 
+function isWidgetId(value: string | number | null | undefined): value is string | number {
+  return value === 0 || Boolean(value);
+}
+
 type Resolver = { resolve: (token: string) => void; reject: (err: Error) => void };
 
 export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWidget(
@@ -100,7 +106,10 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const widgetIdRef = useRef<string | null>(null);
+  // У первого виджета на странице Яндекс возвращает widgetId = 0. Проверки вида
+  // `if (!widgetId)` ошибочно считают его «не готовым» и ломают вход, хотя капча
+  // на экране уже есть — отсюда сообщение «не загрузилась» при видимом щите.
+  const widgetIdRef = useRef<string | number | null>(null);
   // Готовность виджета. Скрипт капчи грузится со стороннего домена и успевает
   // не всегда: нажатие «Войти» в первую секунду после открытия страницы
   // заставало widgetId пустым, форма отправляла пустой токен, и сервер отвечал
@@ -148,7 +157,22 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
       }
 
       return new Promise((resolve, reject) => {
-        window[READY_CALLBACK] = () => resolve();
+        window[READY_CALLBACK] = () => {
+          if (window.smartCaptcha) {
+            resolve();
+            return;
+          }
+          const started = Date.now();
+          const timer = setInterval(() => {
+            if (window.smartCaptcha) {
+              clearInterval(timer);
+              resolve();
+            } else if (Date.now() - started > 15000) {
+              clearInterval(timer);
+              reject(new Error('SmartCaptcha не инициализировалась'));
+            }
+          }, 50);
+        };
         const script = document.createElement('script');
         script.src = SCRIPT_SRC;
         script.defer = true;
@@ -198,6 +222,7 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
       })
       .catch((err) => {
         console.error('[captcha] SmartCaptcha недоступна:', err);
+        readyRef.current.reject(err instanceof Error ? err : new Error(String(err)));
       });
 
     return () => {
@@ -208,7 +233,7 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
       // Виджета снова нет — следующий execute() должен ждать новый, а не
       // получить уже выполненное обещание от предыдущего.
       readyRef.current = createDeferred();
-      if (widgetId && window.smartCaptcha) window.smartCaptcha.destroy(widgetId);
+      if (widgetId != null && window.smartCaptcha) window.smartCaptcha.destroy(widgetId);
     };
   }, [siteKey, invisible]);
 
@@ -219,22 +244,27 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
         // Капча не настроена вовсе — сервер тоже пропустит, см. lib/captcha.ts.
         if (!siteKey) return '';
 
-        if (!widgetIdRef.current) {
+        if (!isWidgetId(widgetIdRef.current)) {
           let timer: ReturnType<typeof setTimeout> | undefined;
-          await Promise.race([
-            readyRef.current.promise,
-            new Promise<void>((r) => {
-              timer = setTimeout(r, READY_TIMEOUT_MS);
-            }),
-          ]);
-          if (timer) clearTimeout(timer);
+          try {
+            await Promise.race([
+              readyRef.current.promise,
+              new Promise<void>((r) => {
+                timer = setTimeout(r, READY_TIMEOUT_MS);
+              }),
+            ]);
+          } catch {
+            throw new Error(CAPTCHA_NOT_READY);
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
         }
 
         const smartCaptcha = window.smartCaptcha;
         const widgetId = widgetIdRef.current;
         // Не дождались: лучше честно сказать про капчу, чем отправить пустой
         // токен и получить с сервера обвинение в том, что человек — бот.
-        if (!smartCaptcha || !widgetId) throw new Error(CAPTCHA_NOT_READY);
+        if (!smartCaptcha || !isWidgetId(widgetId)) throw new Error(CAPTCHA_NOT_READY);
 
         if (!invisible) return smartCaptcha.getResponse(widgetId) || '';
 
@@ -247,7 +277,7 @@ export const CaptchaWidget = forwardRef<CaptchaHandle, Props>(function CaptchaWi
       },
       reset: () => {
         const widgetId = widgetIdRef.current;
-        if (widgetId && window.smartCaptcha) window.smartCaptcha.reset(widgetId);
+        if (isWidgetId(widgetId) && window.smartCaptcha) window.smartCaptcha.reset(widgetId);
       },
     }),
     [siteKey, invisible],
