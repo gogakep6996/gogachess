@@ -2,20 +2,18 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { signToken, setAuthCookie, verifyPassword } from '@/lib/auth';
 import { checkLimit, getClientIp } from '@/lib/rate-limit';
-import { verifyCaptcha } from '@/lib/captcha';
 
 interface Body {
   identifier: string;
   password: string;
-  /** Токен невидимой Yandex SmartCaptcha (если капча настроена). */
-  captchaToken?: string;
 }
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
 
-  // Защита от перебора паролей: 20 попыток в час с одного адреса.
-  // Живому человеку этого хватает с запасом, скрипту — нет.
+  // Единственная защита входа от перебора: капчи здесь нет, потому что невидимая
+  // проверка ломала вход живым людям. Живому человеку 20 попыток в час хватает
+  // с запасом, скрипту для перебора паролей — нет.
   const limit = checkLimit({ key: `login:${ip}`, max: 20, windowMs: 60 * 60 * 1000 });
   if (!limit.ok) {
     return NextResponse.json(
@@ -35,11 +33,6 @@ export async function POST(request: Request) {
   const password = body.password || '';
   if (!identifier || !password) {
     return NextResponse.json({ error: 'Заполните все поля' }, { status: 400 });
-  }
-
-  const captchaOk = await verifyCaptcha(body.captchaToken, ip);
-  if (!captchaOk) {
-    return NextResponse.json({ error: 'Не удалось пройти проверку «я не бот»' }, { status: 400 });
   }
 
   const cleaned = identifier.includes('@')
