@@ -244,6 +244,12 @@ export function ChessBoard({
       // позиция нелегальна для chess.js — попробуем определить ход через сравнение досок ниже
     }
 
+    /** Разница досок описывает ровно одно перемещение одной фигуры. Только такую
+     *  разницу безопасно анимировать: произвольный «прыжок» позиции (переход в
+     *  другую ветку истории, отмена, загрузка задачи) тоже даёт непустую разницу,
+     *  но собранный по ней ход — выдумка, и по доске ехала случайная фигура. */
+    let singleRelocation = false;
+
     // Fallback: ход не нашёлся через chess.js (нелегальный/без короля и т.п.).
     // Сравниваем доски и определяем from/to/capture эвристически —
     // главное, чтобы звук всегда звучал.
@@ -251,9 +257,10 @@ export function ChessBoard({
       try {
         const prevBoard = parseFen(prev).board;
         const currBoard = parseFen(fenForCompare).board;
-        let from: Sq | null = null;
-        let to: Sq | null = null;
-        let captureGuess = false;
+        /** Клетки, с которых фигура исчезла. */
+        const vacated: Array<{ sq: Sq; piece: string }> = [];
+        /** Клетки, где фигура появилась или сменилась (взятие / превращение). */
+        const arrived: Array<{ sq: Sq; piece: string }> = [];
         let prevCount = 0;
         let currCount = 0;
         for (let r = 0; r < 8; r++) {
@@ -262,26 +269,35 @@ export function ChessBoard({
             const b = currBoard[r][c];
             if (a) prevCount++;
             if (b) currCount++;
+            const sq = `${FILES[c]}${(8 - r) as (typeof RANKS)[number]}` as Sq;
             if (a && !b) {
-              from = `${FILES[c]}${(8 - r) as (typeof RANKS)[number]}` as Sq;
+              vacated.push({ sq, piece: a });
             } else if (!a && b) {
-              to = `${FILES[c]}${(8 - r) as (typeof RANKS)[number]}` as Sq;
+              arrived.push({ sq, piece: b });
             } else if (a && b && a !== b) {
               // фигура заменена — это «to» с захватом (или промоушен).
-              to = `${FILES[c]}${(8 - r) as (typeof RANKS)[number]}` as Sq;
+              arrived.push({ sq, piece: b });
             }
           }
         }
-        if (currCount < prevCount) captureGuess = true;
+        const captureGuess = currCount < prevCount;
+        const from = vacated[0] ?? null;
+        const to = arrived[0] ?? null;
+        // Одна фигура ушла, одна пришла, и это фигура того же цвета — похоже на
+        // настоящий ход. Рокировка (две ушли, две пришли) под это не подходит,
+        // но её и так находит chess.js как легальный ход.
+        singleRelocation =
+          vacated.length === 1 &&
+          arrived.length === 1 &&
+          !!from &&
+          !!to &&
+          from.piece[0] === to.piece[0];
         if (from && to) {
-          found = { from, to, captured: captureGuess };
+          found = { from: from.sq, to: to.sq, captured: captureGuess };
         } else if (from || to) {
           // одиночное изменение клетки — звук тоже отыграть, без подсветки from/to
-          found = {
-            from: (from ?? to) as Sq,
-            to: (to ?? from) as Sq,
-            captured: captureGuess,
-          };
+          const only = (from ?? to) as { sq: Sq; piece: string };
+          found = { from: only.sq, to: only.sq, captured: captureGuess };
         }
       } catch {
         // ignore
@@ -290,12 +306,13 @@ export function ChessBoard({
 
     if (!found) return;
 
-    // Позиция «прыгнула» назад (отмена хода / загрузка истории): легального хода
-    // prev → curr не существует. Раньше эвристика-fallback придумывала «ход»
-    // (from/to по разнице досок) — из-за этого дёргалась случайная фигура и
-    // зелёным подсвечивался несуществующий ход. Теперь: только звук, без
-    // анимации и подсветки. Fallback оставляем для комнат с allowIllegal.
-    if (!legalForward && !allowIllegal) {
+    // Позиция «прыгнула» (отмена хода, переход в другую ветку истории, загрузка
+    // задачи): легального хода prev → curr не существует. Эвристика-fallback всё
+    // равно соберёт какой-нибудь from/to по разнице досок — и по доске поедет
+    // случайная фигура, а зелёным подсветится несуществующий ход. Анимируем
+    // только проверенный ход: легальный по правилам либо, в режиме свободных
+    // ходов, перемещение ровно одной фигуры.
+    if (!legalForward && !(allowIllegal && singleRelocation)) {
       setLastMove(null);
       if (!silent) playMoveSound();
       return;
@@ -974,16 +991,15 @@ export function ChessBoard({
 
                 // Анимация фигуры, прибывшей на эту клетку (если ход НЕ был drag-drop'ом).
                 const animateThis = !!piece && lastMove?.to === sq && !lastMove?.silent;
-                let animStyle: CSSProperties | undefined;
+                let animId: number | null = null;
+                let animDx = 0;
+                let animDy = 0;
                 if (animateThis && lastMove) {
                   const v1 = visualOf(lastMove.from);
                   const v2 = visualOf(lastMove.to);
-                  const dx = (v1.col - v2.col) * 100;
-                  const dy = (v1.row - v2.row) * 100;
-                  animStyle = {
-                    ['--anim-dx' as string]: `${dx}%`,
-                    ['--anim-dy' as string]: `${dy}%`,
-                  } as CSSProperties;
+                  animDx = (v1.col - v2.col) * 100;
+                  animDy = (v1.row - v2.row) * 100;
+                  animId = lastMove.key;
                 }
 
                 // Стиль фигуры, которую тащит пользователь — следует за пальцем/мышью.
@@ -1052,28 +1068,15 @@ export function ChessBoard({
 
                     {/* Фигура (анимация — на обёртке во весь размер клетки) */}
                     {piece && (
-                      <div
-                        key={animateThis && lastMove ? `anim-${lastMove.key}` : 'static'}
-                        className={cn(
-                          'absolute inset-0 flex items-center justify-center',
-                          animateThis && 'piece-anim',
-                          // Во время drag поднимаем фигуру выше остальных, чтобы её видно
-                          // было поверх соседних клеток. Иначе обычный z-index 4.
-                          isDragActive ? 'z-50' : 'z-[4]',
-                        )}
-                        style={dragStyle ?? animStyle}
-                      >
-                        <div
-                          onPointerDown={(e) => onPiecePointerDown(e, sq)}
-                          className={cn(
-                            'relative h-[88%] w-[88%] touch-none',
-                            isDragActive ? 'cursor-grabbing' : 'cursor-grab',
-                          )}
-                          style={{ filter: 'drop-shadow(0 2px 1px rgba(0,0,0,0.25))' }}
-                        >
-                          <PieceSvg code={piece} className="h-full w-full" />
-                        </div>
-                      </div>
+                      <PieceCell
+                        piece={piece}
+                        animId={animId}
+                        animDx={animDx}
+                        animDy={animDy}
+                        dragStyle={dragStyle}
+                        isDragActive={isDragActive}
+                        onPointerDown={(e) => onPiecePointerDown(e, sq)}
+                      />
                     )}
                   </div>
                 );
@@ -1101,6 +1104,73 @@ export function ChessBoard({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Фигура на клетке. Живёт всё время, пока на клетке стоит фигура, и никогда не
+ * пересоздаётся: раньше идентичность этого элемента была привязана к анимации
+ * (key менялся с `anim-N` на `static`), поэтому на каждом ходу фигура прошлого
+ * хода удалялась из DOM и вставлялась заново. Браузер заново растеризовал svg
+ * с drop-shadow — и фигура заметно дёргалась, причём каждый ход другая.
+ *
+ * Слайд на новую клетку запускаем вручную через Web Animations API: анимация
+ * перезапускается по смене animId, не трогая сам элемент.
+ */
+function PieceCell({
+  piece,
+  animId,
+  animDx,
+  animDy,
+  dragStyle,
+  isDragActive,
+  onPointerDown,
+}: {
+  piece: PieceCode;
+  /** Ключ хода-анимации; null — эта фигура не приезжала на клетку только что. */
+  animId: number | null;
+  animDx: number;
+  animDy: number;
+  dragStyle?: CSSProperties;
+  isDragActive: boolean;
+  onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const playedRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (animId === null || animId === playedRef.current) return;
+    playedRef.current = animId;
+    const el = ref.current;
+    if (!el || typeof el.animate !== 'function') return;
+    el.animate(
+      [{ transform: `translate(${animDx}%, ${animDy}%)` }, { transform: 'translate(0, 0)' }],
+      { duration: 120, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)' },
+    );
+  }, [animId, animDx, animDy]);
+
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        'absolute inset-0 flex items-center justify-center',
+        // Во время drag поднимаем фигуру выше остальных, чтобы её видно
+        // было поверх соседних клеток. Иначе обычный z-index 4.
+        isDragActive ? 'z-50' : 'z-[4]',
+      )}
+      style={dragStyle}
+    >
+      <div
+        onPointerDown={onPointerDown}
+        className={cn(
+          'relative h-[88%] w-[88%] touch-none',
+          isDragActive ? 'cursor-grabbing' : 'cursor-grab',
+        )}
+        style={{ filter: 'drop-shadow(0 2px 1px rgba(0,0,0,0.25))' }}
+      >
+        <PieceSvg code={piece} className="h-full w-full" />
+      </div>
     </div>
   );
 }
