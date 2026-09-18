@@ -162,9 +162,25 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
             </ToolButton>
           )}
           {(!joined || state.me?.state === 'paused') && (
-            <ToolButton icon={SignIn} size="md" tone="primary" block onClick={() => join(code)}>
-              {joined ? 'Вернуться в игру' : 'Участвовать'}
-            </ToolButton>
+            // Поле кода нужно и после старта: раньше оно жило только на экране
+            // «до старта», и опоздавший участник закрытого турнира отправлял
+            // пустой код, а в ответ получал «Неверный код доступа» без единого
+            // места, куда этот код можно ввести. Вернувшемуся с паузы код не
+            // нужен — сервер уже знает его как участника.
+            <div className="flex flex-col gap-2">
+              {!joined && state.hasAccessCode && (
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="Код доступа"
+                  aria-label="Код доступа"
+                  className="input py-2 text-center text-sm"
+                />
+              )}
+              <ToolButton icon={SignIn} size="md" tone="primary" block onClick={() => join(code)}>
+                {joined ? 'Вернуться в игру' : 'Участвовать'}
+              </ToolButton>
+            </div>
           )}
         </>
       )
