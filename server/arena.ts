@@ -976,6 +976,25 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
         nsp.to(room(id)).emit(SocketEvents.ArenaError, 'Турнир удалён создателем');
       }
     }
+
+    // Закончившийся турнир создатель тоже может удалить — в выборке выше его
+    // нет, поэтому существование проверяем отдельно. Иначе удалённая арена
+    // осталась бы жить в памяти и открывалась по прямой ссылке.
+    const finishedIds = [...arenas.values()]
+      .filter((rt) => rt.status === 'finished')
+      .map((rt) => rt.id);
+    if (finishedIds.length > 0) {
+      const rows = await prisma.arena.findMany({
+        where: { id: { in: finishedIds } },
+        select: { id: true },
+      });
+      const exists = new Set(rows.map((r) => r.id));
+      for (const id of finishedIds) {
+        if (exists.has(id)) continue;
+        arenas.delete(id);
+        nsp.to(room(id)).emit(SocketEvents.ArenaError, 'Турнир удалён создателем');
+      }
+    }
   }
 
   void syncFromDb().catch(logDb);

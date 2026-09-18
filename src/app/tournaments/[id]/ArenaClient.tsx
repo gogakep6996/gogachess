@@ -75,6 +75,8 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
   const [tab, setTab] = useState<Tab>('games');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
+  // Открытый вопрос «удалить турнир?» — промах по кнопке стоил бы всех партий.
+  const [confirmRemove, setConfirmRemove] = useState(false);
   // Какой ход показанной партии смотрим; null — актуальная позиция.
   const [viewIdx, setViewIdx] = useState<number | null>(null);
 
@@ -376,6 +378,44 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
         )}
 
         {joinButtons}
+
+        {/* Законченный турнир создатель может убрать, чтобы список не зарастал.
+            Подтверждение обязательно: вместе с турниром уходят партии и
+            таблица результатов. Идущий турнир не удаляется вовсе — это
+            проверяет и сервер. */}
+        {isOwner &&
+          state.status === 'finished' &&
+          (confirmRemove ? (
+            <div className="flex flex-col gap-2">
+              <span className="text-[12px] font-medium text-stone-600 dark:text-stone-300">
+                Удалить турнир вместе с партиями?
+              </span>
+              <div className="flex items-center gap-2">
+                <ToolButton size="md" onClick={() => setConfirmRemove(false)} disabled={busy}>
+                  Нет
+                </ToolButton>
+                <ToolButton
+                  size="md"
+                  icon={Trash}
+                  tone="danger"
+                  onClick={ownerActions.remove}
+                  disabled={busy}
+                >
+                  Удалить
+                </ToolButton>
+              </div>
+            </div>
+          ) : (
+            <ToolButton
+              size="md"
+              icon={Trash}
+              tone="quiet"
+              block
+              onClick={() => setConfirmRemove(true)}
+            >
+              Удалить турнир
+            </ToolButton>
+          ))}
 
         {/* Состояние участника и сообщения — здесь, а не поверх доски. */}
         {state.status === 'running' && !playing && (

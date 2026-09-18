@@ -16,6 +16,7 @@ import { timeControlLabel } from '@/lib/socket-events';
 
 import { ArenaTimer } from './ArenaTimer';
 import { CreateArenaForm } from './CreateArenaForm';
+import { DeleteArenaButton } from './DeleteArenaButton';
 
 /** Список меняется каждую минуту, кэшировать его нельзя. */
 export const dynamic = 'force-dynamic';
@@ -37,20 +38,27 @@ interface ArenaRow {
   customStart: boolean;
   players: number;
   ownerName: string;
+  /** Создатель может убрать свой турнир, но не пока он идёт: иначе люди
+   *  посреди партии потеряют её вместе с очками. */
+  canDelete: boolean;
 }
 
-function toRow(a: {
-  id: string;
-  name: string;
-  timeControl: string;
-  durationMin: number;
-  status: string;
-  startsAt: Date;
-  accessCode: string | null;
-  startFen: string | null;
-  owner: { displayName: string };
-  _count: { players: number };
-}): ArenaRow {
+function toRow(
+  a: {
+    id: string;
+    name: string;
+    timeControl: string;
+    durationMin: number;
+    status: string;
+    startsAt: Date;
+    accessCode: string | null;
+    startFen: string | null;
+    ownerId: string;
+    owner: { displayName: string };
+    _count: { players: number };
+  },
+  meId: string | null,
+): ArenaRow {
   return {
     id: a.id,
     name: a.name,
@@ -62,11 +70,13 @@ function toRow(a: {
     customStart: a.startFen !== null,
     players: a._count.players,
     ownerName: a.owner.displayName,
+    canDelete: meId !== null && a.ownerId === meId && a.status !== 'running',
   };
 }
 
 export default async function TournamentsPage() {
   const user = await getCurrentUser();
+  const meId = user?.sub ?? null;
 
   const select = {
     id: true,
@@ -77,6 +87,7 @@ export default async function TournamentsPage() {
     startsAt: true,
     accessCode: true,
     startFen: true,
+    ownerId: true,
     owner: { select: { displayName: true } },
     _count: { select: { players: true } },
   } as const;
@@ -126,13 +137,22 @@ export default async function TournamentsPage() {
           )}
         </div>
 
-        <Section title="Идут сейчас" rows={running.map(toRow)} empty="Сейчас турниров нет." live />
+        <Section
+          title="Идут сейчас"
+          rows={running.map((a) => toRow(a, meId))}
+          empty="Сейчас турниров нет."
+          live
+        />
         <Section
           title="Скоро"
-          rows={scheduled.map(toRow)}
+          rows={scheduled.map((a) => toRow(a, meId))}
           empty="Ничего не назначено. Создайте турнир, и он появится здесь."
         />
-        <Section title="Завершённые" rows={finished.map(toRow)} empty="Пока ни одного." />
+        <Section
+          title="Завершённые"
+          rows={finished.map((a) => toRow(a, meId))}
+          empty="Пока ни одного."
+        />
       </main>
     </>
   );
@@ -167,10 +187,12 @@ function Section({
       ) : (
         <ul className={`${SURFACE} divide-y divide-stone-900/[0.05] overflow-hidden dark:divide-white/[0.05]`}>
           {rows.map((a) => (
-            <li key={a.id}>
+            // Кнопка удаления стоит рядом со ссылкой, а не внутри неё: кнопка
+            // в ссылке ведёт себя непредсказуемо — клик уводит на страницу.
+            <li key={a.id} className="flex items-center">
               <Link
                 href={`/tournaments/${a.id}`}
-                className="group flex items-center gap-3 px-3 py-3 transition-colors duration-150 hover:bg-brand-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45 dark:hover:bg-brand-900/40"
+                className="group flex min-w-0 flex-1 items-center gap-3 px-3 py-3 transition-colors duration-150 hover:bg-brand-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/45 dark:hover:bg-brand-900/40"
               >
                 <span
                   aria-hidden
@@ -248,6 +270,11 @@ function Section({
                   className="shrink-0 text-stone-300 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-brand-600 dark:text-stone-600"
                 />
               </Link>
+              {a.canDelete && (
+                <span className="shrink-0 pr-2">
+                  <DeleteArenaButton id={a.id} name={a.name} />
+                </span>
+              )}
             </li>
           ))}
         </ul>
