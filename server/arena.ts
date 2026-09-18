@@ -284,7 +284,10 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
         whiteGames: p.whiteGames,
         blackGames: p.blackGames,
         lastOpponentId: p.lastOpponentId,
-        state: p.state === 'playing' || p.state === 'paused' ? p.state : 'ready',
+        state:
+          p.state === 'playing' || p.state === 'paused' || p.state === 'idle'
+            ? p.state
+            : 'ready',
         scoredAt: p.scoredAt,
         joinedAt: p.joinedAt,
         recent: [],
@@ -774,7 +777,11 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
       p.gameId = null;
       p.lastOpponentId = p.userId === game.whiteId ? game.blackId : game.whiteId;
       const absent = outcome === 'cancelled' && p.userId === absentUserId;
-      p.state = p.pauseRequested || absent ? 'paused' : 'ready';
+      // После партии человек НЕ возвращается в пул сам: он читает результат и
+      // решает, играть ли дальше («Вернуться к турниру»). Так устроен Lichess,
+      // и так не приходится жать «Паузу» заранее, чтобы тебя не швырнуло в
+      // следующую пару поверх экрана с итогом.
+      p.state = p.pauseRequested || absent ? 'paused' : 'idle';
       p.pauseRequested = false;
       persistPlayer(rt, p);
     }
@@ -1030,9 +1037,10 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
 
       const existing = rt.players.get(userId);
       if (existing) {
-        // Возврат с паузы: снова в пул, соперник придёт сразу.
+        // Возврат с паузы или с экрана итога партии: снова в пул,
+        // соперник придёт сразу.
         existing.pauseRequested = false;
-        if (existing.state === 'paused') {
+        if (existing.state === 'paused' || existing.state === 'idle') {
           existing.state = 'ready';
           persistPlayer(rt, existing);
         }
@@ -1089,7 +1097,7 @@ export function registerArena(io: IOServer, prisma: PrismaClient): void {
         // Партию не бросаем: пауза включится, когда она закончится.
         // Повторное нажатие отменяет намерение — человек передумал.
         p.pauseRequested = !p.pauseRequested;
-      } else if (p.state === 'ready') {
+      } else if (p.state === 'ready' || p.state === 'idle') {
         p.state = 'paused';
         persistPlayer(rt, p);
       }

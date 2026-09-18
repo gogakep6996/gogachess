@@ -138,6 +138,17 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
   const isOwner = meId !== null && meId === state.ownerId;
   const joined = state.me !== null;
 
+  // Партия закончилась, а человек ещё не вернулся в подбор, и на экране его
+  // же доска с итогом: тогда кнопка возврата стоит под списком ходов, у доски.
+  // В левой колонке её в этот момент нет, чтобы одно и то же действие не
+  // предлагалось дважды.
+  const showReturnAtBoard =
+    joined &&
+    state.me?.state === 'idle' &&
+    !!myGame &&
+    currentGame?.id === myGame.id &&
+    currentGame?.status !== 'live';
+
   // Кнопки участия: пауза и возврат/запись. Живут в левой колонке.
   const joinButtons =
     meId === null ? (
@@ -147,21 +158,10 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
       >
         Войти, чтобы играть
       </Link>
-    ) : (
+    ) : showReturnAtBoard ? null : (
       state.status !== 'finished' && (
         <>
-          {joined && state.me?.state !== 'paused' && (
-            <ToolButton
-              icon={Pause}
-              size="md"
-              block
-              active={state.me?.pauseRequested}
-              onClick={pause}
-            >
-              {state.me?.pauseRequested ? 'Пауза после партии' : 'Пауза'}
-            </ToolButton>
-          )}
-          {(!joined || state.me?.state === 'paused') && (
+          {(!joined || state.me?.state === 'paused' || state.me?.state === 'idle') && (
             // Поле кода нужно и после старта: раньше оно жило только на экране
             // «до старта», и опоздавший участник закрытого турнира отправлял
             // пустой код, а в ответ получал «Неверный код доступа» без единого
@@ -178,9 +178,28 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
                 />
               )}
               <ToolButton icon={SignIn} size="md" tone="primary" block onClick={() => join(code)}>
-                {joined ? 'Вернуться в игру' : 'Участвовать'}
+                {!joined
+                  ? 'Участвовать'
+                  : state.me?.state === 'idle'
+                    ? 'Вернуться к турниру'
+                    : 'Вернуться в игру'}
               </ToolButton>
             </div>
+          )}
+          {/* Пауза идёт второй: на экране итога партии главное действие —
+              вернуться в турнир, как в Lichess. */}
+          {joined && state.me?.state !== 'paused' && (
+            <ToolButton
+              icon={Pause}
+              size="md"
+              block
+              active={state.me?.pauseRequested}
+              onClick={pause}
+            >
+              {state.me?.state === 'playing' && state.me?.pauseRequested
+                ? 'Пауза после партии'
+                : 'Приостановить'}
+            </ToolButton>
           )}
         </>
       )
@@ -367,7 +386,9 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
                 ? 'Вы на паузе: пары не приходят'
                 : state.pairingClosed
                   ? 'Новых пар уже не будет'
-                  : 'Ищем соперника'}
+                  : state.me?.state === 'idle'
+                    ? 'Партия закончена. За следующим соперником — «Вернуться к турниру»'
+                    : 'Ищем соперника'}
           </p>
         )}
         {error && (
@@ -379,15 +400,16 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
             {error}
           </button>
         )}
-        {lastResult && (
+        {/* Обычный итог партии виден под доской, а состояние участника —
+            строкой выше, поэтому отдельным сообщением остаётся только
+            отмена: она объясняет, почему партия не пошла в зачёт. */}
+        {lastResult?.outcome === 'cancelled' && (
           <button
             type="button"
             onClick={dismissResult}
             className="rounded-xl bg-stone-900/[0.05] px-2.5 py-2 text-left text-[12.5px] font-medium text-stone-700 dark:bg-white/[0.07] dark:text-stone-100"
           >
-            {lastResult.outcome === 'cancelled'
-              ? 'Партия отменена: первый ход не был сделан, в зачёт она не идёт.'
-              : 'Партия закончена. Следующий соперник подбирается.'}
+            Партия отменена: первый ход не был сделан, в зачёт она не идёт.
           </button>
         )}
       </div>
@@ -437,6 +459,18 @@ export function ArenaClient({ arenaId, meId }: { arenaId: string; meId: string |
               onAcceptDraw={arena.acceptDraw}
               onDeclineDraw={arena.declineDraw}
             />
+          )}
+          {/* Своя партия закончилась: на месте кнопок партии — возврат в
+              турнир. Итог и причина окончания видны под доской. */}
+          {showReturnAtBoard && (
+            <div className="flex flex-col gap-2 border-t border-stone-900/[0.06] pt-2 dark:border-white/[0.08]">
+              <ToolButton icon={SignIn} size="md" tone="primary" block onClick={() => join()}>
+                Вернуться к турниру
+              </ToolButton>
+              <ToolButton icon={Pause} size="md" block onClick={pause}>
+                Приостановить
+              </ToolButton>
+            </div>
           )}
         </div>
       )}

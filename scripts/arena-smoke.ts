@@ -207,13 +207,26 @@ async function main(): Promise<void> {
     'поражение не даёт очков',
   );
 
-  console.log('\n4. Возврат в пул и вторая пара');
+  console.log('\n4. После партии — пауза до решения игрока, затем вторая пара');
+  // Как в Lichess: закончил партию — читаешь результат, а не проваливаешься
+  // в следующую пару. Обратно в пул только по «Вернуться к турниру».
+  const idle = await ca.state(
+    (p) => p.standings.every((s) => s.state === 'idle'),
+    'после партии оба вне подбора',
+  );
+  check(
+    idle.standings.every((s) => s.state === 'idle'),
+    'закончивший партию сам в следующую пару не попадает',
+  );
+
+  ca.emit(SocketEvents.ArenaJoin, {});
+  cb.emit(SocketEvents.ArenaJoin, {});
   const game2 = await ca.game(
     (p) => p.status === 'live' && p.id !== game1.id,
-    'вторая партия без нажатия «Участвовать»',
+    'вторая партия после «Вернуться к турниру»',
     10000,
   );
-  check(true, 'после партии игрок сам вернулся в пул и получил соперника');
+  check(true, 'вернувшийся в турнир сразу получает соперника');
   check(
     game2.whiteId === game1.blackId,
     'цвета чередуются: белыми играет тот, кто был чёрным',
@@ -235,8 +248,10 @@ async function main(): Promise<void> {
   check(w2?.recent[0] === 'win', 'последний результат в таблице — победа');
 
   console.log('\n6. Пауза');
-  // Подбор непрерывный, поэтому «Пауза» почти всегда нажимается во время
-  // партии: текущую доигрываем, а из пула выходим после неё.
+  // «Пауза» нажимается во время партии: текущую доигрываем, а из пула
+  // выходим после неё.
+  ca.emit(SocketEvents.ArenaJoin, {});
+  cb.emit(SocketEvents.ArenaJoin, {});
   const game3 = await ca.game(
     (p) => p.status === 'live' && p.id !== game1.id && p.id !== game2.id,
     'третья партия',

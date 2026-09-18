@@ -51,6 +51,9 @@ export function useArenaSocket(arenaId: string, meId: string | null): Result {
   const [state, setState] = useState<ArenaStatePayload | null>(null);
   const [games, setGames] = useState<Record<string, ArenaGamePayload>>({});
   const [myGameId, setMyGameId] = useState<string | null>(null);
+  // Тот же id, но доступный обработчикам сокета: они живут в эффекте и
+  // состояние видят таким, каким оно было при подписке.
+  const myGameIdRef = useRef<string | null>(null);
   const [watchedId, setWatchedId] = useState<string | null>(null);
   const [chat, setChat] = useState<ChatMessageDto[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +74,7 @@ export function useArenaSocket(arenaId: string, meId: string | null): Result {
     s.on(SocketEvents.ArenaGameState, (payload: ArenaGamePayload) => {
       setGames((prev) => ({ ...prev, [payload.id]: payload }));
       if (meId && (payload.whiteId === meId || payload.blackId === meId)) {
+        myGameIdRef.current = payload.id;
         setMyGameId(payload.id);
         // Сообщение о прошлой партии убираем сами: держать его над новой
         // доской незачем, а закрывать вручную человек не обязан.
@@ -79,7 +83,15 @@ export function useArenaSocket(arenaId: string, meId: string | null): Result {
     });
 
     s.on(SocketEvents.ArenaGameOver, (payload: ArenaGameOverPayload) => {
+      // Событие приходит всем, кто смотрит эту партию, поэтому чужой итог
+      // пропускаем: «Партия закончена» — сообщение про свою партию.
+      if (payload.gameId !== myGameIdRef.current) return;
       setLastResult(payload);
+      // Остаёмся на своей доске с итоговой позицией, пока человек сам не
+      // вернётся в турнир или не откроет чужую партию. Без этого экран сразу
+      // уезжал на первую попавшуюся трансляцию, и свой результат посмотреть
+      // было негде.
+      setWatchedId(payload.gameId);
     });
 
     s.on(SocketEvents.ArenaChatHistory, (list: ChatMessageDto[]) => setChat(list));

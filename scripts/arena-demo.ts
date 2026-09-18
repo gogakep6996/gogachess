@@ -72,7 +72,10 @@ async function main(): Promise<void> {
   socket.on(SocketEvents.ArenaState, (p: ArenaStatePayload) => {
     // Записываемся после первого снимка: сервер узнаёт нужную арену из
     // события «смотрю», а до него запись пропала бы впустую.
-    if (!p.me) socket.emit(SocketEvents.ArenaJoin, {});
+    // После партии участник ждёт «Вернуться к турниру» — боту нажимать некому,
+    // поэтому возвращаем его в пул сами, иначе демонстрация встанет на первой
+    // же сыгранной партии.
+    if (!p.me || p.me.state === 'idle') socket.emit(SocketEvents.ArenaJoin, {});
     if (p.status === 'finished') console.log('Арена закончилась, можно останавливать (Ctrl+C)');
   });
 

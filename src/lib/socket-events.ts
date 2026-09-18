@@ -349,8 +349,14 @@ export interface MatchFoundPayload {
 /** Результат одной партии глазами игрока — цветной квадратик в таблице. */
 export type ArenaResult = 'win' | 'draw' | 'loss';
 
-/** Состояние участника: в пуле, играет или на паузе. */
-export type ArenaPlayerState = 'ready' | 'playing' | 'paused';
+/** Состояние участника арены.
+ *  ready   — в пуле, ждёт соперника;
+ *  playing — играет партию;
+ *  idle    — партия закончилась, в пул сам ещё не вернулся. Как в Lichess:
+ *            после партии человек читает результат, а не проваливается сразу
+ *            в следующую пару. Возврат — кнопкой «Вернуться к турниру»;
+ *  paused  — сам поставил паузу, пары не приходят до возвращения. */
+export type ArenaPlayerState = 'ready' | 'playing' | 'idle' | 'paused';
 
 /** Строка таблицы результатов. */
 export interface ArenaStandingDto {
